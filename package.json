@@ -1,0 +1,27 @@
+{
+  "name": "awikabot",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "packageManager": "pnpm@12.4.2",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "server": "pnpm --filter ./apps/server dev",
+    "server:build": "pnpm --filter ./apps/server build",
+    "mobile": "pnpm --filter ./apps/mobile start",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "verificar": "node scripts/verificar.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.22.0",
+    "@types/node": "^24.19.2",
+    "eslint": "catalog:",
+    "typescript": "catalog:",
+    "typescript-eslint": "^8.73.0",
+    "vitest": "catalog:"
+  }
+}

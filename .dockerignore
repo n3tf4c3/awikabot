@@ -1,0 +1,10 @@
+.git
+**/node_modules
+**/dist
+docs
+spike
+relatorios
+backups
+# Do app só o manifesto entra, para o lockfile fechar.
+apps/mobile/*
+!apps/mobile/package.json

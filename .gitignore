@@ -1,4 +1,12 @@
 node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
 .env
 .env.*
 !.env.example
+
+# Relatórios de auditoria e dumps ficam fora do Git.
+relatorios/
+backups/

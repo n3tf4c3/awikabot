@@ -1,6 +1,6 @@
 # awikabot — plano
 
-Situação em 2026-11-23. Repositório: `github.com/n3tf4c3/awikabot`, público. A etapa 0 passou: o Claude Code serve de primeiro motor. As medições estão em "Etapa 0: resultado".
+Situação em 2026-11-23. Repositório: `github.com/n3tf4c3/awikabot`, público. A etapa 0 passou: o Claude Code serve de primeiro motor. A etapa 1 tem o esqueleto validado, faltando abrir o app em aparelho e rodar a CI no GitHub. As medições estão em "Etapa 0: resultado" e "Etapa 1: resultado".
 
 ## Decisão
 
@@ -66,7 +66,7 @@ Três pacotes, cada um ligado a um requisito:
 |---|---|---|
 | `apps/server` | Node 24. Dono dos processos das CLIs, API HTTP, fluxo de eventos, SQLite e fila de turnos com limite de simultâneos. | Rodar no Orange Pi. |
 | `apps/mobile` | Expo, iOS e Android. Guarda as conversas em cache para abrir na hora. | Apps para gerenciar; sensação ágil. |
-| `packages/protocol` | Tipos e validação das mensagens trocadas. | Servidor e app evoluem juntos sem divergir. |
+| `packages/core` | Tipos e validação das mensagens trocadas. | Servidor e app evoluem juntos sem divergir. |
 
 O servidor não segue o padrão Next.js, Vercel e Neon dos outros projetos porque precisa manter processos de agente vivos e arquivos locais no Pi, o que uma plataforma serverless não faz.
 
@@ -120,6 +120,20 @@ Não coberto pela prova:
 - espera acima de 10 minutos, que é o limite padrão de um gancho segundo a documentação (a prova configurou 15 minutos e exercitou 3);
 - a decisão de adiar (`defer`), em que o processo sai e a conversa é retomada quando a resposta chegar; é o caminho para o app fechado por horas;
 - vários turnos no mesmo processo e turnos simultâneos.
+
+## Etapa 1: resultado (2026-11-23)
+
+Monorepo pnpm com `apps/server`, `apps/mobile` e `packages/core`, CI, imagem do servidor, mapa de fluxos e runbook de verificação. O que foge do padrão da casa está em `docs/decisoes.md`.
+
+| Verificação | Resultado |
+|---|---|
+| Lint, build do servidor, typecheck e testes | Passam, também numa cópia limpa com o lockfile congelado. São 24 testes. |
+| Runbook `pnpm verificar` | Duas execuções com o mesmo resultado, em 0,4 s, e uma quebra de propósito acusada. |
+| Imagem do servidor | Constrói para arm64; no Pi, em 18 s. |
+| Contêiner no Pi | Respondeu ao health check e ficou saudável, sem root, com 26 MB, porta só em loopback e sistema de arquivos somente leitura. Foi removido depois do teste. |
+| App | `expo-doctor` passou nas 20 checagens, e o pacote JavaScript exporta para Android e iOS com o `core` dentro. |
+| App aberto no iPhone e no Android | Pendente: precisa de aparelho. |
+| CI no GitHub | Pendente: roda quando a branch for enviada. |
 
 ## Riscos
 

@@ -1,0 +1,27 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Versões que precisam ser únicas na árvore, declaradas uma vez: os workspaces
+# usam "catalog:" no lugar da versão.
+catalog:
+  # Par do Expo SDK 58. Só o app usa React; a versão fica aqui para não duplicar.
+  react: 19.3.0
+  typescript: ~6.0.3
+  zod: ^4.6.7
+  vitest: ^5.1.1
+  # ESLint 9: o eslint-plugin-react que vem com o eslint-config-expo 58 quebra no 10.
+  eslint: ^9.22.0
+
+# Uma única árvore React: o react-dom chega por dependência transitiva do Expo e,
+# sem isto, resolve para um patch à frente do react fixado pelo SDK.
+overrides:
+  react-dom: 19.3.0
+
+# Convenção da casa para monorepo com app Expo.
+nodeLinker: hoisted
+
+# Scripts de instalação só rodam se aprovados, um a um, com o motivo ao lado.
+allowBuilds:
+  # Baixa o binário nativo usado no build do servidor, no tsx e no vitest.
+  esbuild: true
