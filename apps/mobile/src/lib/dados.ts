@@ -1,4 +1,11 @@
-import type { Bot, Evento, ListaMensagens, RespostaTurno } from '@awikabot/core';
+import type { Aprovacao, Bot, Evento, ListaMensagens, RespostaTurno } from '@awikabot/core';
+import {
+  APROVACOES_VAZIAS,
+  aplicarDecisao,
+  aplicarEventoDeAprovacao,
+  aplicarPendentes,
+  type EstadoAprovacoes,
+} from './aprovacoes';
 import {
   CONVERSA_VAZIA,
   aplicarEvento,
@@ -22,6 +29,8 @@ export interface EstadoDados {
   readonly revisaoBots: number;
   /** Conversas abertas nesta execução do app, por id do bot. */
   readonly conversas: Readonly<Record<string, EstadoConversa>>;
+  /** Pedidos de aprovação de todos os bots: os pendentes e os resolvidos nesta execução do app. */
+  readonly aprovacoes: EstadoAprovacoes;
   readonly conexao: Conexao;
 }
 
@@ -33,10 +42,20 @@ export type AcaoDados =
   | { tipo: 'pagina_recente'; botId: string; pagina: ListaMensagens }
   | { tipo: 'pagina_anterior'; botId: string; antes: number; pagina: ListaMensagens }
   | { tipo: 'turno_enviado'; botId: string; resposta: RespostaTurno }
+  /** Lista de `GET /v1/aprovacoes`, com a revisão das aprovações que o app tinha ao pedi-la. */
+  | { tipo: 'aprovacoes_carregadas'; pendentes: readonly Aprovacao[]; revisao: number }
+  /** Aprovação já resolvida, devolvida por `POST /v1/aprovacoes/:id`. */
+  | { tipo: 'aprovacao_decidida'; aprovacao: Aprovacao }
   | { tipo: 'evento'; evento: Evento }
   | { tipo: 'conexao'; conexao: Conexao };
 
-export const DADOS_INICIAIS: EstadoDados = { bots: null, revisaoBots: 0, conversas: {}, conexao: 'conectando' };
+export const DADOS_INICIAIS: EstadoDados = {
+  bots: null,
+  revisaoBots: 0,
+  conversas: {},
+  aprovacoes: APROVACOES_VAZIAS,
+  conexao: 'conectando',
+};
 
 /** Troca o bot de mesmo id ou põe o novo no fim, que é onde o servidor lista o mais recente. */
 function gravarBot(bots: readonly Bot[] | null, bot: Bot): readonly Bot[] | null {
@@ -75,6 +94,9 @@ function aplicarEventoAosDados(estado: EstadoDados, evento: Evento): EstadoDados
     }
     case 'texto':
       return naConversa(estado, evento.botId, (conversa) => aplicarEvento(conversa, evento.botId, evento));
+    case 'aprovacao_pedida':
+    case 'aprovacao_resolvida':
+      return { ...estado, aprovacoes: aplicarEventoDeAprovacao(estado.aprovacoes, evento) };
     case 'ressincronizar': {
       const conversas = Object.fromEntries(
         Object.entries(estado.conversas).map(([botId, conversa]) => [botId, aplicarEvento(conversa, botId, evento)] as const),
@@ -108,6 +130,14 @@ export function redutorDados(estado: EstadoDados, acao: AcaoDados): EstadoDados 
       const resposta = comConversa.conversas[acao.botId]?.mensagens.find((mensagem) => mensagem.id === acao.resposta.bot.id);
       if (resposta && resposta.estado !== 'em_andamento') return comConversa;
       return { ...comConversa, bots: marcarTurno(comConversa.bots, acao.botId, true), revisaoBots: estado.revisaoBots + 1 };
+    }
+    case 'aprovacoes_carregadas': {
+      const aprovacoes = aplicarPendentes(estado.aprovacoes, acao.pendentes, acao.revisao);
+      return aprovacoes === estado.aprovacoes ? estado : { ...estado, aprovacoes };
+    }
+    case 'aprovacao_decidida': {
+      const aprovacoes = aplicarDecisao(estado.aprovacoes, acao.aprovacao);
+      return aprovacoes === estado.aprovacoes ? estado : { ...estado, aprovacoes };
     }
     case 'evento':
       return aplicarEventoAosDados(estado, acao.evento);

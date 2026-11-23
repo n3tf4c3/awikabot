@@ -168,6 +168,30 @@ describe('iniciarFluxoEventos', () => {
       ]);
     });
 
+    it('entrega os eventos de aprovação como vieram', async () => {
+      const pendente = {
+        id: 'apr0000000000001',
+        botId: BOT,
+        mensagemId: MSG,
+        ferramenta: 'Bash',
+        resumo: 'ls -la',
+        estado: 'pendente',
+        criadaEm: 10,
+        resolvidaEm: null,
+      } as const;
+      const pedida: Evento = { tipo: 'aprovacao_pedida', aprovacao: pendente };
+      const resolvida: Evento = { tipo: 'aprovacao_resolvida', aprovacao: { ...pendente, estado: 'negada', resolvidaEm: 20 } };
+      const servidor = servidorFalso();
+      iniciar(servidor);
+      await assentar();
+      servidor.tentativas[0]?.enviar(pingComId('ep-0') + quadro(pedida, 'ep-1') + quadro(resolvida, 'ep-2'));
+      // Aprovação com estado que o contrato não conhece não passa.
+      servidor.tentativas[0]?.enviar(`event: evento\ndata: ${JSON.stringify({ ...pedida, aprovacao: { ...pendente, estado: 'talvez' } })}\n\n`);
+      await assentar();
+
+      expect(eventos).toEqual([RESSINCRONIZAR, pedida, resolvida]);
+    });
+
     it('ignora evento que não é JSON ou não segue o contrato, e continua lendo', async () => {
       const servidor = servidorFalso();
       iniciar(servidor);

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Bot, ListaBots, ListaMensagens, Mensagem } from '@awikabot/core';
+import type { Aprovacao, Bot, ListaAprovacoes, ListaBots, ListaMensagens, Mensagem } from '@awikabot/core';
 import type { Api } from './api';
 import { criarArmazemDados } from './dados';
 import { ErroApi } from './erros';
@@ -21,6 +21,25 @@ function msg(seq: number, estado: Mensagem['estado'] = 'completa'): Mensagem {
     estado,
     criadaEm: seq,
   };
+}
+
+/** Pedido de aprovação `n` do bot, pendente por padrão. */
+function apr(n: number, estado: Aprovacao['estado'] = 'pendente'): Aprovacao {
+  return {
+    id: `apr${String(n).padStart(13, '0')}`,
+    botId: BOT,
+    mensagemId: msg(2).id,
+    ferramenta: 'Bash',
+    resumo: `comando ${n}`,
+    estado,
+    criadaEm: n,
+    resolvidaEm: estado === 'pendente' ? null : n + 100,
+  };
+}
+
+/** O estado de cada aprovação no armazém, pelo resumo dela. */
+function estadosDe(armazem: ReturnType<typeof criarArmazemDados>): Record<string, string> {
+  return Object.fromEntries(Object.values(armazem.estado().aprovacoes.porId).map((dados) => [dados.resumo, dados.estado]));
 }
 
 function faixa(de: number, ate: number): Mensagem[] {
@@ -48,6 +67,8 @@ function montar(parcial: Partial<Api> = {}) {
     listarMensagens: naoUsada('listarMensagens'),
     enviarTurno: naoUsada('enviarTurno'),
     pararTurno: naoUsada('pararTurno'),
+    listarAprovacoes: naoUsada('listarAprovacoes'),
+    decidirAprovacao: naoUsada('decidirAprovacao'),
     revogarDispositivo: naoUsada('revogarDispositivo'),
     ...parcial,
   };
@@ -456,5 +477,136 @@ describe('parar', () => {
   it('outros erros passam adiante', async () => {
     const { operacoes } = montar({ pararTurno: () => Promise.reject(new ErroApi('rede', null)) });
     await expect(operacoes.parar(BOT)).rejects.toMatchObject({ codigo: 'rede' });
+  });
+});
+
+describe('carregarAprovacoes', () => {
+  it('põe os pedidos pendentes no armazém', async () => {
+    const { armazem, operacoes } = montar({ listarAprovacoes: async () => ({ aprovacoes: [apr(1), apr(2)] }) });
+    await operacoes.carregarAprovacoes();
+    expect(estadosDe(armazem)).toEqual({ 'comando 1': 'pendente', 'comando 2': 'pendente' });
+  });
+
+  it('lista nova sem um pendente conhecido tira esse pedido', async () => {
+    const { armazem, operacoes } = montar({ listarAprovacoes: async () => ({ aprovacoes: [apr(2)] }) });
+    armazem.despachar({ tipo: 'aprovacoes_carregadas', pendentes: [apr(1), apr(2)], revisao: 0 });
+
+    await operacoes.carregarAprovacoes();
+
+    expect(estadosDe(armazem)).toEqual({ 'comando 2': 'pendente' });
+  });
+
+  it('lista atrasada não desfaz o evento que chegou durante a busca, e a busca se repete', async () => {
+    const pedidos = [adiada<ListaAprovacoes>(), adiada<ListaAprovacoes>()];
+    const listarAprovacoes = vi.fn(emOrdem(pedidos));
+    const { armazem, operacoes } = montar({ listarAprovacoes });
+    armazem.despachar({ tipo: 'aprovacoes_carregadas', pendentes: [apr(1)], revisao: 0 });
+
+    const carga = operacoes.carregarAprovacoes();
+    // O servidor montou a lista só com o pedido 1; depois o 1 foi aprovado e nasceu o 2.
+    armazem.despachar({ tipo: 'evento', evento: { tipo: 'aprovacao_resolvida', aprovacao: apr(1, 'aprovada') } });
+    armazem.despachar({ tipo: 'evento', evento: { tipo: 'aprovacao_pedida', aprovacao: apr(2) } });
+    pedidos[0]?.resolver({ aprovacoes: [apr(1)] });
+    await vi.waitFor(() => expect(listarAprovacoes).toHaveBeenCalledTimes(2));
+    expect(estadosDe(armazem)).toEqual({ 'comando 1': 'aprovada', 'comando 2': 'pendente' });
+
+    pedidos[1]?.resolver({ aprovacoes: [apr(2)] });
+    await carga;
+    expect(estadosDe(armazem)).toEqual({ 'comando 1': 'aprovada', 'comando 2': 'pendente' });
+    expect(listarAprovacoes).toHaveBeenCalledTimes(2);
+  });
+
+  it('falha de rede deixa os pedidos como estavam', async () => {
+    const { armazem, operacoes } = montar({ listarAprovacoes: () => Promise.reject(new ErroApi('rede', null)) });
+    armazem.despachar({ tipo: 'aprovacoes_carregadas', pendentes: [apr(1)], revisao: 0 });
+    await expect(operacoes.carregarAprovacoes()).rejects.toMatchObject({ codigo: 'rede' });
+    expect(estadosDe(armazem)).toEqual({ 'comando 1': 'pendente' });
+  });
+});
+
+describe('decidirAprovacao', () => {
+  function comPendente(parcial: Partial<Api>) {
+    const montado = montar(parcial);
+    montado.armazem.despachar({ tipo: 'aprovacoes_carregadas', pendentes: [apr(1), apr(2)], revisao: 0 });
+    return montado;
+  }
+
+  it.each([
+    ['aprovar', 'aprovada'],
+    ['negar', 'negada'],
+  ] as const)('manda "%s" e guarda a aprovação %s que o servidor devolveu', async (decisao, desfecho) => {
+    const decidirAprovacao = vi.fn(async () => apr(1, desfecho));
+    const { armazem, operacoes } = comPendente({ decidirAprovacao });
+
+    await expect(operacoes.decidirAprovacao(apr(1).id, decisao)).resolves.toBe('decidida');
+
+    expect(decidirAprovacao).toHaveBeenCalledWith(apr(1).id, { decisao });
+    expect(estadosDe(armazem)).toEqual({ 'comando 1': desfecho, 'comando 2': 'pendente' });
+  });
+
+  it('enquanto o servidor não responde, o pedido continua pendente no app', async () => {
+    const pedido = adiada<Aprovacao>();
+    const { armazem, operacoes } = comPendente({ decidirAprovacao: () => pedido.promessa });
+    const antes = armazem.estado();
+
+    const decisao = operacoes.decidirAprovacao(apr(1).id, 'aprovar');
+    await Promise.resolve();
+    expect(armazem.estado()).toBe(antes);
+
+    pedido.resolver(apr(1, 'aprovada'));
+    await decisao;
+    expect(estadosDe(armazem)['comando 1']).toBe('aprovada');
+  });
+
+  it('vale o que o servidor gravou, não o que a pessoa pediu', async () => {
+    // A pessoa tocou em Aprovar, mas o prazo venceu no mesmo instante e o servidor devolve expirada.
+    const { armazem, operacoes } = comPendente({ decidirAprovacao: async () => apr(1, 'expirada') });
+    await operacoes.decidirAprovacao(apr(1).id, 'aprovar');
+    expect(estadosDe(armazem)['comando 1']).toBe('expirada');
+  });
+
+  it.each([
+    ['ja_resolvida', 409],
+    ['nao_encontrado', 404],
+  ] as const)('com %s, busca a lista de pendentes e diz que o pedido já estava resolvido', async (codigo, status) => {
+    const listarAprovacoes = vi.fn(async () => ({ aprovacoes: [apr(2)] }));
+    const { armazem, operacoes } = comPendente({
+      decidirAprovacao: () => Promise.reject(new ErroApi(codigo, status)),
+      listarAprovacoes,
+    });
+
+    await expect(operacoes.decidirAprovacao(apr(1).id, 'aprovar')).resolves.toBe('ja_resolvida');
+
+    expect(listarAprovacoes).toHaveBeenCalledTimes(1);
+    // O cartão do pedido 1 some: ele não está mais entre os pendentes do servidor.
+    expect(estadosDe(armazem)).toEqual({ 'comando 2': 'pendente' });
+  });
+
+  it('com ja_resolvida, se a busca da lista falha, ainda avisa e o cartão fica até a próxima busca', async () => {
+    const { armazem, operacoes } = comPendente({
+      decidirAprovacao: () => Promise.reject(new ErroApi('ja_resolvida', 409)),
+      listarAprovacoes: () => Promise.reject(new ErroApi('rede', null)),
+    });
+    await expect(operacoes.decidirAprovacao(apr(1).id, 'negar')).resolves.toBe('ja_resolvida');
+    expect(estadosDe(armazem)).toEqual({ 'comando 1': 'pendente', 'comando 2': 'pendente' });
+  });
+
+  it.each([
+    ['rede', null],
+    ['tempo_esgotado', null],
+    ['erro_interno', 500],
+    ['dados_invalidos', 400],
+  ] as const)('com %s, repassa o erro, mantém o cartão e não busca nada', async (codigo, status) => {
+    const listarAprovacoes = vi.fn(async () => ({ aprovacoes: [] }));
+    const { armazem, operacoes } = comPendente({
+      decidirAprovacao: () => Promise.reject(new ErroApi(codigo, status)),
+      listarAprovacoes,
+    });
+    const antes = armazem.estado();
+
+    await expect(operacoes.decidirAprovacao(apr(1).id, 'aprovar')).rejects.toMatchObject({ codigo });
+
+    expect(armazem.estado()).toBe(antes);
+    expect(listarAprovacoes).not.toHaveBeenCalled();
   });
 });

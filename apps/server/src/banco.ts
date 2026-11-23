@@ -43,6 +43,21 @@ const MIGRACOES: string[] = [
     UNIQUE (bot_id, seq)
   ) STRICT;
   `,
+  `
+  CREATE TABLE aprovacoes (
+    id TEXT PRIMARY KEY,
+    bot_id TEXT NOT NULL REFERENCES bots (id),
+    mensagem_id TEXT NOT NULL REFERENCES mensagens (id),
+    ferramenta TEXT NOT NULL,
+    resumo TEXT NOT NULL,
+    estado TEXT NOT NULL CHECK (estado IN ('pendente', 'aprovada', 'negada', 'expirada')),
+    criada_em INTEGER NOT NULL,
+    resolvida_em INTEGER,
+    resolvida_por TEXT REFERENCES dispositivos (id)
+  ) STRICT;
+
+  CREATE INDEX aprovacoes_pendentes ON aprovacoes (estado, criada_em);
+  `,
 ];
 
 export function abrirBanco(arquivo: string): Banco {

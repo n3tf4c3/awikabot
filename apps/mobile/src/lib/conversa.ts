@@ -215,7 +215,10 @@ export function aplicarEvento(estado: EstadoConversa, botId: string, evento: Eve
     }
     case 'ressincronizar':
       return { ...estado, desatualizada: true, perdas: estado.perdas + 1 };
+    // Bots e pedidos de aprovação ficam fora da conversa: quem os guarda é o armazém.
     case 'bot_salvo':
+    case 'aprovacao_pedida':
+    case 'aprovacao_resolvida':
       return estado;
   }
 }

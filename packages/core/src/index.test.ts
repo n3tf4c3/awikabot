@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  EsquemaAprovacao,
+  EsquemaDecisaoAprovacao,
   EsquemaBotEdicao,
   EsquemaBotEntrada,
   EsquemaEvento,
@@ -94,5 +96,40 @@ describe('conversa e eventos', () => {
     expect(EsquemaEvento.parse({ tipo: 'ressincronizar' }).tipo).toBe('ressincronizar');
     expect(EsquemaEvento.safeParse({ tipo: 'texto', botId: id }).success).toBe(false);
     expect(EsquemaEvento.safeParse({ tipo: 'desconhecido' }).success).toBe(false);
+  });
+});
+
+describe('aprovações', () => {
+  const id = 'abcdefgh12345678';
+  const aprovacao = {
+    id,
+    botId: id,
+    mensagemId: id,
+    ferramenta: 'Bash',
+    resumo: 'echo oi',
+    estado: 'pendente',
+    criadaEm: 1,
+    resolvidaEm: null,
+  };
+
+  it('aceita um pedido pendente e os eventos que o carregam', () => {
+    expect(EsquemaAprovacao.parse(aprovacao)).toEqual(aprovacao);
+    expect(EsquemaEvento.parse({ tipo: 'aprovacao_pedida', aprovacao }).tipo).toBe('aprovacao_pedida');
+    const resolvida = { ...aprovacao, estado: 'aprovada', resolvidaEm: 2 };
+    expect(EsquemaEvento.parse({ tipo: 'aprovacao_resolvida', aprovacao: resolvida }).tipo).toBe('aprovacao_resolvida');
+  });
+
+  it('recusa estado desconhecido, ferramenta vazia e resumo acima do limite', () => {
+    expect(EsquemaAprovacao.safeParse({ ...aprovacao, estado: 'talvez' }).success).toBe(false);
+    expect(EsquemaAprovacao.safeParse({ ...aprovacao, ferramenta: '' }).success).toBe(false);
+    const resumo = 'x'.repeat(LIMITES.resumoAprovacao + 1);
+    expect(EsquemaAprovacao.safeParse({ ...aprovacao, resumo }).success).toBe(false);
+  });
+
+  it('só aceita aprovar ou negar como decisão', () => {
+    expect(EsquemaDecisaoAprovacao.parse({ decisao: 'aprovar' })).toEqual({ decisao: 'aprovar' });
+    expect(EsquemaDecisaoAprovacao.parse({ decisao: 'negar' })).toEqual({ decisao: 'negar' });
+    expect(EsquemaDecisaoAprovacao.safeParse({ decisao: 'allow' }).success).toBe(false);
+    expect(EsquemaDecisaoAprovacao.safeParse({}).success).toBe(false);
   });
 });

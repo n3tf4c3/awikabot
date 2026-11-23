@@ -10,12 +10,23 @@ interface Props {
   desativado?: boolean;
   /** Mostra o indicador de espera e bloqueia novos toques. */
   ocupado?: boolean;
+  /** Nome lido pelo leitor de tela no lugar do rótulo, quando o rótulo sozinho não diz sobre o que é a ação. */
+  rotuloAcessivel?: string;
   /** Descrição para leitor de tela, quando o rótulo sozinho não basta. */
   dica?: string;
   style?: StyleProp<ViewStyle>;
 }
 
-export function Botao({ rotulo, aoTocar, variante = 'primaria', desativado = false, ocupado = false, dica, style }: Props) {
+export function Botao({
+  rotulo,
+  aoTocar,
+  variante = 'primaria',
+  desativado = false,
+  ocupado = false,
+  rotuloAcessivel,
+  dica,
+  style,
+}: Props) {
   const parado = desativado || ocupado;
   const cheio = variante !== 'secundaria';
   const corDeFundo = variante === 'perigo' ? cores.perigo : variante === 'primaria' ? cores.primaria : cores.fundo;
@@ -23,7 +34,7 @@ export function Botao({ rotulo, aoTocar, variante = 'primaria', desativado = fal
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={rotulo}
+      accessibilityLabel={rotuloAcessivel ?? rotulo}
       accessibilityHint={dica}
       accessibilityState={{ disabled: parado, busy: ocupado }}
       disabled={parado}

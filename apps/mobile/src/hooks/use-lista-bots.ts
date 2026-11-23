@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react';
 import type { Bot } from '@awikabot/core';
 
+import type { EstadoAprovacoes } from '@/lib/aprovacoes';
 import { mensagemDeErro } from '@/lib/erros';
 import { useDados, useSelecao } from '@/provedores/dados';
 
 interface ListaBots {
   /** `null` enquanto a primeira lista não chega. */
   bots: readonly Bot[] | null;
+  /** Pedidos de aprovação conhecidos: dizem que bot está à espera da pessoa. */
+  aprovacoes: EstadoAprovacoes;
   erro: string | null;
   /** A pessoa puxou a lista para atualizar e o pedido ainda corre. */
   atualizando: boolean;
@@ -17,6 +20,7 @@ interface ListaBots {
 export function useListaBots(): ListaBots {
   const { operacoes } = useDados();
   const bots = useSelecao((estado) => estado.bots);
+  const aprovacoes = useSelecao((estado) => estado.aprovacoes);
   const [erro, definirErro] = useState<string | null>(null);
   const [atualizando, definirAtualizando] = useState(false);
 
@@ -29,8 +33,7 @@ export function useListaBots(): ListaBots {
 
   function atualizar(): void {
     definirAtualizando(true);
-    operacoes
-      .carregarBots()
+    Promise.all([operacoes.carregarBots(), operacoes.carregarAprovacoes()])
       .then(
         () => definirErro(null),
         (falha: unknown) => definirErro(mensagemDeErro(falha)),
@@ -38,7 +41,7 @@ export function useListaBots(): ListaBots {
       .finally(() => definirAtualizando(false));
   }
 
-  return { bots, erro, atualizando, atualizar };
+  return { bots, aprovacoes, erro, atualizando, atualizar };
 }
 
 /** Um bot da lista, ou `null` se ele não está nela (lista ainda não carregada ou bot inexistente). */

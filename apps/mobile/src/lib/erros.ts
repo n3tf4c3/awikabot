@@ -56,6 +56,7 @@ const MENSAGENS: Readonly<Record<string, string>> = {
   turno_em_andamento: 'O bot ainda está respondendo. Espere terminar ou toque em Parar.',
   limite_de_turnos: 'O servidor já está com o máximo de respostas em andamento. Tente de novo em instantes.',
   sem_turno_ativo: 'O bot já terminou de responder.',
+  ja_resolvida: 'Este pedido de aprovação já tinha sido resolvido.',
   erro_interno: 'O servidor encontrou um erro. Tente de novo.',
   [CODIGOS_DO_APP.rede]: 'Não foi possível falar com o servidor. Confira o endereço e a conexão.',
   [CODIGOS_DO_APP.tempoEsgotado]: 'O servidor demorou demais para responder. Tente de novo.',

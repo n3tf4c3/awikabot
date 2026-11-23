@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Bot, Mensagem } from '@awikabot/core';
+import type { Aprovacao, Bot, Mensagem } from '@awikabot/core';
 import { TEMPO_LIMITE_REVOGACAO_MS, criarApi, type Buscar, type PedidoHttp } from './api';
 import { ErroApi } from './erros';
 import type { Sessao } from './sessao';
@@ -397,5 +397,63 @@ describe('falha de rede e demora', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('aprovações', () => {
+  const pendente: Aprovacao = {
+    id: 'apr0000000000001',
+    botId: BOT_ID,
+    mensagemId: 'msg0000000000002',
+    ferramenta: 'Bash',
+    resumo: 'rm -rf build',
+    estado: 'pendente',
+    criadaEm: 10,
+    resolvidaEm: null,
+  };
+  const aprovada: Aprovacao = { ...pendente, estado: 'aprovada', resolvidaEm: 20 };
+
+  it('listarAprovacoes faz GET em /v1/aprovacoes com o token e valida a lista', async () => {
+    const { api, chamados } = montar(() => ({ status: 200, corpo: { aprovacoes: [pendente] } }));
+    await expect(api.listarAprovacoes()).resolves.toEqual({ aprovacoes: [pendente] });
+    expect(chamados[0]?.url).toBe(`${SERVIDOR}/v1/aprovacoes`);
+    expect(chamados[0]?.pedido.method).toBe('GET');
+    expect(chamados[0]?.pedido.headers.authorization).toBe(`Bearer ${TOKEN_A}`);
+    expect(chamados[0]?.pedido.body).toBeUndefined();
+  });
+
+  it('listarAprovacoes recusa lista fora do contrato', async () => {
+    const { api } = montar(() => ({ status: 200, corpo: { aprovacoes: [{ ...pendente, estado: 'talvez' }] } }));
+    expect((await erroDe(api.listarAprovacoes())).codigo).toBe('resposta_invalida');
+  });
+
+  it.each(['aprovar', 'negar'] as const)('decidirAprovacao manda "%s" em POST e devolve a aprovação resolvida', async (decisao) => {
+    const { api, chamados } = montar(() => ({ status: 200, corpo: aprovada }));
+    await expect(api.decidirAprovacao(pendente.id, { decisao })).resolves.toEqual(aprovada);
+    expect(chamados[0]?.url).toBe(`${SERVIDOR}/v1/aprovacoes/${pendente.id}`);
+    expect(chamados[0]?.pedido.method).toBe('POST');
+    expect(JSON.parse(chamados[0]?.pedido.body ?? '')).toEqual({ decisao });
+  });
+
+  it('decidirAprovacao escapa o id no caminho', async () => {
+    const { api, chamados } = montar(() => ({ status: 200, corpo: aprovada }));
+    await api.decidirAprovacao('a/b?c', { decisao: 'negar' });
+    expect(chamados[0]?.url).toBe(`${SERVIDOR}/v1/aprovacoes/a%2Fb%3Fc`);
+  });
+
+  it.each([
+    [409, 'ja_resolvida'],
+    [404, 'nao_encontrado'],
+    [400, 'dados_invalidos'],
+  ])('decidirAprovacao devolve o código do erro %i', async (status, codigo) => {
+    const { api, aoNaoAutenticado } = montar(() => ({ status, corpo: { erro: codigo } }));
+    const erro = await erroDe(api.decidirAprovacao(pendente.id, { decisao: 'aprovar' }));
+    expect([erro.codigo, erro.status]).toEqual([codigo, status]);
+    expect(aoNaoAutenticado).not.toHaveBeenCalled();
+  });
+
+  it('decidirAprovacao recusa resposta de sucesso fora do contrato', async () => {
+    const { api } = montar(() => ({ status: 200, corpo: { ok: true } }));
+    expect((await erroDe(api.decidirAprovacao(pendente.id, { decisao: 'aprovar' }))).codigo).toBe('resposta_invalida');
   });
 });

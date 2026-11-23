@@ -8,8 +8,10 @@ import { LIMITES, type Mensagem } from '@awikabot/core';
 import { Aviso } from '@/components/Aviso';
 import { Botao } from '@/components/Botao';
 import { BotaoCabecalho } from '@/components/BotaoCabecalho';
+import { CartaoAprovacao, DesfechoAprovacao } from '@/components/CartaoAprovacao';
 import { useConversa } from '@/hooks/use-conversa';
 import { useTecladoAberto } from '@/hooks/use-teclado-aberto';
+import { chaveDoItem, ehAprovacao } from '@/lib/aprovacoes';
 import { rotuloDoEstado } from '@/lib/conversa';
 import { cores, espaco } from '@/tema';
 
@@ -70,14 +72,15 @@ export default function Conversa() {
           ),
         }}
       />
-      {conversa.semEventos || conversa.erro !== null ? (
+      {conversa.semEventos || conversa.erro !== null || conversa.aviso !== null ? (
         <View style={estilos.avisos}>
           {conversa.semEventos ? <Aviso tipo="informacao" texto="Sem conexão com o servidor. Tentando de novo…" /> : null}
+          {conversa.aviso !== null ? <Aviso tipo="informacao" texto={conversa.aviso} /> : null}
           {conversa.erro !== null ? <Aviso texto={conversa.erro} /> : null}
           {conversa.falhaDeCarga ? <Botao rotulo="Tentar de novo" variante="secundaria" aoTocar={conversa.tentarDeNovo} /> : null}
         </View>
       ) : null}
-      {conversa.mensagens.length === 0 ? (
+      {conversa.itens.length === 0 ? (
         <View style={estilos.vazio}>
           {conversa.carregando && conversa.erro === null ? (
             <ActivityIndicator accessibilityLabel="Carregando a conversa" color={cores.primaria} />
@@ -90,9 +93,20 @@ export default function Conversa() {
       ) : (
         <FlatList
           inverted
-          data={conversa.mensagens}
-          keyExtractor={(mensagem) => mensagem.id}
-          renderItem={({ item }) => <Balao mensagem={item} />}
+          data={conversa.itens}
+          keyExtractor={chaveDoItem}
+          renderItem={({ item }) => {
+            if (!ehAprovacao(item)) return <Balao mensagem={item} />;
+            if (item.estado !== 'pendente') return <DesfechoAprovacao aprovacao={item} />;
+            return (
+              <CartaoAprovacao
+                aprovacao={item}
+                enviando={conversa.decidindo?.id === item.id ? conversa.decidindo.decisao : null}
+                bloqueado={conversa.decidindo !== null}
+                aoDecidir={(decisao) => conversa.decidir(item.id, decisao)}
+              />
+            );
+          }}
           contentContainerStyle={estilos.lista}
           keyboardShouldPersistTaps="handled"
           // Lista invertida: o "fim" é o topo da tela, onde entram as mensagens mais antigas.

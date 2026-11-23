@@ -14,7 +14,12 @@ export const LIMITES = {
   modelo: 80,
   texto: 20_000,
   mensagensPorPagina: 50,
+  ferramenta: 100,
+  resumoAprovacao: 4000,
 } as const;
+
+/** Quanto tempo um pedido de aprovação espera pela pessoa antes de ser negado sozinho. */
+export const ESPERA_APROVACAO_MS = 15 * 60_000;
 
 const Id = z.string().regex(/^[a-z0-9]{16}$/);
 /** Milissegundos desde 1970. */
@@ -128,6 +133,36 @@ export const EsquemaRespostaTurno = z.object({
 });
 export type RespostaTurno = z.infer<typeof EsquemaRespostaTurno>;
 
+// --- Aprovações -------------------------------------------------------------
+
+/**
+ * Pedido do bot para usar uma ferramenta que muda algo: rodar um comando, gravar um
+ * arquivo, acessar a rede. A ação só acontece depois de `aprovada`. Sem resposta em
+ * `ESPERA_APROVACAO_MS`, ou se o turno acabar antes, o pedido fica `expirada` e a ação não roda.
+ */
+export const EsquemaAprovacao = z.object({
+  id: Id,
+  botId: Id,
+  /** A resposta do bot que estava em andamento quando o pedido surgiu. */
+  mensagemId: Id,
+  /** Nome da ferramenta do motor, como "Bash" ou "Write". */
+  ferramenta: z.string().min(1).max(LIMITES.ferramenta),
+  /** O que a pessoa lê no cartão: o comando, o arquivo ou o endereço. */
+  resumo: z.string().max(LIMITES.resumoAprovacao),
+  estado: z.enum(['pendente', 'aprovada', 'negada', 'expirada']),
+  criadaEm: Instante,
+  resolvidaEm: Instante.nullable(),
+});
+export type Aprovacao = z.infer<typeof EsquemaAprovacao>;
+
+/** Resposta de `GET /v1/aprovacoes`: só as pendentes, de todos os bots, da mais antiga para a mais nova. */
+export const EsquemaListaAprovacoes = z.object({ aprovacoes: z.array(EsquemaAprovacao) });
+export type ListaAprovacoes = z.infer<typeof EsquemaListaAprovacoes>;
+
+/** Corpo de `POST /v1/aprovacoes/:id`. */
+export const EsquemaDecisaoAprovacao = z.object({ decisao: z.enum(['aprovar', 'negar']) });
+export type DecisaoAprovacao = z.infer<typeof EsquemaDecisaoAprovacao>;
+
 // --- Eventos (GET /v1/eventos, text/event-stream) ---------------------------
 
 /**
@@ -151,6 +186,9 @@ export const EsquemaEvento = z.discriminatedUnion('tipo', [
   }),
   z.object({ tipo: z.literal('turno_terminado'), botId: Id, mensagem: EsquemaMensagem }),
   z.object({ tipo: z.literal('bot_salvo'), bot: EsquemaBot }),
+  z.object({ tipo: z.literal('aprovacao_pedida'), aprovacao: EsquemaAprovacao }),
+  /** A aprovação saiu de `pendente`: alguém decidiu, o prazo venceu ou o turno acabou. */
+  z.object({ tipo: z.literal('aprovacao_resolvida'), aprovacao: EsquemaAprovacao }),
   z.object({ tipo: z.literal('ressincronizar') }),
 ]);
 export type Evento = z.infer<typeof EsquemaEvento>;

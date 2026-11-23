@@ -11,6 +11,7 @@ const CODIGOS_DO_SERVIDOR = [
   'turno_em_andamento',
   'limite_de_turnos',
   'sem_turno_ativo',
+  'ja_resolvida',
 ];
 
 describe('mensagemDoCodigo', () => {

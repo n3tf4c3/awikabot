@@ -1,6 +1,6 @@
 # awikabot — plano
 
-Situação em 2026-11-23. Repositório: `github.com/n3tf4c3/awikabot`, público. A etapa 0 passou: o Claude Code serve de primeiro motor. A etapa 1 está na `main`, com a CI aprovada. Na etapa 2, o servidor foi validado com o motor real no Pi e o cliente do app passa contra o servidor; faltam abrir o app em aparelho e o túnel. As medições estão nas seções de resultado de cada etapa.
+Situação em 2026-11-23. Repositório: `github.com/n3tf4c3/awikabot`, público. A etapa 0 passou: o Claude Code serve de primeiro motor. A etapa 1 está na `main`, com a CI aprovada. Na etapa 2, o servidor foi validado com o motor real no Pi e o cliente do app passa contra o servidor; faltam abrir o app em aparelho e o túnel. Na etapa 3, os cartões de aprovação estão validados com o motor real no Pi; falta o aviso push. As medições estão nas seções de resultado de cada etapa.
 
 ## Decisão
 
@@ -147,7 +147,11 @@ O servidor ganhou pareamento, autenticação por aparelho, bots, turnos e o flux
 | `pnpm verificar`, motor real no Pi | 9 de 9. O primeiro trecho da resposta chegou em 3,4 s, o bot lembrou do turno anterior e a parada funcionou. Pico de 243 MB no contêiner. |
 | Imagem com o motor | Constrói no Pi em 66 s; 1,05 GB. |
 
-Depois do teste no Pi, o contrato ganhou a posição de cada trecho de texto, o ponto de retomada no primeiro sinal de vida e a rota de "Desparear". Essas mudanças passaram na suíte e no runbook com o motor simulado, mas não voltaram ao Pi.
+Depois desse teste, o contrato ganhou a posição de cada trecho de texto, o ponto de retomada no primeiro sinal de vida e a rota de "Desparear". Com tudo na `main` (`eba9b1a`), o runbook passou de novo no Pi com o motor real, 9 de 9, com o primeiro trecho em 3,5 s e pico de 250 MB. As três peças novas foram conferidas lá:
+
+- o ponto de retomada chega no primeiro sinal de vida;
+- a resposta em andamento sai com o texto parcial, e os trechos vêm com a posição em sequência e somam o texto final;
+- depois de "Desparear", o mesmo token é recusado.
 
 ## Etapa 2: resultado do app (2026-11-23)
 
@@ -168,8 +172,29 @@ Não coberto na etapa 2:
 - a leitura de QR no pareamento;
 - executar ações: o motor nega tudo o que pede aprovação até a etapa 3.
 
+## Etapa 3: resultado dos cartões de aprovação (2026-11-23)
+
+A etapa foi dividida: os cartões de aprovação entraram agora, e o aviso push fica para quando houver projeto na conta Expo e build em aparelho.
+
+O bot passa a executar ações. Antes de cada ferramenta, o gancho do Claude Code pergunta ao servidor. Ler dentro da pasta do bot passa; ler fora dela é negado; todo o resto vira um cartão no app, e a ação só roda depois de "Aprovar".
+
+| Verificação | Resultado |
+|---|---|
+| Testes | 32 no `core`, 98 no servidor e 460 no app. |
+| Falsificação | Com a política liberando tudo de propósito, 28 testes e 3 verificações do runbook acusaram. |
+| `pnpm verificar`, motor simulado | 13 de 13, nos fluxos F0 a F4, em duas execuções iguais. |
+| `pnpm verificar`, motor real no Pi | 12 de 12, em duas execuções. O comando aprovado criou o arquivo e o negado não, conferido no disco. A leitura do login do motor foi negada sem cartão. Pico de 258 MB. |
+| Cliente do app contra o servidor | O pedido chega pelo fluxo de eventos, a decisão vai pela API, e a segunda decisão é recusada. |
+
+Não coberto:
+
+- o aviso push e a espera acima de 15 minutos;
+- os cartões em aparelho: nenhuma tela foi aberta;
+- o acesso pelo túnel.
+
 ## Riscos
 
+- Aprovação: um comando aprovado roda com os direitos do contêiner e alcança tudo o que está no volume, inclusive o login do motor. A proteção é a pessoa ler o comando no cartão.
 - Memória: os 8 GB são divididos com outros serviços, e cada turno é um processo de CLI. A etapa 0 mediu um turno por vez; falta medir turnos simultâneos.
 - Energia: o servidor fica numa placa doméstica e pode reiniciar por queda de energia. Precisa voltar sozinho.
 - Termos de uso: a página "Legal and compliance" do Claude Code não diz se um servidor sempre ligado, comandado pelo celular, conta como uso comum da assinatura, e manda perguntar à Anthropic em caso de dúvida. Ela reserva o direito de aplicar as restrições sem aviso. A saída segura é chave de API.
@@ -179,7 +204,7 @@ Não coberto na etapa 2:
 ## Decisões em aberto
 
 - Assinatura de cada pessoa ou chave de API no uso contínuo: depende da leitura dos termos acima. A prova usou a assinatura.
-- Subdomínio do túnel.
+- Subdomínio do túnel. O domínio `awikabot.com` já está registrado na Cloudflare; a ligação do túnel fica para depois.
 
 ## Referência: OpenMausBot em 2026-11-23
 

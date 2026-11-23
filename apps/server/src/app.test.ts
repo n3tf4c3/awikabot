@@ -18,6 +18,7 @@ import {
   type Evento,
 } from '@awikabot/core';
 import { criarApp } from './app';
+import { GestorDeAprovacoes } from './aprovacoes';
 import { abrirBanco } from './banco';
 import { criarCodigo, LimitadorDeTentativas, revogar, VALIDADE_CODIGO_MS } from './dispositivos';
 import { Barramento } from './eventos';
@@ -44,6 +45,7 @@ function montar(opcoes: { atrasoMs?: number; limite?: number } = {}) {
     banco,
     barramento,
     turnos,
+    aprovacoes: new GestorDeAprovacoes({ banco, barramento }),
     limitador: new LimitadorDeTentativas(),
     intervaloPingMs: 40,
   });
@@ -187,6 +189,8 @@ describe('autenticação', () => {
   it('exige token em todas as rotas de /v1, menos o pareamento', async () => {
     const rotas: [string, string][] = [
       ['DELETE', '/v1/dispositivo'],
+      ['GET', '/v1/aprovacoes'],
+      ['POST', '/v1/aprovacoes/abcdefgh12345678'],
       ['GET', '/v1/bots'],
       ['POST', '/v1/bots'],
       ['PATCH', '/v1/bots/abcdefgh12345678'],

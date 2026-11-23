@@ -1,4 +1,11 @@
-import { EsquemaPedidoTurno, LIMITES, type Bot, type BotEdicao, type BotEntrada } from '@awikabot/core';
+import {
+  EsquemaPedidoTurno,
+  LIMITES,
+  type Bot,
+  type BotEdicao,
+  type BotEntrada,
+  type DecisaoAprovacao,
+} from '@awikabot/core';
 import type { Api } from './api';
 import type { ArmazemDados } from './dados';
 import { CODIGOS_DO_APP, ErroApi, temCodigo } from './erros';
@@ -14,6 +21,14 @@ export interface Operacoes {
   carregarAnteriores(botId: string): Promise<void>;
   enviar(botId: string, texto: string): Promise<void>;
   parar(botId: string): Promise<void>;
+  /** Busca os pedidos de aprovação pendentes de todos os bots. */
+  carregarAprovacoes(): Promise<void>;
+  /**
+   * Manda a decisão ao servidor. O pedido só muda no app com a resposta dele: `decidida` quando
+   * o servidor aceitou, `ja_resolvida` quando o pedido já não estava pendente (aí a lista de
+   * pendentes é buscada de novo). Falha de rede ou demora rejeita e não mexe em nada.
+   */
+  decidirAprovacao(id: string, decisao: DecisaoAprovacao['decisao']): Promise<'decidida' | 'ja_resolvida'>;
 }
 
 /** Quantas rodadas seguidas uma carga faz por conta própria quando o estado muda durante o pedido. */
@@ -60,6 +75,14 @@ export function criarOperacoes(api: Api, armazem: ArmazemDados): Operacoes {
     // Lista possivelmente velha só entra se for a primeira que o app tem ou se as rodadas acabaram.
     if (!mudouNoMeio || ultima || armazem.estado().bots === null) armazem.despachar({ tipo: 'bots_carregados', bots });
     return mudouNoMeio;
+  });
+
+  const carregarAprovacoes = cargaUnica(async () => {
+    const revisao = armazem.estado().aprovacoes.revisao;
+    const { aprovacoes } = await api.listarAprovacoes();
+    // O armazém compara a revisão: lista que pode ser velha não tira nem troca pedido nenhum.
+    armazem.despachar({ tipo: 'aprovacoes_carregadas', pendentes: aprovacoes, revisao });
+    return armazem.estado().aprovacoes.revisao !== revisao;
   });
 
   const cargasDeConversa = new Map<string, () => Promise<void>>();
@@ -109,6 +132,21 @@ export function criarOperacoes(api: Api, armazem: ArmazemDados): Operacoes {
     carregarBots,
     carregarConversa,
     carregarAnteriores,
+    carregarAprovacoes,
+
+    async decidirAprovacao(id, decisao) {
+      try {
+        const aprovacao = await api.decidirAprovacao(id, { decisao });
+        armazem.despachar({ tipo: 'aprovacao_decidida', aprovacao });
+        return 'decidida';
+      } catch (erro) {
+        // Outra pessoa decidiu, o prazo venceu ou o turno acabou: o pedido não está mais pendente.
+        // A lista nova tira o cartão; se ela falhar, o cartão fica até a próxima busca.
+        if (!temCodigo(erro, 'ja_resolvida') && !temCodigo(erro, 'nao_encontrado')) throw erro;
+        await carregarAprovacoes().catch(() => {});
+        return 'ja_resolvida';
+      }
+    },
 
     async criarBot(entrada) {
       const bot = await api.criarBot(entrada);

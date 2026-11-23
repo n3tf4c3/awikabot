@@ -7,6 +7,7 @@ describe('lerEnv', () => {
       NODE_ENV: 'development',
       AWIKA_HOST: '127.0.0.1',
       AWIKA_PORTA: 8790,
+      AWIKA_PORTA_GANCHO: 8791,
       AWIKA_DADOS: './dados',
       AWIKA_MOTOR: 'claude-code',
       AWIKA_CLAUDE_BIN: 'claude',
@@ -31,6 +32,15 @@ describe('lerEnv', () => {
 
   it.each([['0'], ['17'], ['muitos']])('recusa o limite de turnos "%s"', (limite) => {
     expect(() => lerEnv({ AWIKA_TURNOS_SIMULTANEOS: limite })).toThrow(EnvInvalida);
+  });
+
+  it('recusa a porta do gancho igual à porta da API', () => {
+    try {
+      lerEnv({ AWIKA_PORTA: '9000', AWIKA_PORTA_GANCHO: '9000' });
+      expect.unreachable('devia ter recusado');
+    } catch (erro) {
+      expect((erro as EnvInvalida).campos).toEqual(['AWIKA_PORTA_GANCHO']);
+    }
   });
 
   it('recusa o motor simulado em produção e o aceita fora dela', () => {

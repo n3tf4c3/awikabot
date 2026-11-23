@@ -9,6 +9,7 @@ import { Botao } from '@/components/Botao';
 import { BotaoCabecalho } from '@/components/BotaoCabecalho';
 import { useListaBots } from '@/hooks/use-lista-bots';
 import { useSessao } from '@/hooks/use-sessao';
+import { rotuloDaSituacao, situacaoDoBot, type SituacaoDoBot } from '@/lib/aprovacoes';
 import { desparearAparelho } from '@/lib/pareamento';
 import { api, guardaSessao } from '@/servicos';
 import { cores, espaco } from '@/tema';
@@ -24,11 +25,12 @@ function confirmarDespareamento(servidor: string, aoConfirmar: () => void): void
   );
 }
 
-function LinhaBot({ bot, aoAbrir }: { bot: Bot; aoAbrir: (id: string) => void }) {
+function LinhaBot({ bot, situacao, aoAbrir }: { bot: Bot; situacao: SituacaoDoBot | null; aoAbrir: (id: string) => void }) {
+  const rotulo = situacao === null ? null : rotuloDaSituacao(situacao);
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`Conversar com ${bot.nome}${bot.turnoAtivo ? ', respondendo' : ''}`}
+      accessibilityLabel={`Conversar com ${bot.nome}${rotulo === null ? '' : `, ${rotulo}`}`}
       onPress={() => aoAbrir(bot.id)}
       style={({ pressed }) => [estilos.linha, pressed && estilos.linhaPressionada]}>
       <Text style={estilos.nome} numberOfLines={1}>
@@ -39,7 +41,9 @@ function LinhaBot({ bot, aoAbrir }: { bot: Bot; aoAbrir: (id: string) => void })
           {bot.modelo}
         </Text>
       ) : null}
-      {bot.turnoAtivo ? <Text style={[estilos.detalhe, estilos.respondendo]}>respondendo…</Text> : null}
+      {rotulo !== null ? (
+        <Text style={[estilos.detalhe, situacao === 'aguardando_aprovacao' ? estilos.aguardando : estilos.respondendo]}>{rotulo}</Text>
+      ) : null}
     </Pressable>
   );
 }
@@ -52,7 +56,7 @@ export default function ListaDeBots() {
   const router = useRouter();
   const margens = useSafeAreaInsets();
   const { sessao } = useSessao();
-  const { bots, erro, atualizando, atualizar } = useListaBots();
+  const { bots, aprovacoes, erro, atualizando, atualizar } = useListaBots();
   const [despareando, definirDespareando] = useState(false);
 
   const abrir = (id: string): void => router.push({ pathname: '/bots/[id]', params: { id } });
@@ -98,7 +102,7 @@ export default function ListaDeBots() {
         <FlatList
           data={bots ?? []}
           keyExtractor={(bot) => bot.id}
-          renderItem={({ item }) => <LinhaBot bot={item} aoAbrir={abrir} />}
+          renderItem={({ item }) => <LinhaBot bot={item} situacao={situacaoDoBot(item, aprovacoes)} aoAbrir={abrir} />}
           ItemSeparatorComponent={Separador}
           refreshControl={<RefreshControl refreshing={atualizando} onRefresh={atualizar} tintColor={cores.primaria} />}
           contentContainerStyle={estilos.lista}
@@ -158,6 +162,10 @@ const estilos = StyleSheet.create({
   },
   respondendo: {
     color: cores.primaria,
+  },
+  aguardando: {
+    fontWeight: '700',
+    color: cores.perigo,
   },
   separador: {
     height: StyleSheet.hairlineWidth,
