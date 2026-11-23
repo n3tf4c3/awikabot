@@ -20,13 +20,34 @@ COPY apps/server apps/server
 RUN pnpm --filter @awikabot/server build
 
 FROM node:24.22.3-bookworm-slim
+
+# O motor: o Claude Code como a Anthropic publica, em versão fixa e sem modificação.
+ARG CLAUDE_CODE_VERSION=2.1.330
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates git \
+ && rm -rf /var/lib/apt/lists/* \
+ && npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
+ && npm cache clean --force \
+ && useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin awikabot \
+ && mkdir /data \
+ && chown awikabot:awikabot /data
+
+# /data é o volume: banco, pastas de trabalho dos bots, login e conversas do motor.
+# O resto do sistema de arquivos é somente leitura; a versão do motor não muda sozinha.
 ENV NODE_ENV=production \
     AWIKA_HOST=0.0.0.0 \
-    AWIKA_PORTA=8790
-RUN useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin awikabot
+    AWIKA_PORTA=8790 \
+    AWIKA_DADOS=/data \
+    HOME=/data \
+    CLAUDE_CONFIG_DIR=/data/claude \
+    DISABLE_AUTOUPDATER=1 \
+    SHELL=/bin/bash
+
 COPY --from=build /repo/apps/server/dist/server.mjs /app/server.mjs
 USER awikabot
+VOLUME /data
 EXPOSE 8790
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD ["node", "-e", "fetch('http://127.0.0.1:8790/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
-CMD ["node", "/app/server.mjs"]
+ENTRYPOINT ["node", "/app/server.mjs"]
+CMD ["servir"]

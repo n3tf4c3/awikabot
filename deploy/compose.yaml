@@ -1,6 +1,12 @@
 # Servidor do awikabot num host com Docker. Rede própria com sub-rede declarada,
 # porta publicada só em loopback, sem privilégios e com sistema de arquivos
-# somente leitura. O acesso de fora entra por um túnel, nunca por porta aberta.
+# somente leitura fora do volume. O acesso de fora entra por um túnel, nunca
+# por porta aberta.
+#
+# Login do motor, feito uma vez pela pessoa dona da conta:
+#   docker compose -f deploy/compose.yaml run --rm -it --entrypoint claude server auth login
+# Código para parear um aparelho:
+#   docker compose -f deploy/compose.yaml exec server node /app/server.mjs parear
 name: awikabot
 
 services:
@@ -11,12 +17,17 @@ services:
       dockerfile: apps/server/Dockerfile
     init: true
     read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - dados:/data
     ports:
       - "127.0.0.1:8790:8790"
     networks:
       - awikabot
-    mem_limit: 256m
-    pids_limit: 128
+    # Servidor mais quatro turnos simultâneos do motor, no pior caso medido.
+    mem_limit: 2g
+    pids_limit: 512
     cap_drop:
       - ALL
     security_opt:
@@ -28,3 +39,6 @@ networks:
     ipam:
       config:
         - subnet: 172.27.0.0/16
+
+volumes:
+  dados:

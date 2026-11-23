@@ -7,10 +7,17 @@ O padrão é o da skill `bootstrap-monorepo`. Aqui fica só o que desvia dele, c
 | `apps/server` no lugar de `apps/web` | Next.js na Vercel com Neon | O servidor precisa manter processos de agente vivos e arquivos locais no Orange Pi, o que uma plataforma serverless não faz. |
 | Scripts `server` e `server:build` na raiz | `web` e `web:build` | Não há web. As skills que chamam `web` ou `web:build` não se aplicam; `typecheck`, `test` e `lint` seguem o contrato. |
 | Sem páginas legais nem site | `apps/web` reduzido às páginas legais | A distribuição começa por TestFlight e teste interno. As páginas entram antes da loja pública. |
-| `node:http` sem framework no servidor | — | O esqueleto só tem o health check. A escolha de framework fica para a etapa 2, quando houver rotas, autenticação e streaming para pesar. |
+| Hono no servidor | — | A etapa 2 trouxe rotas, autenticação e fluxo de eventos. O Hono é pequeno, não tem dependências e entra inteiro no pacote único do servidor. |
+| SQLite embutido do Node (`node:sqlite`) | Postgres no Neon | O banco fica num arquivo no volume do servidor. O módulo embutido dispensa addon nativo, que complicaria o pacote único e a imagem arm64. |
+| Código de pareamento gerado por comando no servidor | — | Quem pode rodar um comando no contêiner é quem manda no servidor. O código tem 60 bits, vale 5 minutos e uma vez; o banco guarda só o hash. |
+| Fluxo de eventos com época e reenvio | — | O app retoma de onde parou pelo último id. Se o servidor reiniciou ou o evento já saiu da memória, recebe `ressincronizar` e busca o estado de novo. Cada trecho de texto leva a posição dele, e a resposta em andamento sai com o que já chegou, para o app juntar sem repetir. |
+| "Desparear" revoga o token no servidor | — | O aparelho chama `DELETE /v1/dispositivo`. Só esquecer a sessão no celular deixaria o token valendo. |
+| Texto do turno pela entrada padrão do motor; opções na forma `--nome=valor` | — | Nada que venha do app é lido pelo Claude Code como opção de linha de comando. |
+| Pasta de trabalho definida pelo servidor, uma por bot | "pasta de trabalho" informada pela pessoa | Nenhum caminho vindo do app entra no sistema de arquivos. |
+| Sem aprovação de ações na etapa 2 | — | O motor roda no modo padrão e nega toda ação que pede aprovação. Os bots conversam; executar comandos entra com os cartões de aprovação, na etapa 3. |
 | `packages/core` exporta o TypeScript de origem | — | O servidor é empacotado pelo esbuild e o app pelo Metro; os dois leem a origem, e não há passo de build do core para esquecer. |
 | ESLint 9, não o 10 | — | O `eslint-plugin-react` que vem com o `eslint-config-expo` 58 falha no ESLint 10. |
-| Imagem do servidor sem o motor | — | O Claude Code entra na imagem na etapa em que o driver existir. A prova da etapa 0 fica em `spike/`. |
+| Motor na imagem do servidor, em versão fixa | — | O Claude Code é instalado como a Anthropic publica, com a atualização automática desligada. Trocar de versão é mudar o `CLAUDE_CODE_VERSION` e testar. |
 
 ## Pendências de configuração externa
 

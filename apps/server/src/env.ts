@@ -1,11 +1,19 @@
 import { z } from 'zod';
 
-const EsquemaEnv = z.object({
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  // Padrão em loopback: só a imagem do contêiner abre para a rede dele.
-  AWIKA_HOST: z.string().min(1).default('127.0.0.1'),
-  AWIKA_PORTA: z.coerce.number().int().min(1).max(65535).default(8790),
-});
+const EsquemaEnv = z
+  .object({
+    NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+    // Padrão em loopback: só a imagem do contêiner abre para a rede dele.
+    AWIKA_HOST: z.string().min(1).default('127.0.0.1'),
+    AWIKA_PORTA: z.coerce.number().int().min(1).max(65535).default(8790),
+    /** Pasta do banco e das pastas de trabalho dos bots. */
+    AWIKA_DADOS: z.string().min(1).default('./dados'),
+    AWIKA_MOTOR: z.enum(['claude-code', 'simulado']).default('claude-code'),
+    AWIKA_CLAUDE_BIN: z.string().min(1).default('claude'),
+    AWIKA_TURNOS_SIMULTANEOS: z.coerce.number().int().min(1).max(16).default(4),
+  })
+  // O motor simulado só existe para teste; em produção ele derruba a partida.
+  .refine((env) => !(env.NODE_ENV === 'production' && env.AWIKA_MOTOR === 'simulado'), { path: ['AWIKA_MOTOR'] });
 
 export type Env = z.infer<typeof EsquemaEnv>;
 
