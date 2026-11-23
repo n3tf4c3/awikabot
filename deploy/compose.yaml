@@ -1,0 +1,30 @@
+# Servidor do awikabot num host com Docker. Rede própria com sub-rede declarada,
+# porta publicada só em loopback, sem privilégios e com sistema de arquivos
+# somente leitura. O acesso de fora entra por um túnel, nunca por porta aberta.
+name: awikabot
+
+services:
+  server:
+    image: awikabot-server:${AWIKA_TAG:-dev}
+    build:
+      context: ..
+      dockerfile: apps/server/Dockerfile
+    init: true
+    read_only: true
+    ports:
+      - "127.0.0.1:8790:8790"
+    networks:
+      - awikabot
+    mem_limit: 256m
+    pids_limit: 128
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+networks:
+  awikabot:
+    ipam:
+      config:
+        - subnet: 172.27.0.0/16

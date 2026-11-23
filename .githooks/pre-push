@@ -1,0 +1,75 @@
+#!/bin/sh
+# Hook pre-push: cobra o carimbo "Verificado-por:" de cada commit que o push envia.
+# Confere a declaração, não refaz a verificação: quem prova é a suíte, a CI e o runbook.
+#
+# Instalação no projeto: copiar para .githooks/pre-push (fim de linha LF) e ativar com
+#   git config core.hooksPath .githooks
+# Modo, em `git config verificacao.gate`:
+#   observar  (padrão) avisa e deixa o push passar
+#   impor     recusa o push enquanto houver commit sem carimbo
+#   off       não confere nada
+# Commits de merge ficam de fora. Em `impor`, o commit sem verificação sai com
+# "Verificado-por: nenhum (motivo)", nunca com --no-verify.
+
+modo=$(git config --get verificacao.gate 2>/dev/null)
+[ -n "$modo" ] || modo=observar
+case "$modo" in
+  off) exit 0 ;;
+  observar | impor) ;;
+  *)
+    echo "pre-push: verificacao.gate='$modo' é inválido (use observar, impor ou off)." >&2
+    exit 1
+    ;;
+esac
+
+# Id nulo no tamanho do hash do repositório (SHA-1 ou SHA-256).
+zero=$(git hash-object --stdin </dev/null | tr '[0-9a-f]' '0')
+faltam=0
+
+# O Git passa o nome do remoto destinatário em $1 (ou a URL, no push direto para URL).
+# Só as referências locais dele contam como "já está lá": commit conhecido por outro
+# remoto (upstream, fork) ainda é enviado a este e precisa ser cobrado.
+destino=$1
+if [ -n "$destino" ] && [ -n "$(git for-each-ref --count=1 --format='%(refname)' "refs/remotes/$destino/")" ]; then
+  conhecido=sim
+else
+  conhecido=nao
+fi
+
+while read -r _ref_local sha_local _ref_remoto sha_remoto; do
+  # Exclusão de branch: nada é enviado.
+  [ "$sha_local" = "$zero" ] && continue
+
+  # Branch nova, ou ponta remota que este clone não conhece: cobra o que o remoto
+  # destinatário não tem pelas referências locais dele. Destino sem referências
+  # locais (push para URL, remoto nunca buscado): cobra todo o histórico enviado.
+  # Caso contrário, só os commits acima da ponta remota.
+  if [ "$sha_remoto" = "$zero" ] || ! git cat-file -e "$sha_remoto^{commit}" 2>/dev/null; then
+    if [ "$conhecido" = sim ]; then
+      lista=$(git rev-list --no-merges "$sha_local" --not --remotes="$destino") || exit 1
+    else
+      lista=$(git rev-list --no-merges "$sha_local") || exit 1
+    fi
+  else
+    lista=$(git rev-list --no-merges "$sha_remoto..$sha_local") || exit 1
+  fi
+
+  for c in $lista; do
+    carimbo=$(git log -1 --format='%(trailers:key=Verificado-por,valueonly)' "$c" | tr -d '[:space:]')
+    if [ -z "$carimbo" ]; then
+      echo "pre-push: sem Verificado-por: $(git log -1 --format='%h %s' "$c")" >&2
+      faltam=$((faltam + 1))
+    fi
+  done
+done
+
+[ "$faltam" -eq 0 ] && exit 0
+
+if [ "$modo" = impor ]; then
+  echo "pre-push: push recusado, $faltam commit(s) sem carimbo de verificação." >&2
+  echo "pre-push: refaça a mensagem com 'Verificado-por: <o que rodou>' ou 'Verificado-por: nenhum (motivo)'." >&2
+  exit 1
+fi
+
+echo "pre-push: aviso (modo observar), $faltam commit(s) sem carimbo de verificação." >&2
+exit 0
