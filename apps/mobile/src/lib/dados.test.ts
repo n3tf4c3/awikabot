@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Bot, Evento, Mensagem } from '@awikabot/core';
+import type { Aprovacao, Bot, Evento, Mensagem } from '@awikabot/core';
 import { CONVERSA_VAZIA } from './conversa';
 import { DADOS_INICIAIS, criarArmazem, criarArmazemDados, redutorDados, type AcaoDados, type EstadoDados } from './dados';
 
@@ -235,5 +235,79 @@ describe('criarArmazem', () => {
     armazem.assinar(() => cancelarSegundo());
     cancelarSegundo = armazem.assinar(segundo);
     expect(() => armazem.despachar(1)).not.toThrow();
+  });
+});
+
+describe('redutorDados: aprovações', () => {
+  function apr(n: number, estado: Aprovacao['estado'] = 'pendente', botId = BOT_A): Aprovacao {
+    return {
+      id: `apr${String(n).padStart(13, '0')}`,
+      botId,
+      mensagemId: msg(botId, 2).id,
+      ferramenta: 'Bash',
+      resumo: `comando ${n}`,
+      estado,
+      criadaEm: n,
+      resolvidaEm: estado === 'pendente' ? null : n + 100,
+    };
+  }
+  const estadosDe = (estado: EstadoDados): Record<string, string> =>
+    Object.fromEntries(Object.values(estado.aprovacoes.porId).map((dados) => [dados.resumo, dados.estado]));
+
+  it('começa sem aprovações', () => {
+    expect(DADOS_INICIAIS.aprovacoes).toEqual({ porId: {}, revisao: 0 });
+  });
+
+  it('os eventos de aprovação entram no armazém e não mexem em bots nem em conversas', () => {
+    const pedida = aplicar(comConversa, [evento({ tipo: 'aprovacao_pedida', aprovacao: apr(1) })]);
+    expect(estadosDe(pedida)).toEqual({ 'comando 1': 'pendente' });
+    expect(pedida.bots).toBe(comConversa.bots);
+    expect(pedida.conversas).toBe(comConversa.conversas);
+    expect(pedida.revisaoBots).toBe(comConversa.revisaoBots);
+
+    const resolvida = aplicar(pedida, [evento({ tipo: 'aprovacao_resolvida', aprovacao: apr(1, 'negada') })]);
+    expect(estadosDe(resolvida)).toEqual({ 'comando 1': 'negada' });
+    expect(resolvida.aprovacoes.revisao).toBe(2);
+  });
+
+  it('aprovacao_resolvida de um pedido desconhecido não quebra nada', () => {
+    const estado = aplicar(comBots, [evento({ tipo: 'aprovacao_resolvida', aprovacao: apr(5, 'expirada', BOT_B) })]);
+    expect(estadosDe(estado)).toEqual({ 'comando 5': 'expirada' });
+  });
+
+  it('aprovacoes_carregadas em dia troca os pendentes pelos da lista', () => {
+    const antes = aplicar(comBots, [
+      evento({ tipo: 'aprovacao_pedida', aprovacao: apr(1) }),
+      evento({ tipo: 'aprovacao_pedida', aprovacao: apr(2) }),
+    ]);
+    const estado = aplicar(antes, [{ tipo: 'aprovacoes_carregadas', pendentes: [apr(2), apr(3)], revisao: antes.aprovacoes.revisao }]);
+    expect(estadosDe(estado)).toEqual({ 'comando 2': 'pendente', 'comando 3': 'pendente' });
+  });
+
+  it('aprovacoes_carregadas com revisão antiga não tira o que chegou por evento', () => {
+    const antes = aplicar(comBots, [evento({ tipo: 'aprovacao_pedida', aprovacao: apr(1) })]);
+    const estado = aplicar(antes, [{ tipo: 'aprovacoes_carregadas', pendentes: [], revisao: 0 }]);
+    expect(estado).toBe(antes);
+  });
+
+  it('aprovacao_decidida guarda a resposta do servidor', () => {
+    const antes = aplicar(comBots, [evento({ tipo: 'aprovacao_pedida', aprovacao: apr(1) })]);
+    const estado = aplicar(antes, [{ tipo: 'aprovacao_decidida', aprovacao: apr(1, 'aprovada') }]);
+    expect(estadosDe(estado)).toEqual({ 'comando 1': 'aprovada' });
+    expect(aplicar(estado, [{ tipo: 'aprovacao_decidida', aprovacao: apr(1, 'aprovada') }])).toBe(estado);
+  });
+
+  it('ressincronizar não apaga as aprovações: quem busca a lista é a operação', () => {
+    const antes = aplicar(comConversa, [evento({ tipo: 'aprovacao_pedida', aprovacao: apr(1) })]);
+    const estado = aplicar(antes, [evento({ tipo: 'ressincronizar' })]);
+    expect(estado.aprovacoes).toBe(antes.aprovacoes);
+  });
+
+  it('os eventos de aprovação não mexem na conversa aberta do bot', () => {
+    const estado = aplicar(comConversa, [
+      evento({ tipo: 'aprovacao_pedida', aprovacao: apr(1) }),
+      evento({ tipo: 'aprovacao_resolvida', aprovacao: apr(1, 'aprovada') }),
+    ]);
+    expect(estado.conversas[BOT_A]).toBe(comConversa.conversas[BOT_A]);
   });
 });

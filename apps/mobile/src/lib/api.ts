@@ -1,12 +1,17 @@
 import {
+  EsquemaAprovacao,
   EsquemaBot,
+  EsquemaListaAprovacoes,
   EsquemaListaBots,
   EsquemaListaMensagens,
   EsquemaRespostaPareamento,
   EsquemaRespostaTurno,
+  type Aprovacao,
   type Bot,
   type BotEdicao,
   type BotEntrada,
+  type DecisaoAprovacao,
+  type ListaAprovacoes,
   type ListaBots,
   type ListaMensagens,
   type PedidoPareamento,
@@ -55,6 +60,10 @@ export interface Api {
   listarMensagens(botId: string, pagina?: { antes?: number; limite?: number }): Promise<ListaMensagens>;
   enviarTurno(botId: string, pedido: PedidoTurno): Promise<RespostaTurno>;
   pararTurno(botId: string): Promise<void>;
+  /** Os pedidos de aprovação pendentes de todos os bots, do mais antigo para o mais novo. */
+  listarAprovacoes(): Promise<ListaAprovacoes>;
+  /** Aprova ou nega um pedido. Devolve a aprovação já resolvida, como o servidor a gravou. */
+  decidirAprovacao(id: string, decisao: DecisaoAprovacao): Promise<Aprovacao>;
   /**
    * Invalida no servidor o token dado (`DELETE /v1/dispositivo`), com tempo limite curto.
    * Recebe a credencial em vez de ler a sessão: serve também para um token que nem chegou a ser guardado.
@@ -197,6 +206,16 @@ export function criarApi(opcoes: OpcoesApi): Api {
 
     async pararTurno(botId) {
       await pedir('POST', `${bot(botId)}/turnos/atual/parar`);
+    },
+
+    async listarAprovacoes() {
+      const { status, texto } = await pedir('GET', '/v1/aprovacoes');
+      return ler(EsquemaListaAprovacoes, status, texto);
+    },
+
+    async decidirAprovacao(id, decisao) {
+      const { status, texto } = await pedir('POST', `/v1/aprovacoes/${encodeURIComponent(id)}`, decisao);
+      return ler(EsquemaAprovacao, status, texto);
     },
 
     // Fora da regra da sessão: quem chama já vai esquecer esta credencial, com ou sem resposta.

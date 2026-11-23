@@ -51,6 +51,10 @@ Todo workspace declara `lint`, `typecheck` e `test`: `pnpm -r` pula em silêncio
 - **Token só na resposta do pareamento**: o banco guarda o hash do token e do código. Nenhuma rota devolve token, e nada o escreve em log.
 - **Tudo em `/v1` exige token**, menos `POST /v1/parear`. Rota nova entra abaixo do middleware de autenticação em `apps/server/src/app.ts`, e o teste que lista as rotas protegidas ganha a linha dela.
 - **Pareamento com trava**: cinco códigos errados bloqueiam o pareamento por dez minutos, para o servidor inteiro.
+- **O motor pede, a pessoa aprova**: a decisão de uma aprovação só entra por `POST /v1/aprovacoes/:id`, com token de aparelho. O token do turno, que o gancho usa, nunca aprova nada.
+- **Porta do gancho só em loopback** (`AWIKA_PORTA_GANCHO`): nunca publicar no compose nem passar pelo túnel.
+- **Política de ferramentas num lugar só**: `apps/server/src/politica.ts`. Ferramenta nova ou desconhecida vai para a pessoa; só entra na lista de leitura com teste em `politica.test.ts`.
+- **Gancho que falha nega**: sem servidor, sem configuração ou com resposta ilegível, a ação não roda.
 - **401 só derruba a sessão que fez o pedido**: o app captura a sessão no início do pedido e só a apaga se ela ainda for a atual, e só quando o corpo do 401 traz o código `nao_autenticado` do servidor. Um 401 de proxy ou túnel e um erro de rede nunca deslogam.
 - **Cliente do app testado contra o servidor**: `apps/server/src/contrato-app.test.ts` usa a lógica de `apps/mobile/src/lib` pela rede. Rota ou evento novo que o app consome ganha um caso ali.
 - **Endereço do servidor no app**: `https://` sempre, menos `localhost` e endereços de rede privada, que aceitam `http://`.
@@ -77,7 +81,8 @@ A memória do projeto fica no ai-memory, no escopo do `.ai-memory.toml`. Ao conc
 
 ## Limitações conhecidas
 
-- Os bots só conversam: o motor nega toda ação que pede aprovação até os cartões de aprovação existirem (F4).
+- Não há aviso push: com o app fechado, um pedido de aprovação expira em 15 minutos e a ação não roda.
+- Um comando aprovado roda com os direitos do contêiner: lê tudo o que está no volume, inclusive o login do motor. O cartão mostra o comando inteiro, e é ele que a pessoa aprova.
 - Um bot cuja sessão do motor se perdeu não tem como começar uma conversa nova pelo app.
 - O servidor guarda só o texto final de cada resposta; os trechos intermediários vivem na memória do processo.
 - O app não tem identificador de pacote nem projeto no EAS; não gera build de loja ainda. Ver `docs/decisoes.md`.

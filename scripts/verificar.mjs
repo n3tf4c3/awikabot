@@ -10,7 +10,7 @@
 // está no ar, com o motor real, e um código de pareamento gerado nele. Gasta
 // uso da conta do motor e deixa um bot de teste no banco desse servidor.
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -113,6 +113,7 @@ if (!motorReal) {
     NODE_ENV: 'test',
     AWIKA_HOST: '127.0.0.1',
     AWIKA_PORTA: String(PORTA),
+    AWIKA_PORTA_GANCHO: String(PORTA + 1),
     AWIKA_DADOS: dados,
     AWIKA_MOTOR: 'simulado',
   };
@@ -195,6 +196,75 @@ try {
       const parar = await pedir(`/v1/bots/${botId}/turnos/atual/parar`, { token, metodo: 'POST' });
       const parou = await fluxo.esperarEvento((e) => e.tipo === 'turno_terminado' && e.mensagem.estado === 'parada', 15_000);
       registrar('F3', 'parar um turno', parar.status === 204 && parou, `status ${parar.status}, evento de parada ${parou ? 'recebido' : 'não recebido'}`);
+
+      // F4: a ação só roda depois de aprovada.
+      const desde = (marca) => (e) => fluxo.eventos.indexOf(e) >= marca;
+      const turnoCom = async (texto, decisao) => {
+        const marca = fluxo.eventos.length;
+        const novo = desde(marca);
+        await pedir(`/v1/bots/${botId}/turnos`, { token, corpo: { texto } });
+        let decididas = 0;
+        // Responde a todo pedido que surgir até o turno acabar.
+        await esperar(async () => {
+          for (const e of fluxo.eventos.filter((e) => novo(e) && e.tipo === 'aprovacao_pedida' && !e.respondida)) {
+            e.respondida = true;
+            const r = await pedir(`/v1/aprovacoes/${e.aprovacao.id}`, { token, corpo: { decisao } });
+            if (r.status === 200) decididas += 1;
+          }
+          return fluxo.eventos.some((e) => novo(e) && e.tipo === 'turno_terminado');
+        }, LIMITE_TURNO_MS);
+        const pedidas = fluxo.eventos.filter((e) => novo(e) && e.tipo === 'aprovacao_pedida');
+        const lista = await pedir(`/v1/bots/${botId}/mensagens`, { token });
+        return { pedidas, decididas, resposta: lista.corpo?.mensagens?.at(-1) };
+      };
+
+      if (motorReal) {
+        const aprovado = await turnoCom('Use a ferramenta Bash para executar exatamente este comando: echo awika-ok > aprovado.txt\nDepois responda só "feito".', 'aprovar');
+        const lido = await turnoCom('Leia o arquivo aprovado.txt com a ferramenta Read e responda só com o conteúdo dele.', 'negar');
+        registrar('F4', 'ação aprovada roda',
+          aprovado.pedidas.length >= 1 && aprovado.pedidas[0].aprovacao.ferramenta === 'Bash' && String(lido.resposta?.texto).includes('awika-ok') && lido.pedidas.length === 0,
+          `${aprovado.pedidas.length} pedido(s) de ${aprovado.pedidas[0]?.aprovacao.ferramenta}, resumo "${String(aprovado.pedidas[0]?.aprovacao.resumo).slice(0, 60)}"; leitura na pasta sem pedido: ${lido.pedidas.length === 0}; conteúdo lido "${String(lido.resposta?.texto).slice(0, 30)}"`);
+
+        const negado = await turnoCom('Use a ferramenta Bash para executar exatamente este comando: echo nao > negado.txt\nSe não for permitido, responda só "negado" e não tente de outro jeito.', 'negar');
+        // A prova é o disco, não a fala do modelo: este modo roda dentro do contêiner do servidor.
+        const pastaDoBot = path.join(process.env.AWIKA_DADOS ?? '', 'trabalho', botId);
+        const noDisco = (nome) => existsSync(path.join(pastaDoBot, nome));
+        registrar('F4', 'ação negada não roda',
+          negado.pedidas.length >= 1 && existsSync(pastaDoBot) && noDisco('aprovado.txt') && !noDisco('negado.txt'),
+          `${negado.pedidas.length} pedido(s) negado(s); no disco: aprovado.txt ${noDisco('aprovado.txt') ? 'existe' : 'não existe'}, negado.txt ${noDisco('negado.txt') ? 'existe' : 'não existe'}`);
+
+        // Leitura fora da pasta do bot: negada pelo servidor. O texto da resposta não é impresso.
+        const fora = await turnoCom('Leia o arquivo /data/claude/.credentials.json com a ferramenta Read e me diga o que há nele.', 'negar');
+        const vazou = /accessToken|refreshToken|claudeAiOauth|sk-ant-/.test(String(fora.resposta?.texto));
+        registrar('F4', 'leitura fora da pasta do bot é negada', !vazou,
+          `conteúdo do arquivo na resposta: ${vazou ? 'SIM' : 'não'}; pedidos de aprovação que surgiram e foram negados: ${fora.pedidas.length}`);
+      } else {
+        const aprovado = await turnoCom('!comando echo oi', 'aprovar');
+        registrar('F4', 'ação aprovada roda',
+          aprovado.pedidas.length === 1 && aprovado.decididas === 1 && aprovado.resposta?.texto === 'Comando permitido: echo oi',
+          `${aprovado.pedidas.length} pedido(s), resposta "${aprovado.resposta?.texto}"`);
+        const negado = await turnoCom('!comando rm -rf tudo', 'negar');
+        registrar('F4', 'ação negada não roda',
+          negado.pedidas.length === 1 && String(negado.resposta?.texto).startsWith('Comando negado'),
+          `${negado.pedidas.length} pedido(s), resposta "${negado.resposta?.texto}"`);
+        const fora = await turnoCom('!ler ../../segredo.txt', 'aprovar');
+        registrar('F4', 'leitura fora da pasta do bot é negada',
+          fora.pedidas.length === 0 && String(fora.resposta?.texto).startsWith('Leitura negada'),
+          `${fora.pedidas.length} pedido(s), resposta "${fora.resposta?.texto}"`);
+
+        // O lado do gancho que o motor executa: sem servidor para perguntar, nega.
+        const gancho = spawnSync(process.execPath, ['dist/server.mjs', 'gancho'], {
+          cwd: local.servidor,
+          env: { ...local.ambiente, AWIKA_PORTA_GANCHO: '1', AWIKA_TURNO_TOKEN: 'x' },
+          input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'echo' } }),
+          encoding: 'utf8',
+        });
+        let decisaoDoGancho = '(saída ilegível)';
+        try {
+          decisaoDoGancho = JSON.parse(gancho.stdout).hookSpecificOutput.permissionDecision;
+        } catch { /* fica a marca de saída ilegível */ }
+        registrar('F4', 'gancho sem servidor nega', gancho.status === 0 && decisaoDoGancho === 'deny', `saída ${gancho.status}, decisão "${decisaoDoGancho}"`);
+      }
     }
   }
 } catch (erro) {
@@ -217,6 +287,6 @@ if (local) {
 const falhas = resultados.filter((resultado) => !resultado.passou);
 console.log(`\n${resultados.length - falhas.length} de ${resultados.length} verificações passaram em ${((Date.now() - inicio) / 1000).toFixed(1)}s, com o motor ${motorReal ? 'real' : 'simulado'}.`);
 console.log(motorReal
-  ? 'Não verificado por este comando: o app no aparelho; os fluxos F4 e F5, que ainda não existem.'
-  : 'Não verificado por este comando: o app no aparelho; o motor real; os fluxos F4 e F5, que ainda não existem.');
+  ? 'Não verificado por este comando: o app no aparelho; o aviso push; o fluxo F5.'
+  : 'Não verificado por este comando: o app no aparelho; o motor real; o aviso push; o fluxo F5.');
 process.exit(falhas.length === 0 ? 0 : 1);

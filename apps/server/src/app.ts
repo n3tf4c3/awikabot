@@ -4,6 +4,7 @@ import { streamSSE } from 'hono/streaming';
 import {
   EsquemaBotEdicao,
   EsquemaBotEntrada,
+  EsquemaDecisaoAprovacao,
   EsquemaPedidoPareamento,
   EsquemaPedidoTurno,
   INTERVALO_PING_MS,
@@ -13,6 +14,7 @@ import {
   type Saude,
 } from '@awikabot/core';
 import type { ZodType } from 'zod';
+import type { GestorDeAprovacoes } from './aprovacoes';
 import type { Banco } from './banco';
 import { criarBot, editarBot, listarBots, obterBot, paraContrato } from './bots';
 import { listarMensagens } from './conversa';
@@ -25,6 +27,7 @@ export interface Dependencias {
   banco: Banco;
   barramento: Barramento;
   turnos: GestorDeTurnos;
+  aprovacoes: GestorDeAprovacoes;
   limitador: LimitadorDeTentativas;
   /** Intervalo do sinal de vida do fluxo de eventos. Menor nos testes. */
   intervaloPingMs?: number;
@@ -160,6 +163,18 @@ export function criarApp(deps: Dependencias): Hono<Ambiente> {
     if (!obterBot(deps.banco, c.req.param('id'))) return c.json({ erro: 'nao_encontrado' }, 404);
     if (!deps.turnos.parar(c.req.param('id'))) return c.json({ erro: 'sem_turno_ativo' }, 409);
     return c.body(null, 204);
+  });
+
+  app.get('/v1/aprovacoes', (c) => c.json({ aprovacoes: deps.aprovacoes.pendentes() }));
+
+  // A única porta de entrada de uma decisão: um aparelho pareado. O motor só pede; nunca aprova.
+  app.post('/v1/aprovacoes/:id', async (c) => {
+    const corpo = await lerCorpo(c, EsquemaDecisaoAprovacao);
+    if ('resposta' in corpo) return corpo.resposta;
+    const resultado = deps.aprovacoes.decidir(c.req.param('id'), corpo.dados.decisao, c.get('dispositivo').id);
+    if (resultado === 'nao_encontrado') return c.json({ erro: 'nao_encontrado' }, 404);
+    if (resultado === 'ja_resolvida') return c.json({ erro: 'ja_resolvida' }, 409);
+    return c.json(resultado);
   });
 
   app.get('/v1/eventos', (c) => {

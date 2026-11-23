@@ -12,17 +12,30 @@ import { criarApi, type Api, type Buscar } from '../../mobile/src/lib/api';
 import { iniciarFluxoEventos, type BuscarFluxo, type FluxoEventos } from '../../mobile/src/lib/fluxo-eventos';
 import type { Sessao } from '../../mobile/src/lib/sessao';
 import { criarApp } from './app';
+import { GestorDeAprovacoes } from './aprovacoes';
 import { abrirBanco } from './banco';
 import { criarCodigo, LimitadorDeTentativas } from './dispositivos';
 import { Barramento } from './eventos';
+import { criarAppDoGancho, Ganchos } from './gancho';
 import { criarMotorSimulado } from './motor-simulado';
 import { GestorDeTurnos } from './turnos';
 
 const pasta = mkdtempSync(path.join(os.tmpdir(), 'awikabot-contrato-'));
 const banco = abrirBanco(':memory:');
 const barramento = new Barramento();
-const turnos = new GestorDeTurnos({ banco, barramento, motor: criarMotorSimulado({ atrasoMs: 10 }), limite: 4, pastaDosBots: pasta });
-const app = criarApp({ versao: '9.9.9-teste', banco, barramento, turnos, limitador: new LimitadorDeTentativas(), intervaloPingMs: 50 });
+const aprovacoes = new GestorDeAprovacoes({ banco, barramento });
+const ganchos = new Ganchos();
+const servidorDoGancho = serve({ fetch: criarAppDoGancho({ ganchos, aprovacoes }).fetch, hostname: '127.0.0.1', port: 0 }) as Server;
+await new Promise<void>((pronto) => servidorDoGancho.once('listening', () => pronto()));
+const turnos = new GestorDeTurnos({
+  banco,
+  barramento,
+  motor: criarMotorSimulado({ atrasoMs: 10 }),
+  limite: 4,
+  pastaDosBots: pasta,
+  aprovacoes: { ganchos, aprovacoes, comando: 'o motor simulado não executa o gancho', porta: (servidorDoGancho.address() as AddressInfo).port },
+});
+const app =criarApp({ versao: '9.9.9-teste', banco, barramento, turnos, aprovacoes, limitador: new LimitadorDeTentativas(), intervaloPingMs: 50 });
 
 const buscar: Buscar = (url, pedido) => fetch(url, pedido);
 const buscarFluxo: BuscarFluxo = (url, pedido) => fetch(url, pedido) as unknown as ReturnType<BuscarFluxo>;
@@ -58,6 +71,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
   fluxo?.parar();
+  servidorDoGancho.closeAllConnections();
+  servidorDoGancho.close();
   servidor.closeAllConnections();
   await new Promise<void>((fim) => servidor.close(() => fim()));
   rmSync(pasta, { recursive: true, force: true });
@@ -125,6 +140,23 @@ describe('cliente do app contra o servidor', () => {
     await esperar(() => doTipo('bot_salvo').length === salvosAntes + 1);
     expect(doTipo('bot_salvo').at(-1)?.bot.nome).toBe('Scout 3');
     expect(doTipo('ressincronizar')).toHaveLength(1);
+  });
+
+  it('recebe o pedido de aprovação e leva a decisão ao servidor', async () => {
+    const botId = (await api.listarBots()).bots[0]!.id;
+    const terminadosAntes = doTipo('turno_terminado').length;
+    await api.enviarTurno(botId, { texto: '!comando echo oi' });
+    await esperar(() => doTipo('aprovacao_pedida').length === 1);
+
+    const [pendente] = (await api.listarAprovacoes()).aprovacoes;
+    expect(pendente).toMatchObject({ botId, ferramenta: 'Bash', resumo: 'echo oi', estado: 'pendente' });
+    expect((await api.decidirAprovacao(pendente!.id, { decisao: 'aprovar' })).estado).toBe('aprovada');
+    await esperar(() => doTipo('aprovacao_resolvida').length === 1 && doTipo('turno_terminado').length === terminadosAntes + 1);
+    expect(doTipo('turno_terminado').at(-1)?.mensagem.texto).toBe('Comando permitido: echo oi');
+
+    expect((await api.listarAprovacoes()).aprovacoes).toEqual([]);
+    await expect(api.decidirAprovacao(pendente!.id, { decisao: 'negar' })).rejects.toThrow();
+    await expect(api.decidirAprovacao('abcdefgh12345678', { decisao: 'aprovar' })).rejects.toThrow();
   });
 
   it('desparear revoga o token: a API e o fluxo passam a ser recusados', async () => {

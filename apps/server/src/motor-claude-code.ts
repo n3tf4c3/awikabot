@@ -1,5 +1,9 @@
 import { spawn } from 'node:child_process';
+import { ESPERA_APROVACAO_MS } from '@awikabot/core';
 import type { Motor, ResultadoMotor } from './motor';
+
+/** Prazo do gancho, em segundos: a espera da aprovação mais uma folga. */
+const PRAZO_DO_GANCHO_S = Math.ceil(ESPERA_APROVACAO_MS / 1000) + 60;
 
 /**
  * Dirige o binário do Claude Code sem modificação, em modo não interativo.
@@ -14,7 +18,23 @@ export function criarMotorClaudeCode(opcoes: { binario: string }): Motor {
     if (pedido.modelo) args.push(`--model=${pedido.modelo}`);
     if (pedido.sessao) args.push(`--resume=${pedido.sessao}`);
 
-    const filho = spawn(opcoes.binario, args, { cwd: pedido.pasta, stdio: ['pipe', 'pipe', 'pipe'] });
+    const ambiente = { ...process.env };
+    if (pedido.gancho) {
+      // O gancho roda antes de toda ferramenta. Quem decide é o servidor: leitura dentro da
+      // pasta do bot passa, o resto espera a pessoa. O prazo cobre a espera inteira da aprovação.
+      const configuracao = {
+        hooks: {
+          PreToolUse: [
+            { matcher: '*', hooks: [{ type: 'command', command: pedido.gancho.comando, timeout: PRAZO_DO_GANCHO_S }] },
+          ],
+        },
+      };
+      args.push(`--settings=${JSON.stringify(configuracao)}`);
+      ambiente.AWIKA_PORTA_GANCHO = String(pedido.gancho.porta);
+      ambiente.AWIKA_TURNO_TOKEN = pedido.gancho.token;
+    }
+
+    const filho = spawn(opcoes.binario, args, { cwd: pedido.pasta, env: ambiente, stdio: ['pipe', 'pipe', 'pipe'] });
 
     let texto = '';
     let sessao = pedido.sessao;
