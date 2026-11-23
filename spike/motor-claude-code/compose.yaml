@@ -1,0 +1,35 @@
+# Prova descartável da etapa 0. Segue a regra do Orange Pi: rede própria com
+# sub-rede declarada, nenhuma porta publicada, sem privilégios.
+name: awikabot-spike
+
+services:
+  prova:
+    build: .
+    image: awikabot-spike:etapa0
+    init: true
+    environment:
+      AWIKA_ATRASO_APROVACAO: ${AWIKA_ATRASO_APROVACAO:-20}
+      AWIKA_MODELO: ${AWIKA_MODELO:-}
+      AWIKA_CLAUDE_BIN: ${AWIKA_CLAUDE_BIN:-claude}
+    volumes:
+      - dados:/data
+      - ./prova:/opt/prova:ro
+    networks:
+      - prova
+    mem_limit: 2g
+    pids_limit: 256
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+    command: ["node", "/opt/prova/prova.mjs", "tudo"]
+
+networks:
+  prova:
+    ipam:
+      config:
+        - subnet: 172.26.0.0/16
+
+volumes:
+  dados:
