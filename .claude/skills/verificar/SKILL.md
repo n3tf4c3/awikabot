@@ -17,11 +17,26 @@ pnpm verificar
 
 O comando faz os cinco passos e sai com código diferente de zero se algo falhar:
 
-1. **Subir**: empacota o servidor (`apps/server/build.mjs`) e inicia `dist/server.mjs` com `NODE_ENV=production` em `127.0.0.1:8795`. Outra porta: `AWIKA_VERIFICAR_PORTA`. Recusa começar se a porta já responde.
-2. **Dirigir**: os fluxos do mapa que existem. Hoje, só o F0 (saúde do servidor).
-3. **Observar**: status e corpo de cada resposta contra o resultado esperado do mapa.
-4. **Encerrar**: derruba o processo e confere que a porta ficou livre.
+1. **Subir**: empacota o servidor (`apps/server/build.mjs`) e inicia `dist/server.mjs` em `127.0.0.1:8795`, com o motor simulado e um banco descartável numa pasta temporária. Outra porta: `AWIKA_VERIFICAR_PORTA`. Recusa começar se a porta já responde.
+2. **Dirigir**: os fluxos F0 a F3 do mapa, pelo lado do servidor: saúde, pareamento com código gerado pelo comando `parear`, criar e editar um bot, um turno com resposta aos poucos e a parada de um turno.
+3. **Observar**: status e corpo de cada resposta, e os eventos do fluxo `/v1/eventos`, contra o resultado esperado do mapa.
+4. **Encerrar**: fecha o fluxo, derruba o processo, apaga o banco temporário e confere que a porta ficou livre.
 5. **Relatar**: uma linha por verificação e a lista do que não foi verificado.
+
+## Motor real
+
+O comando acima roda o motor simulado. Para conferir o Claude Code de verdade, usar um servidor que já está no ar e com login feito. Isso gasta uso da conta do motor e deixa um bot de teste no banco desse servidor, então não é para produção com dado real.
+
+No host do servidor, na pasta do repositório:
+
+```sh
+C="docker compose -f deploy/compose.yaml"
+CODIGO=$($C exec -T server node /app/server.mjs parear | grep -oE '[A-Z2-7]{4}-[A-Z2-7]{4}-[A-Z2-7]{4}')
+$C exec -T -e AWIKA_VERIFICAR_BASE=http://127.0.0.1:8790 -e AWIKA_VERIFICAR_CODIGO="$CODIGO" \
+  server node --input-type=module - < scripts/verificar.mjs
+```
+
+Nesse modo o comando também confere que o bot lembra do turno anterior.
 
 ## App no aparelho
 
@@ -35,7 +50,7 @@ Abrir no Expo Go ou num build de desenvolvimento, no iPhone e no Android, e perc
 
 ## Ao relatar
 
-Dizer os fluxos exercitados, com a evidência, e o que não foi verificado. Nunca um "verificado" genérico.
+Dizer os fluxos exercitados, com a evidência, com qual motor, e o que não foi verificado. Nunca um "verificado" genérico.
 
 ## Quando um fluxo novo entrar
 

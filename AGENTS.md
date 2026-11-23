@@ -5,7 +5,7 @@ Gerenciador de bots: um servidor mantém agentes de IA rodando e apps de iOS e A
 ## Estrutura
 
 ```text
-apps/server     servidor Node 24 (hoje só o health check); roda em contêiner
+apps/server     servidor Node 24 (Hono, SQLite embutido); roda em contêiner, com o motor na imagem
 apps/mobile     app Expo (iOS e Android)
 packages/core   contratos e validação compartilhados (zod), sem framework
 deploy/         compose do servidor
@@ -24,6 +24,10 @@ spike/          provas descartáveis; não é código do produto
 - **ESLint 9**: o `eslint-config-expo` 58 não roda no 10.
 - **Dependências do app**: instalar com `pnpm exec expo install <pacote> --pnpm`, de dentro de `apps/mobile`, para pegar a versão do SDK.
 - **Motor dos bots**: o binário do Claude Code sem modificação. Cada pessoa entra com a própria conta pelo fluxo do próprio Claude Code. O awikabot nunca recebe, guarda nem repassa esse login.
+- **Chamada do motor** (`apps/server/src/motor-claude-code.ts`): o texto da pessoa vai pela entrada padrão e toda opção vai na forma `--nome=valor`. Nunca passar valor vindo do app como argumento solto.
+- **Banco**: `node:sqlite`, síncrono, num arquivo em `AWIKA_DADOS`. Migrações em `apps/server/src/banco.ts`, numeradas pela posição na lista; nunca editar uma já publicada.
+- **Motor simulado** (`AWIKA_MOTOR=simulado`): só para teste e para o `pnpm verificar`. Em produção ele derruba a partida.
+- **Comandos do servidor**: `node dist/server.mjs servir | parear | dispositivos | revogar <id>`. O `parear` imprime um código de uso único.
 
 ## Comandos (da raiz)
 
@@ -43,7 +47,13 @@ Todo workspace declara `lint`, `typecheck` e `test`: `pnpm -r` pula em silêncio
 - **Contrato no core**: toda mensagem entre servidor e app tem esquema em `packages/core`, usado dos dois lados. Limites, regex e enums nunca são redeclarados fora dele. O servidor tem teste que confere a resposta contra o esquema.
 - **Ambiente validado na partida**: `apps/server/src/env.ts` é o único lugar que lê `process.env`. Configuração inválida derruba o processo antes de atender pedidos, e a mensagem cita só o nome da variável, nunca o valor.
 - **Loopback por padrão**: o servidor ouve em `127.0.0.1` se nada for dito. Só a imagem abre para a rede do contêiner, e o compose publica a porta só em loopback. Acesso de fora entra por túnel.
-- **Contêiner sem privilégios**: usuário sem root, `cap_drop: ALL`, `no-new-privileges`, sistema de arquivos somente leitura, rede própria com sub-rede declarada.
+- **Contêiner sem privilégios**: usuário sem root, `cap_drop: ALL`, `no-new-privileges`, sistema de arquivos somente leitura fora do volume, rede própria com sub-rede declarada.
+- **Token só na resposta do pareamento**: o banco guarda o hash do token e do código. Nenhuma rota devolve token, e nada o escreve em log.
+- **Tudo em `/v1` exige token**, menos `POST /v1/parear`. Rota nova entra abaixo do middleware de autenticação em `apps/server/src/app.ts`, e o teste que lista as rotas protegidas ganha a linha dela.
+- **Pareamento com trava**: cinco códigos errados bloqueiam o pareamento por dez minutos, para o servidor inteiro.
+- **401 só derruba a sessão que fez o pedido**: o app captura a sessão no início do pedido e só a apaga se ela ainda for a atual, e só quando o corpo do 401 traz o código `nao_autenticado` do servidor. Um 401 de proxy ou túnel e um erro de rede nunca deslogam.
+- **Cliente do app testado contra o servidor**: `apps/server/src/contrato-app.test.ts` usa a lógica de `apps/mobile/src/lib` pela rede. Rota ou evento novo que o app consome ganha um caso ali.
+- **Endereço do servidor no app**: `https://` sempre, menos `localhost` e endereços de rede privada, que aceitam `http://`.
 - **Segredos fora do Git e do banco**: `.env*` é ignorado. Nada de token, senha, endereço interno ou nome de conta em código, documento ou mensagem de commit. O repositório é público.
 - **Lógica de tela em helper puro** (`apps/mobile/src/lib`), testado com o mesmo runner do servidor.
 - **Fim de linha LF** em todo o repositório (`.gitattributes`).
@@ -67,6 +77,11 @@ A memória do projeto fica no ai-memory, no escopo do `.ai-memory.toml`. Ao conc
 
 ## Limitações conhecidas
 
-- O servidor só tem `GET /healthz`. Os fluxos F1 a F5 do mapa ainda não existem.
+- Os bots só conversam: o motor nega toda ação que pede aprovação até os cartões de aprovação existirem (F4).
+- Um bot cuja sessão do motor se perdeu não tem como começar uma conversa nova pelo app.
+- O servidor guarda só o texto final de cada resposta; os trechos intermediários vivem na memória do processo.
 - O app não tem identificador de pacote nem projeto no EAS; não gera build de loja ainda. Ver `docs/decisoes.md`.
-- O app não foi aberto em aparelho na etapa 1.
+- O app não foi aberto em aparelho: telas, teclado, cofre do sistema e o fluxo de eventos no Hermes estão sem verificação. A leitura de QR no pareamento ainda não existe.
+- Em build de release do Android, `http://` para a rede local é bloqueado pelo sistema; fora de desenvolvimento, o servidor precisa de HTTPS.
+- Os códigos de erro (`nao_autenticado`, `codigo_invalido` e os demais) são texto solto no servidor e no app, ainda não constantes do `core`.
+- O app não guarda conversas no aparelho: cada abertura busca do servidor.

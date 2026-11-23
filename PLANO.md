@@ -1,6 +1,6 @@
 # awikabot — plano
 
-Situação em 2026-11-23. Repositório: `github.com/n3tf4c3/awikabot`, público. A etapa 0 passou: o Claude Code serve de primeiro motor. A etapa 1 tem o esqueleto validado, faltando abrir o app em aparelho e rodar a CI no GitHub. As medições estão em "Etapa 0: resultado" e "Etapa 1: resultado".
+Situação em 2026-11-23. Repositório: `github.com/n3tf4c3/awikabot`, público. A etapa 0 passou: o Claude Code serve de primeiro motor. A etapa 1 está na `main`, com a CI aprovada. Na etapa 2, o servidor foi validado com o motor real no Pi e o cliente do app passa contra o servidor; faltam abrir o app em aparelho e o túnel. As medições estão nas seções de resultado de cada etapa.
 
 ## Decisão
 
@@ -134,6 +134,39 @@ Monorepo pnpm com `apps/server`, `apps/mobile` e `packages/core`, CI, imagem do 
 | App | `expo-doctor` passou nas 20 checagens, e o pacote JavaScript exporta para Android e iOS com o `core` dentro. |
 | App aberto no iPhone e no Android | Pendente: precisa de aparelho. |
 | CI no GitHub | Pendente: roda quando a branch for enviada. |
+
+## Etapa 2: resultado do servidor (2026-11-23)
+
+O servidor ganhou pareamento, autenticação por aparelho, bots, turnos e o fluxo de eventos, sobre Hono e o SQLite embutido do Node. A imagem passou a levar o Claude Code em versão fixa. As decisões estão em `docs/decisoes.md`.
+
+| Verificação | Resultado |
+|---|---|
+| Testes do servidor | 51 testes: pareamento, autenticação em todas as rotas, bots, turnos, paginação e o fluxo de eventos pela rede. |
+| Falsificação | Com a autenticação desligada de propósito, 5 testes e o runbook acusaram. |
+| `pnpm verificar`, motor simulado | 9 de 9 verificações, nos fluxos F0 a F3, em duas execuções iguais. |
+| `pnpm verificar`, motor real no Pi | 9 de 9. O primeiro trecho da resposta chegou em 3,4 s, o bot lembrou do turno anterior e a parada funcionou. Pico de 243 MB no contêiner. |
+| Imagem com o motor | Constrói no Pi em 66 s; 1,05 GB. |
+
+Depois do teste no Pi, o contrato ganhou a posição de cada trecho de texto, o ponto de retomada no primeiro sinal de vida e a rota de "Desparear". Essas mudanças passaram na suíte e no runbook com o motor simulado, mas não voltaram ao Pi.
+
+## Etapa 2: resultado do app (2026-11-23)
+
+Telas de pareamento, lista de bots, formulário de bot e conversa, com a lógica separada em `apps/mobile/src/lib`.
+
+| Verificação | Resultado |
+|---|---|
+| Testes do app | 391 testes da lógica: cliente da API, leitura do fluxo de eventos, junção dos trechos de texto, sessão e validação do endereço do servidor. |
+| Cliente do app contra o servidor | 4 cenários pela rede, em `apps/server/src/contrato-app.test.ts`: parear, criar e editar bot, conversar e parar, retomar o fluxo sem recarregar tudo, e "Desparear". |
+| Revisão de leitura | Confirmou o cuidado com o token e a regra do 401. Os defeitos que achou foram corrigidos: texto perdido ao abrir a conversa no meio de um turno, sessão apagada por qualquer 401 e reconexão sem freio. |
+| Expo | `expo-doctor` passou nas 20 checagens, e o pacote JavaScript exporta para Android e iOS. |
+| Telas em aparelho | Pendente. Nenhuma tela foi aberta em iPhone, Android ou emulador. |
+
+Não coberto na etapa 2:
+
+- o caminho pelo túnel: o teste no Pi foi pela porta em loopback;
+- o app em aparelho, que é o critério da etapa;
+- a leitura de QR no pareamento;
+- executar ações: o motor nega tudo o que pede aprovação até a etapa 3.
 
 ## Riscos
 
