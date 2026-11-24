@@ -1,12 +1,13 @@
 # awikabot
 
-Gerenciador de bots: um servidor mantém agentes de IA rodando e apps de iOS e Android servem para conversar com eles e aprovar ações. O plano, as premissas e o resultado de cada etapa estão em `PLANO.md`. Licença MIT.
+Gerenciador de bots: um servidor mantém agentes de IA rodando e apps de iOS e Android servem para conversar com eles e aprovar ações. Um app de desktop para Windows e Mac está em prova. O plano, as premissas e o resultado de cada etapa estão em `PLANO.md`. Licença MIT.
 
 ## Estrutura
 
 ```text
 apps/server     servidor Node 24 (Hono, SQLite embutido); roda em contêiner, com o motor na imagem
 apps/mobile     app Expo (iOS e Android)
+apps/desktop    app de desktop em Rust com GPUI; workspace Cargo, fora do pnpm
 packages/core   contratos e validação compartilhados (zod), sem framework
 deploy/         compose do servidor e scripts de backup e restauração
 docs/           mapa de fluxos e decisões que fogem do padrão
@@ -27,6 +28,7 @@ spike/          provas descartáveis; não é código do produto
 - **Chamada do motor** (`apps/server/src/motor-claude-code.ts`): o texto da pessoa vai pela entrada padrão e toda opção vai na forma `--nome=valor`. Nunca passar valor vindo do app como argumento solto. O motor sempre roda com `--setting-sources=user`: o que estiver em `.claude/` ou `.mcp.json` na pasta do bot não é lido como configuração.
 - **Banco**: `node:sqlite`, síncrono, num arquivo em `AWIKA_DADOS`. Migrações em `apps/server/src/banco.ts`, numeradas pela posição na lista; nunca editar uma já publicada.
 - **Motor simulado** (`AWIKA_MOTOR=simulado`): só para teste e para o `pnpm verificar`. Em produção ele derruba a partida.
+- **Desktop em Rust**: `apps/desktop` tem o próprio `Cargo.toml`, `Cargo.lock` e `rust-toolchain.toml`; o pnpm não enxerga essa pasta. A GPUI vem do repositório do Zed, fixada num commit, porque o crate publicado está parado: `gpui`, `gpui_platform` e o patch do `async-task` sobem juntos. A referência de uso da GPUI são os exemplos dela nesse mesmo commit.
 - **Comandos do servidor**: `node dist/server.mjs servir | parear | dispositivos | revogar <id> | backup <arquivo> | saude | configuracao-do-motor`. O `parear` imprime um código de uso único. O `backup` copia o banco com o servidor no ar. O `saude` é o que o health check da imagem executa. O `configuracao-do-motor` imprime a configuração gerenciada que o build da imagem instala.
 
 ## Comandos (da raiz)
@@ -39,12 +41,25 @@ spike/          provas descartáveis; não é código do produto
 | `pnpm mobile` | inicia o Expo |
 | `pnpm lint`, `pnpm typecheck`, `pnpm test` | suíte de todos os workspaces |
 | `pnpm verificar` | sobe o build de produção do servidor e percorre os fluxos do mapa |
+| `pnpm --filter @awikabot/core contrato` | gera de novo o contrato em Rust do app de desktop |
+
+Do app de desktop, de dentro de `apps/desktop`, depois de `pnpm server:build`:
+
+| Comando | O que faz |
+|---|---|
+| `cargo run -p awikabot-desktop` | abre o app |
+| `cargo test --workspace` | testes do cliente e da janela; sobem o servidor de verdade com o motor simulado |
+| `cargo fmt --all --check` e `cargo clippy --workspace --all-targets -- -D warnings` | formatação e lint |
 
 Todo workspace declara `lint`, `typecheck` e `test`: `pnpm -r` pula em silêncio quem não declara.
 
 ## Convenções e invariantes
 
 - **Contrato no core**: toda mensagem entre servidor e app tem esquema em `packages/core`, usado dos dois lados. Limites, regex e enums nunca são redeclarados fora dele. O servidor tem teste que confere a resposta contra o esquema.
+- **Contrato em Rust é gerado**: `apps/desktop/crates/cliente/src/contrato.rs` sai de `packages/core/src/contrato-rust.ts` e não se edita à mão. O teste do `core` falha enquanto o arquivo estiver para trás; esquema novo entra na lista desse gerador.
+- **Do termIAX, só o visual**: o tema do desktop repete os valores do termIAX (`apps/desktop/crates/app/src/tema.rs`). Nenhum arquivo nem trecho de código dele entra neste repositório, que é público.
+- **Cliente do desktop sem interface**: endereço do servidor, pedidos, fluxo de eventos e a regra da conversa ficam em `apps/desktop/crates/cliente`, sem GPUI, com teste. `tests/contrato.rs` roda esse cliente contra o servidor de verdade; rota ou evento novo que o desktop consome ganha um caso ali.
+- **Janela testada pelo teclado**: os testes de `janela.rs` digitam e apertam teclas pelo apoio de testes da GPUI, contra o servidor de verdade. O que só a tela mostra, como quebra de linha e encaixe, é conferido com `scripts/desktop-prova-visual.ps1`.
 - **Ambiente validado na partida**: só `apps/server/src/env.ts` interpreta variáveis de ambiente; o `main.ts` entrega `process.env` a ele e mais ninguém o lê. Configuração inválida derruba o processo antes de atender pedidos, e a mensagem cita só o nome da variável, nunca o valor.
 - **O motor não herda o ambiente do servidor**: `ambienteDoMotor`, em `env.ts`, passa só uma lista de nomes (sistema, idioma, proxy, `ANTHROPIC_*`, `CLAUDE_*`). Segredo novo no ambiente do servidor não chega aos bots sem entrar nessa lista, com teste em `env.test.ts`.
 - **Loopback por padrão**: o servidor ouve em `127.0.0.1` se nada for dito. Só a imagem abre para a rede do contêiner, e o compose publica a porta só em loopback. Acesso de fora entra por túnel.
@@ -77,7 +92,7 @@ Todo workspace declara `lint`, `typecheck` e `test`: `pnpm -r` pula em silêncio
 
 - **Mapa de fluxos**: `docs/fluxos.md`. Fluxo novo entra lá, com o teste ou escrito como "sem cobertura".
 - **Runbook**: `.claude/skills/verificar/SKILL.md`. Rodar `pnpm verificar` antes de dar por concluída uma mudança que altera comportamento visto pelo usuário, e antes de um commit autorizado. Relatar o que foi exercitado e o que não foi.
-- **Carimbo no commit**: a mensagem leva o trailer `Verificado-por:` com o que rodou contra aquela árvore: `suite` (lint, build, typecheck e testes), `verificar` seguido dos fluxos (`verificar F0`), ou `nenhum (motivo)`. Mais de um valor, separados por vírgula. O carimbo descreve o que rodou, nunca o que deveria ter rodado. Usar `git commit --trailer "Verificado-por: suite, verificar F0"`.
+- **Carimbo no commit**: a mensagem leva o trailer `Verificado-por:` com o que rodou contra aquela árvore: `suite` (lint, build, typecheck e testes), `verificar` seguido dos fluxos (`verificar F0`), `desktop` (rustfmt, clippy e testes do workspace Cargo), ou `nenhum (motivo)`. Mais de um valor, separados por vírgula. O carimbo descreve o que rodou, nunca o que deveria ter rodado. Usar `git commit --trailer "Verificado-por: suite, verificar F0"`.
 - **Gancho de pre-push**: cobra o carimbo dos commits enviados. Ativar uma vez por clone:
 
   ```sh
@@ -103,3 +118,6 @@ A memória do projeto fica no ai-memory, no escopo do `.ai-memory.toml`. Ao conc
 - Em build de release do Android, `http://` para a rede local é bloqueado pelo sistema; fora de desenvolvimento, o servidor precisa de HTTPS.
 - Os códigos de erro (`nao_autenticado`, `codigo_invalido` e os demais) são texto solto no servidor e no app, ainda não constantes do `core`.
 - O app não guarda conversas no aparelho: cada abertura busca do servidor.
+- O app de desktop é uma prova: não guarda a sessão (pareia a cada abertura), não mostra os cartões de aprovação, só cria bot com nome automático, e o campo de texto não tem seleção, copiar nem desfazer. Só há tema escuro. Não há instalador, assinatura nem atualizador.
+- O desktop nunca foi aberto num Mac. O build e os testes de macOS dependem da CI, e a tela de lá não foi vista por ninguém.
+- No desktop, cada conexão do fluxo de eventos dura no máximo um minuto e é refeita do ponto em que parou: o cliente HTTP usado não tem prazo por leitura.

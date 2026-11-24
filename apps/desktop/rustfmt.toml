@@ -1,0 +1,3 @@
+# Mesma largura do restante do repositório.
+max_width = 140
+use_small_heuristics = "Max"

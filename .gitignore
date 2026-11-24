@@ -10,3 +10,6 @@ coverage/
 # Relatórios de auditoria e dumps ficam fora do Git.
 relatorios/
 backups/
+
+# Build do app de desktop (Cargo).
+target/
