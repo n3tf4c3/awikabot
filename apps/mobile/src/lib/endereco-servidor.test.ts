@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import tabela from '../../../../packages/core/casos/endereco-servidor.json';
 import { mensagemDoEndereco, normalizarEnderecoServidor } from './endereco-servidor';
 
 function url(texto: string): string | null {
@@ -120,5 +121,25 @@ describe('normalizarEnderecoServidor', () => {
 describe('mensagemDoEndereco', () => {
   it('explica a exigência de https', () => {
     expect(mensagemDoEndereco('http_fora_da_rede_local')).toMatch(/https:\/\//);
+  });
+});
+
+// A mesma tabela que o app de desktop testa em `apps/desktop/crates/cliente/src/endereco.rs`.
+// Mudar a regra aqui exige mudar a tabela, e a tabela mudada quebra o teste do desktop até a
+// regra de lá ser igualada.
+describe('tabela de casos compartilhada com o app de desktop', () => {
+  const casos: ({ entrada: string; url: string; motivo?: undefined } | { entrada: string; motivo: string; url?: undefined })[] =
+    tabela.casos;
+
+  it('tem casos de todos os tipos', () => {
+    expect(casos.length).toBeGreaterThanOrEqual(90);
+    expect(new Set(casos.map((caso) => caso.motivo ?? 'aceito'))).toEqual(
+      new Set(['aceito', 'vazio', 'invalido', 'esquema', 'credenciais', 'http_fora_da_rede_local']),
+    );
+  });
+
+  it.each(casos.map((caso) => [JSON.stringify(caso.entrada), caso] as const))('%s', (_nome, caso) => {
+    const lido = normalizarEnderecoServidor(caso.entrada);
+    expect(lido).toEqual(caso.url === undefined ? { ok: false, motivo: caso.motivo } : { ok: true, url: caso.url });
   });
 });

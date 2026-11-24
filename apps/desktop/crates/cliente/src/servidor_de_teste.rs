@@ -76,3 +76,148 @@ impl Drop for ServidorDeTeste {
         let _ = std::fs::remove_dir_all(&self.dados);
     }
 }
+
+// --- Servidor de mentira --------------------------------------------------------------------
+
+use std::io::{Read, Write};
+use std::net::TcpStream;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
+
+/// Um pedido HTTP como chegou ao servidor de mentira.
+#[derive(Debug, Clone)]
+pub struct PedidoRecebido {
+    /// A primeira linha, como `GET /v1/eventos HTTP/1.1`.
+    pub linha: String,
+    pub cabecalhos: Vec<(String, String)>,
+    pub recebido_em: Instant,
+}
+
+impl PedidoRecebido {
+    pub fn cabecalho(&self, nome: &str) -> Option<&str> {
+        self.cabecalhos.iter().find(|(chave, _)| chave.eq_ignore_ascii_case(nome)).map(|(_, valor)| valor.as_str())
+    }
+}
+
+/// O que o servidor de mentira responde a um pedido.
+#[derive(Debug, Clone)]
+pub struct RespostaFalsa {
+    status: u16,
+    tipo: &'static str,
+    corpo: Vec<u8>,
+    /// Quanto a conexão fica aberta depois do corpo, como um fluxo sem novidade.
+    segurar: Duration,
+}
+
+impl RespostaFalsa {
+    /// Um fluxo de eventos que manda `corpo` e fecha.
+    pub fn fluxo(corpo: &str) -> Self {
+        Self { status: 200, tipo: "text/event-stream", corpo: corpo.as_bytes().to_vec(), segurar: Duration::ZERO }
+    }
+
+    pub fn json(status: u16, corpo: &str) -> Self {
+        Self { status, tipo: "application/json", corpo: corpo.as_bytes().to_vec(), segurar: Duration::ZERO }
+    }
+
+    /// Uma página de erro de proxy ou de túnel: nada do contrato.
+    pub fn html(status: u16) -> Self {
+        Self { status, tipo: "text/html", corpo: b"<html><body>erro no caminho</body></html>".to_vec(), segurar: Duration::ZERO }
+    }
+
+    pub fn segurando(mut self, duracao: Duration) -> Self {
+        self.segurar = duracao;
+        self
+    }
+}
+
+/// Servidor HTTP mínimo, para o que o servidor de verdade não faz a pedido: cair no meio de um
+/// fluxo, responder como um proxy, recusar um token. Cada pedido recebe o número dele, a partir de zero.
+pub struct ServidorFalso {
+    pub base: String,
+    pedidos: Arc<Mutex<Vec<PedidoRecebido>>>,
+    parar: Arc<AtomicBool>,
+    escuta: Option<JoinHandle<()>>,
+}
+
+fn atender(
+    mut conexao: TcpStream,
+    responder: &dyn Fn(usize, &PedidoRecebido) -> RespostaFalsa,
+    pedidos: &Mutex<Vec<PedidoRecebido>>,
+    parar: &AtomicBool,
+) {
+    let _ = conexao.set_read_timeout(Some(Duration::from_secs(5)));
+    let mut bruto = Vec::new();
+    let mut pedaco = [0u8; 1024];
+    while !bruto.windows(4).any(|janela| janela == b"\r\n\r\n") {
+        match conexao.read(&mut pedaco) {
+            Ok(0) | Err(_) => return,
+            Ok(lidos) => bruto.extend_from_slice(&pedaco[..lidos]),
+        }
+    }
+    let texto = String::from_utf8_lossy(&bruto).into_owned();
+    let mut linhas = texto.split("\r\n");
+    let pedido = PedidoRecebido {
+        recebido_em: Instant::now(),
+        linha: linhas.next().unwrap_or_default().to_owned(),
+        cabecalhos: linhas
+            .take_while(|linha| !linha.is_empty())
+            .filter_map(|linha| linha.split_once(':').map(|(chave, valor)| (chave.trim().to_owned(), valor.trim().to_owned())))
+            .collect(),
+    };
+    let numero = {
+        let mut lista = pedidos.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        lista.push(pedido.clone());
+        lista.len() - 1
+    };
+    let resposta = responder(numero, &pedido);
+    // Um fluxo não tem tamanho: o corpo vai até a conexão fechar.
+    let tamanho =
+        if resposta.tipo == "text/event-stream" { String::new() } else { format!("content-length: {}\r\n", resposta.corpo.len()) };
+    let cabecalho = format!("HTTP/1.1 {} X\r\ncontent-type: {}\r\n{tamanho}connection: close\r\n\r\n", resposta.status, resposta.tipo);
+    if conexao.write_all(cabecalho.as_bytes()).and_then(|()| conexao.write_all(&resposta.corpo)).and_then(|()| conexao.flush()).is_err() {
+        return;
+    }
+    let fim = Instant::now() + resposta.segurar;
+    while Instant::now() < fim && !parar.load(Ordering::Relaxed) {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+impl ServidorFalso {
+    pub fn subir(responder: impl Fn(usize, &PedidoRecebido) -> RespostaFalsa + Send + Sync + 'static) -> Self {
+        let escuta = TcpListener::bind("127.0.0.1:0").expect("porta livre");
+        escuta.set_nonblocking(true).expect("escuta sem bloqueio");
+        let base = format!("http://127.0.0.1:{}", escuta.local_addr().expect("endereço").port());
+        let pedidos = Arc::new(Mutex::new(Vec::new()));
+        let parar = Arc::new(AtomicBool::new(false));
+        let responder = Arc::new(responder);
+        let (dos_pedidos, de_parar) = (pedidos.clone(), parar.clone());
+        let thread = std::thread::spawn(move || {
+            while !de_parar.load(Ordering::Relaxed) {
+                match escuta.accept() {
+                    Ok((conexao, _)) => {
+                        let _ = conexao.set_nonblocking(false);
+                        let (responder, pedidos, parar) = (responder.clone(), dos_pedidos.clone(), de_parar.clone());
+                        std::thread::spawn(move || atender(conexao, responder.as_ref(), &pedidos, &parar));
+                    }
+                    Err(_) => std::thread::sleep(Duration::from_millis(3)),
+                }
+            }
+        });
+        Self { base, pedidos, parar, escuta: Some(thread) }
+    }
+
+    pub fn pedidos(&self) -> Vec<PedidoRecebido> {
+        self.pedidos.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+    }
+}
+
+impl Drop for ServidorFalso {
+    fn drop(&mut self) {
+        self.parar.store(true, Ordering::Relaxed);
+        if let Some(escuta) = self.escuta.take() {
+            let _ = escuta.join();
+        }
+    }
+}
