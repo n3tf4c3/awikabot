@@ -45,11 +45,16 @@ fn main() {
         std::process::exit(if esvaziado { 0 } else { 1 });
     }
     // O roteiro de release chama o app assim antes de publicar: o pacote é conferido pela mesma
-    // regra que o atualizador de quem já instalou vai aplicar. Nenhuma janela abre; o código de
-    // saída é a resposta.
+    // regra que o atualizador de quem já instalou vai aplicar, para a versão que vai ser
+    // oferecida. Nenhuma janela abre; o código de saída é a resposta.
     let mut opcoes = std::env::args().skip_while(|opcao| opcao != confianca::OPCAO_DE_CONFERIR).skip(1);
     if let Some(arquivo) = opcoes.next() {
-        let aceito = confianca::conferir(std::path::Path::new(&arquivo), &confianca::Politica::do_app());
+        let aceito = match opcoes.next().as_deref().and_then(awikabot_cliente::atualizacao::Versao::ler) {
+            Some(versao) => confianca::conferir(std::path::Path::new(&arquivo), &confianca::Politica::do_app(), versao)
+                .map_err(|recusa| recusa.to_string()),
+            // Sem a versão não há o que conferir além da assinatura, e só ela não basta.
+            None => Err(format!("informe a versão esperada: {} <arquivo> <x.y.z>", confianca::OPCAO_DE_CONFERIR)),
+        };
         if let Err(recusa) = &aceito {
             eprintln!("{recusa}");
         }

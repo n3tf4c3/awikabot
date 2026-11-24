@@ -44,6 +44,11 @@ $instalador = Join-Path $pasta "awikabot-$versao-windows-x64.exe"
 if (-not (Test-Path $instalador)) { throw 'o Inno Setup nao gerou o instalador' }
 # O Inno Setup completa o texto da versao com espacos.
 if ((Get-Item $instalador).VersionInfo.ProductVersion.Trim() -ne $versao) { throw 'a versao gravada no instalador nao e a do app' }
+# A versao do compilador que montou o instalador fica registrada; a do pacote publicavel e fixa.
+$innoSetup = Read-VersaoDoInnoSetup $pasta
+if ($Assinar -and $innoSetup -ne $script:VersaoDoInnoSetup) {
+    throw "o instalador foi montado com o Inno Setup $innoSetup; o pacote que vai ser assinado sai do $script:VersaoDoInnoSetup (comum.ps1)"
+}
 
 if ($Assinar) { Invoke-Assinatura $instalador $Assinar $CarimboDeTempo }
 
@@ -62,6 +67,7 @@ Write-TextoSemBom (Join-Path $pasta $nomeDoManifesto) (($manifesto | ConvertTo-J
 $informacoes.sha256 = Get-Sha256 $executavel
 $informacoes.tamanho = (Get-Item $executavel).Length
 $informacoes.assinado = [bool]$Assinar
+$informacoes | Add-Member -NotePropertyName inno_setup -NotePropertyValue $innoSetup
 Write-TextoSemBom (Join-Path $pasta 'build-info.json') ((($informacoes | ConvertTo-Json) -replace "`r`n", "`n") + "`n")
 
 # Só o que vai para o release entra na lista de hashes.
@@ -72,4 +78,5 @@ Write-TextoSemBom (Join-Path $pasta 'SHA256SUMS') (($linhas -join "`n") + "`n")
 "pacote: $pasta"
 "instalador: $(Split-Path -Leaf $instalador), $($manifesto.tamanho) bytes"
 "sha256 do instalador: $($manifesto.sha256)"
+"inno setup: $innoSetup" + $(if ($innoSetup -ne $script:VersaoDoInnoSetup) { " (o pacote publicavel sai do $script:VersaoDoInnoSetup)" } else { '' })
 if ($Assinar) { 'assinado: executavel e instalador' } else { 'SEM ASSINATURA: serve para o QA no Sandbox, nao para publicar' }

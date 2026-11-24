@@ -37,6 +37,24 @@ function Write-TextoSemBom {
     [IO.File]::WriteAllText($Arquivo, $Texto, (New-Object Text.UTF8Encoding $false))
 }
 
+# A versão do Inno Setup de onde sai o pacote que pode ser publicado. O carregador do instalador,
+# que é o primeiro código a rodar na máquina de quem instala, vem do compilador: trocar de versão
+# é mudar este valor, de propósito, como se muda a do Rust em rust-toolchain.toml. Pacote sem
+# assinatura (QA e CI) pode sair de outra versão, que fica registrada no build-info.json.
+$script:VersaoDoInnoSetup = '6.7.3'
+
+# A versão do Inno Setup que acabou de montar o instalador de uma pasta. O roteiro do instalador a
+# grava num arquivo ao lado, que é lido e apagado aqui: ele não faz parte do pacote.
+function Read-VersaoDoInnoSetup {
+    param([string]$Pasta)
+    $arquivo = Join-Path $Pasta 'inno-setup.txt'
+    if (-not (Test-Path $arquivo)) { throw 'o roteiro do instalador nao informou a versao do Inno Setup' }
+    $versao = (Get-Content -Raw $arquivo).Trim()
+    Remove-Item -LiteralPath $arquivo -Confirm:$false
+    if ($versao -notmatch '^\d+\.\d+\.\d+$') { throw "versao do Inno Setup fora do formato x.y.z: $versao" }
+    return $versao
+}
+
 # O compilador do Inno Setup 6, instalado para o usuário ou para a máquina.
 function Get-InnoSetup {
     $candidatos = @(

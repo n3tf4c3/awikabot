@@ -33,6 +33,8 @@ if (-not (Test-Path $executavel)) { Anotar 'falta awikabot.exe' }
 if ($informacoes) {
     if ($informacoes.com_mudancas) { Anotar 'o pacote saiu de uma pasta com mudancas sem commit' }
     if (-not $informacoes.assinado) { Anotar 'o pacote nao foi assinado' }
+    if (-not $informacoes.inno_setup) { Anotar 'o build-info nao registra a versao do Inno Setup que montou o instalador' }
+    elseif ($informacoes.inno_setup -ne $script:VersaoDoInnoSetup) { Anotar "o instalador foi montado com o Inno Setup $($informacoes.inno_setup); o pacote publicavel sai do $script:VersaoDoInnoSetup" }
     if (Test-Path $executavel) {
         if ((Get-Sha256 $executavel) -ne $informacoes.sha256) { Anotar 'o executavel nao tem o hash do build-info' }
         if ((Get-Item $executavel).VersionInfo.ProductVersion -ne $informacoes.versao) { Anotar 'a versao do executavel nao e a do build-info' }
@@ -85,9 +87,12 @@ foreach ($arquivo in $assinados) {
     if ($assinatura.Status -ne 'Valid') { Anotar "a assinatura de $nome nao vale: $($assinatura.Status)"; continue }
     if (-not $assinatura.TimeStamperCertificate) { Anotar "a assinatura de $nome nao tem carimbo de tempo" }
     $impressoes += $assinatura.SignerCertificate.Thumbprint
-    # A regra de verdade: a que o atualizador de quem ja instalou aplica ao pacote baixado.
-    $conferencia = Start-Process -FilePath $executavel -ArgumentList @('--conferir-pacote', "`"$arquivo`"") -PassThru -Wait -WindowStyle Hidden
-    if ($conferencia.ExitCode -ne 0) { Anotar "o app nao aceita a assinatura de $nome pela regra do atualizador" }
+    # A regra de verdade: a que o atualizador de quem ja instalou aplica ao pacote baixado. Ela
+    # confere a assinatura e que o arquivo e o pacote desta versao, e nao outro do mesmo publicador.
+    $esperada = [string]$informacoes.versao
+    if ($esperada -notmatch '^\d+\.\d+\.\d+$') { Anotar "sem a versao do build-info, o app nao tem como conferir $nome"; continue }
+    $conferencia = Start-Process -FilePath $executavel -ArgumentList @('--conferir-pacote', "`"$arquivo`"", $esperada) -PassThru -Wait -WindowStyle Hidden
+    if ($conferencia.ExitCode -ne 0) { Anotar "o app nao aceita $nome pela regra do atualizador (assinatura, produto ou versao)" }
 }
 if (@($impressoes | Sort-Object -Unique).Count -gt 1) { Anotar 'o executavel e o instalador foram assinados por certificados diferentes' }
 
