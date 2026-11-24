@@ -5,7 +5,8 @@ resolver = "3"
 members = ["crates/cliente", "crates/app"]
 
 [workspace.package]
-version = "0.0.0"
+# A versão do app: é daqui que saem a do executável e a do instalador.
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"

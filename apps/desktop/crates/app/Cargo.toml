@@ -22,9 +22,15 @@ unicode-segmentation = "1"
 # O cofre de credenciais de cada sistema. Só o backend nativo: nada de arquivo nem de serviço à parte.
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3.6", default-features = false, features = ["windows-native"] }
+# A marca de "app aberto" que o desinstalador consulta.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3.6", default-features = false, features = ["apple-native"] }
+
+# Grava o ícone e a versão no executável do Windows, a partir do build.rs.
+[build-dependencies]
+winresource = "0.1"
 
 [dev-dependencies]
 awikabot-cliente = { workspace = true, features = ["teste-suporte"] }

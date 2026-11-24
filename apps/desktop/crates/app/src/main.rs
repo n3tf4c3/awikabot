@@ -8,7 +8,9 @@
 mod campo;
 #[cfg(any(windows, target_os = "macos"))]
 mod cofre_do_sistema;
+mod desinstalacao;
 mod edicao;
+mod instancia;
 mod janela;
 mod tema;
 
@@ -35,6 +37,12 @@ fn cofre() -> Arc<dyn Cofre> {
 }
 
 fn main() {
+    // O desinstalador chama o app assim, para não sobrar credencial no computador. Nenhuma janela abre.
+    if std::env::args().any(|opcao| opcao == desinstalacao::OPCAO) {
+        let esvaziado = desinstalacao::esquecer_sessao(cofre().as_ref(), &awikabot_cliente::api::Api::new());
+        std::process::exit(if esvaziado { 0 } else { 1 });
+    }
+    instancia::marcar_como_aberto(janela::IDENTIDADE);
     application().run(|cx: &mut App| {
         campo::registrar_teclas(cx);
         janela::registrar_teclas(cx);

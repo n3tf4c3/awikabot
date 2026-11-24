@@ -1,0 +1,4 @@
+# O runtime do C++ vai dentro do executável: o app abre num Windows que não tem o Visual C++
+# instalado. Vale para todo build, para os testes rodarem o mesmo executável que é distribuído.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

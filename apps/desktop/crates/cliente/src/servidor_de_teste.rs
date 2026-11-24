@@ -108,21 +108,47 @@ pub struct RespostaFalsa {
     corpo: Vec<u8>,
     /// Quanto a conexão fica aberta depois do corpo, como um fluxo sem novidade.
     segurar: Duration,
+    /// Cabeçalhos a mais, como o destino de um redirecionamento.
+    cabecalhos: Vec<(String, String)>,
+    /// O tamanho que a resposta diz ter, quando não é o do corpo: uma resposta cortada no caminho.
+    tamanho_declarado: Option<usize>,
 }
 
 impl RespostaFalsa {
+    fn com(status: u16, tipo: &'static str, corpo: Vec<u8>) -> Self {
+        Self { status, tipo, corpo, segurar: Duration::ZERO, cabecalhos: Vec::new(), tamanho_declarado: None }
+    }
+
     /// Um fluxo de eventos que manda `corpo` e fecha.
     pub fn fluxo(corpo: &str) -> Self {
-        Self { status: 200, tipo: "text/event-stream", corpo: corpo.as_bytes().to_vec(), segurar: Duration::ZERO }
+        Self::com(200, "text/event-stream", corpo.as_bytes().to_vec())
     }
 
     pub fn json(status: u16, corpo: &str) -> Self {
-        Self { status, tipo: "application/json", corpo: corpo.as_bytes().to_vec(), segurar: Duration::ZERO }
+        Self::com(status, "application/json", corpo.as_bytes().to_vec())
     }
 
     /// Uma página de erro de proxy ou de túnel: nada do contrato.
     pub fn html(status: u16) -> Self {
-        Self { status, tipo: "text/html", corpo: b"<html><body>erro no caminho</body></html>".to_vec(), segurar: Duration::ZERO }
+        Self::com(status, "text/html", b"<html><body>erro no caminho</body></html>".to_vec())
+    }
+
+    /// Um arquivo qualquer, como um pacote para download.
+    pub fn bytes(status: u16, corpo: &[u8]) -> Self {
+        Self::com(status, "application/octet-stream", corpo.to_vec())
+    }
+
+    /// Um redirecionamento para outro endereço.
+    pub fn redirecionando(destino: &str) -> Self {
+        let mut resposta = Self::com(302, "text/plain", Vec::new());
+        resposta.cabecalhos.push(("location".to_owned(), destino.to_owned()));
+        resposta
+    }
+
+    /// Diz ter `tamanho` bytes, mande o corpo o que mandar: é como uma resposta cortada chega ao cliente.
+    pub fn declarando(mut self, tamanho: usize) -> Self {
+        self.tamanho_declarado = Some(tamanho);
+        self
     }
 
     pub fn segurando(mut self, duracao: Duration) -> Self {
@@ -172,9 +198,14 @@ fn atender(
     };
     let resposta = responder(numero, &pedido);
     // Um fluxo não tem tamanho: o corpo vai até a conexão fechar.
-    let tamanho =
-        if resposta.tipo == "text/event-stream" { String::new() } else { format!("content-length: {}\r\n", resposta.corpo.len()) };
-    let cabecalho = format!("HTTP/1.1 {} X\r\ncontent-type: {}\r\n{tamanho}connection: close\r\n\r\n", resposta.status, resposta.tipo);
+    let tamanho = if resposta.tipo == "text/event-stream" {
+        String::new()
+    } else {
+        format!("content-length: {}\r\n", resposta.tamanho_declarado.unwrap_or(resposta.corpo.len()))
+    };
+    let extras: String = resposta.cabecalhos.iter().map(|(nome, valor)| format!("{nome}: {valor}\r\n")).collect();
+    let cabecalho =
+        format!("HTTP/1.1 {} X\r\ncontent-type: {}\r\n{tamanho}{extras}connection: close\r\n\r\n", resposta.status, resposta.tipo);
     if conexao.write_all(cabecalho.as_bytes()).and_then(|()| conexao.write_all(&resposta.corpo)).and_then(|()| conexao.flush()).is_err() {
         return;
     }

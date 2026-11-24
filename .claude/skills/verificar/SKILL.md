@@ -82,6 +82,15 @@ cargo build -p awikabot-desktop
 powershell -ExecutionPolicy Bypass -File ../../scripts/desktop-prova-visual.ps1
 ```
 
+Para o instalador, quando ele ou o que ele instala mudou:
+
+```sh
+powershell -ExecutionPolicy Bypass -File distribuicao/windows/empacotar.ps1
+powershell -ExecutionPolicy Bypass -File distribuicao/windows/qa-sandbox.ps1 -DesligarSmartAppControl
+```
+
+O primeiro comando monta o pacote sem assinatura em `target/distribuicao/pacotes`; se a pasta daquela versão e daquele commit já existe, ele para, e é preciso apagá-la. O segundo abre o Windows Sandbox, que roda o roteiro sozinho e fecha em poucos minutos: instala em silêncio, confere arquivos, atalho com a identidade e registro só do usuário, abre o app, tenta desinstalar com o app aberto, atualiza por cima com o app aberto, desinstala e confere que não sobrou arquivo, atalho, registro, credencial no cofre nem processo. `-DesligarSmartAppControl` vale só dentro do Sandbox e só existe porque o pacote de teste não tem assinatura; com pacote assinado, rodar sem ela, e uma segunda vez com `-ComRede -MarcaDeDownload`. Relatar os passos que passaram e falharam, o estado do Smart App Control e se o pacote estava assinado. Nada é instalado neste computador.
+
 O script pareia, cria um bot pelo formulário, aprova um pedido no cartão, para uma resposta, minimiza a janela e manda um pedido por outro aparelho para ver o aviso do sistema, nega esse pedido, fecha, reabre no tema claro com a sessão que estava no cofre do sistema e despareia. Ele grava capturas numa pasta temporária, cujo caminho imprime, e diz: quantos avisos o sistema recebeu com a janela minimizada, se algum mostra o conteúdo do pedido, quantos sobraram depois de voltar ao app, quantos pedidos ficaram pendentes no servidor, e se a sessão estava no cofre depois de parear e depois de desparear. Os cliques são por coordenada: depois de mudar o desenho da tela, conferir as coordenadas no começo do script. A sessão de quem desenvolve não é tocada: a prova usa um item só dela no cofre, e apaga no fim os avisos e o registro da identidade do build de desenvolvimento, se foi ela que criou. Durante a prova aparece um aviso de verdade na tela. Olhar as imagens é parte da verificação, e apagar a pasta depois também. No macOS não há prova visual: relatar como não verificado.
 
 ## App no aparelho
