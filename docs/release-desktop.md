@@ -34,7 +34,7 @@ Abrir a sessão do certificado em nuvem. Depois:
 powershell -ExecutionPolicy Bypass -File apps/desktop/distribuicao/windows/empacotar.ps1 -Assinar <impressão digital do certificado>
 ```
 
-O script confere o certificado antes de compilar, para não falhar no fim. Compila o executável de distribuição, assina-o, junta as licenças, monta o instalador, assina-o, e só então grava o manifesto e a lista de hashes. O pacote fica em `apps/desktop/target/distribuicao/pacotes/<versão>-<commit>`. Se essa pasta já existe, o script para: nada é sobrescrito.
+O script confere o certificado antes de compilar, para não falhar no fim. Compila o executável de distribuição, assina-o, junta as licenças e monta o instalador, que o próprio Inno Setup assina enquanto monta, junto com o desinstalador e a cópia interna do programa de instalação. Só então grava o manifesto e a lista de hashes. O certificado é usado várias vezes nesse passo. O pacote fica em `apps/desktop/target/distribuicao/pacotes/<versão>-<commit>`. Se essa pasta já existe, o script para: nada é sobrescrito.
 
 O script recebe só a impressão digital. Senha e token nunca passam por ele.
 

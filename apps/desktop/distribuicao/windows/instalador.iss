@@ -28,6 +28,19 @@
 ; o arquivo, grava a versao no build-info.json e o apaga.
 #expr SaveStringToFile(AddBackslash(Saida) + "inno-setup.txt", DecodeVer(Ver), 0, 0)
 
+; Com /DAssinatura, quem assina e o proprio compilador, com a ferramenta que o empacotar.ps1
+; define na linha de comando (/Sawikabot=...). Assim saem assinados tambem o desinstalador e a
+; copia do programa de instalacao que o instalador extrai e roda. Assinar so o arquivo final,
+; depois de compilar, deixa essas partes sem assinatura, e o Smart App Control as bloqueia.
+; O pacote que vai ser assinado so sai da versao fixada do Inno Setup: para antes de assinar.
+#ifdef Assinatura
+  #ifdef InnoSetupExigido
+    #if DecodeVer(Ver) != InnoSetupExigido
+      #error O pacote que vai ser assinado sai de outra versao do Inno Setup (comum.ps1)
+    #endif
+  #endif
+#endif
+
 ; A identidade do app para o Windows, a mesma de IDENTIDADE em crates/app/src/janela.rs.
 #define Identidade "awikabot.desktop"
 
@@ -63,6 +76,10 @@ ShowLanguageDialog=no
 ; Numa atualizacao, o instalador pede ao app aberto para fechar antes de trocar o executavel.
 CloseApplications=yes
 RestartApplications=no
+#ifdef Assinatura
+SignTool=awikabot
+SignedUninstaller=yes
+#endif
 
 [Languages]
 Name: "ptbr"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"

@@ -5,10 +5,11 @@
 #   powershell -ExecutionPolicy Bypass -File apps/desktop/distribuicao/windows/empacotar.ps1 -Assinar <impressão digital>
 #
 # Sem -Assinar, o pacote sai sem assinatura: serve para conferir o instalador no Windows Sandbox,
-# nunca para publicar. Com -Assinar, o executável é assinado antes de entrar no instalador, e o
-# instalador é assinado antes de os hashes serem calculados. O script só recebe a impressão
-# digital de um certificado que já está no repositório de certificados do usuário; senha e token
-# nunca passam por ele.
+# nunca para publicar. Com -Assinar, o executável é assinado antes de entrar no instalador, e
+# quem assina o instalador é o próprio Inno Setup, enquanto o monta: assim saem assinados também
+# o desinstalador e a cópia do programa de instalação que o instalador extrai e roda, que o Smart
+# App Control bloquearia. O script só recebe a impressão digital de um certificado que já está no
+# repositório de certificados do usuário; senha e token nunca passam por ele.
 #
 # Precisa do Inno Setup 6 (ISCC.exe), do Node e, para assinar, do signtool do Windows SDK.
 param(
@@ -39,7 +40,13 @@ if ($Assinar) { Invoke-Assinatura $executavel $Assinar $CarimboDeTempo }
 Copy-Item -LiteralPath (Join-Path $script:RaizDoRepositorio 'LICENSE') -Destination (Join-Path $pasta 'LICENSE.txt')
 "licencas de terceiros: " + (Invoke-Programa 'node' @((Join-Path $script:PastaDoDesktop 'distribuicao\licencas-de-terceiros.mjs'), (Join-Path $pasta 'LICENCAS-DE-TERCEIROS.txt')) | Select-Object -Last 1)
 
-Invoke-Programa $iscc @('/Qp', "/DVersao=$versao", "/DOrigem=$pasta", "/DSaida=$pasta", (Join-Path $PSScriptRoot 'instalador.iss')) | Out-Null
+$opcoesDoInno = @('/Qp', "/DVersao=$versao", "/DOrigem=$pasta", "/DSaida=$pasta")
+if ($Assinar) {
+    # O roteiro do instalador liga a assinatura com /DAssinatura e para, antes de assinar, se o
+    # Inno Setup nao for o da versao fixada.
+    $opcoesDoInno += @('/DAssinatura=1', "/DInnoSetupExigido=$script:VersaoDoInnoSetup", ('/Sawikabot=' + (Get-ComandoDeAssinatura $Assinar $CarimboDeTempo)))
+}
+Invoke-Programa $iscc ($opcoesDoInno + @((Join-Path $PSScriptRoot 'instalador.iss'))) | Out-Null
 $instalador = Join-Path $pasta "awikabot-$versao-windows-x64.exe"
 if (-not (Test-Path $instalador)) { throw 'o Inno Setup nao gerou o instalador' }
 # O Inno Setup completa o texto da versao com espacos.
@@ -50,7 +57,9 @@ if ($Assinar -and $innoSetup -ne $script:VersaoDoInnoSetup) {
     throw "o instalador foi montado com o Inno Setup $innoSetup; o pacote que vai ser assinado sai do $script:VersaoDoInnoSetup (comum.ps1)"
 }
 
-if ($Assinar) { Invoke-Assinatura $instalador $Assinar $CarimboDeTempo }
+# O instalador ja saiu assinado do Inno Setup: aqui so se confere que a assinatura vale, e do
+# certificado pedido e tem carimbo de tempo.
+if ($Assinar) { Test-Assinatura $instalador $Assinar }
 
 # O manifesto que o atualizador do app lê, com o nome que ele procura no release.
 $manifesto = [ordered]@{

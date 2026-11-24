@@ -108,6 +108,16 @@ function Invoke-Assinatura {
     Test-Assinatura $Arquivo $limpa
 }
 
+# A linha de comando com que o Inno Setup assina o que ele mesmo monta: o instalador, o
+# desinstalador e a cópia do programa de instalação que o instalador extrai e roda. O compilador
+# troca `$f` pelo arquivo e `$q` por uma aspa. SHA-256 e carimbo de tempo, como em Invoke-Assinatura.
+function Get-ComandoDeAssinatura {
+    param([string]$Impressao, [string]$CarimboDeTempo)
+    $limpa = ConvertTo-ImpressaoDigital $Impressao
+    if ($CarimboDeTempo -notmatch '^https?://[A-Za-z0-9./:_-]+$') { throw 'o endereco do carimbo de tempo esta fora do formato esperado' }
+    return '$q' + (Get-Signtool) + '$q sign /sha1 ' + $limpa + ' /fd SHA256 /tr ' + $CarimboDeTempo + ' /td SHA256 $f'
+}
+
 # A assinatura vale, é do certificado esperado e tem carimbo de tempo: sem o carimbo, ela deixa
 # de valer quando o certificado vence.
 function Test-Assinatura {
