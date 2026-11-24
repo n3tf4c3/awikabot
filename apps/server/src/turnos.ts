@@ -4,7 +4,7 @@ import type { Mensagem } from '@awikabot/core';
 import type { GestorDeAprovacoes } from './aprovacoes';
 import type { Banco } from './banco';
 import { gravarSessaoMotor, type BotInterno } from './bots';
-import { concluirMensagem, inserirMensagem } from './conversa';
+import { concluirMensagem, gravarParcial, inserirMensagem } from './conversa';
 import type { Barramento } from './eventos';
 import type { Ganchos } from './gancho';
 import type { Motor, ResultadoMotor, TurnoEmCurso } from './motor';
@@ -22,9 +22,17 @@ export interface LigacaoDeAprovacoes {
   porta: number;
 }
 
+/** De quanto em quanto tempo o texto de uma resposta em andamento vai para o banco. */
+export const INTERVALO_GRAVACAO_PARCIAL_MS = 1000;
+
+/** Quanto o servidor espera os turnos fecharem ao ser encerrado. Cabe no prazo de parada do contêiner. */
+export const PRAZO_PARADA_MS = 5000;
+
 /** Dono dos turnos em curso: um por bot, e um teto para o servidor inteiro. */
 export class GestorDeTurnos {
   private readonly ativos = new Map<string, TurnoEmCurso>();
+  /** Fecho de cada turno em curso: resolve depois de a resposta estar gravada. */
+  private readonly fechos = new Map<string, Promise<void>>();
   /** Texto já recebido de cada resposta em andamento, por id da mensagem. */
   private readonly parciais = new Map<string, string>();
   private readonly banco: Banco;
@@ -33,6 +41,7 @@ export class GestorDeTurnos {
   private readonly limite: number;
   private readonly pastaDosBots: string;
   private readonly ligacao: LigacaoDeAprovacoes | null;
+  private readonly intervaloGravacaoMs: number;
 
   constructor(deps: {
     banco: Banco;
@@ -41,6 +50,8 @@ export class GestorDeTurnos {
     limite: number;
     pastaDosBots: string;
     aprovacoes?: LigacaoDeAprovacoes;
+    /** Menor nos testes. */
+    intervaloGravacaoMs?: number;
   }) {
     this.banco = deps.banco;
     this.motor = deps.motor;
@@ -48,6 +59,7 @@ export class GestorDeTurnos {
     this.limite = deps.limite;
     this.pastaDosBots = deps.pastaDosBots;
     this.ligacao = deps.aprovacoes ?? null;
+    this.intervaloGravacaoMs = deps.intervaloGravacaoMs ?? INTERVALO_GRAVACAO_PARCIAL_MS;
   }
 
   ativo(botId: string): boolean {
@@ -74,6 +86,7 @@ export class GestorDeTurnos {
     const token = ligacao?.ganchos.registrar({ botId: bot.id, mensagemId: resposta.id, pasta }) ?? null;
 
     this.parciais.set(resposta.id, '');
+    let gravadoEm = Date.now();
     const turno = this.motor({
       pasta,
       texto,
@@ -83,15 +96,24 @@ export class GestorDeTurnos {
       gancho: ligacao && token ? { comando: ligacao.comando, porta: ligacao.porta, token } : null,
       aoTexto: (trecho) => {
         const anterior = this.parciais.get(resposta.id) ?? '';
-        this.parciais.set(resposta.id, anterior + trecho);
+        const parcial = anterior + trecho;
+        this.parciais.set(resposta.id, parcial);
+        // Numa queda, o que sobra é o que já foi para o banco: no máximo um intervalo se perde.
+        if (Date.now() - gravadoEm >= this.intervaloGravacaoMs) {
+          gravarParcial(this.banco, resposta.id, parcial);
+          gravadoEm = Date.now();
+        }
         this.barramento.publicar({ tipo: 'texto', botId: bot.id, mensagemId: resposta.id, posicao: anterior.length, trecho });
       },
     });
     this.ativos.set(bot.id, turno);
     this.barramento.publicar({ tipo: 'turno_iniciado', botId: bot.id, mensagemId: resposta.id });
-    void turno.fim.then((resultado) => {
-      this.concluir(bot.id, resposta.id, token, resultado);
-    });
+    this.fechos.set(
+      bot.id,
+      turno.fim.then((resultado) => {
+        this.concluir(bot.id, resposta.id, token, resultado);
+      }),
+    );
 
     return { ok: true, usuario, bot: resposta };
   }
@@ -103,12 +125,24 @@ export class GestorDeTurnos {
     return true;
   }
 
-  pararTodos(): void {
+  /**
+   * Para todos os turnos e espera cada resposta ser gravada, até o prazo. O que não fechar a
+   * tempo fica como está no banco, e a partida seguinte marca como falha.
+   */
+  async pararTodos(prazoMs = PRAZO_PARADA_MS): Promise<void> {
+    const fechos = [...this.fechos.values()];
     for (const turno of this.ativos.values()) turno.parar();
+    let relogio: NodeJS.Timeout | undefined;
+    const prazo = new Promise<void>((ok) => {
+      relogio = setTimeout(ok, prazoMs);
+    });
+    await Promise.race([Promise.all(fechos), prazo]);
+    clearTimeout(relogio);
   }
 
   private concluir(botId: string, mensagemId: string, token: string | null, resultado: ResultadoMotor): void {
     this.ativos.delete(botId);
+    this.fechos.delete(botId);
     this.parciais.delete(mensagemId);
     if (this.ligacao && token) {
       // O token deixa de valer com o turno, e o que ainda esperava resposta não vai mais rodar.

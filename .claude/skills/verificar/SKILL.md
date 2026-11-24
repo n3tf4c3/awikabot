@@ -18,7 +18,7 @@ pnpm verificar
 O comando faz os cinco passos e sai com código diferente de zero se algo falhar:
 
 1. **Subir**: empacota o servidor (`apps/server/build.mjs`) e inicia `dist/server.mjs` em `127.0.0.1:8795`, com o motor simulado e um banco descartável numa pasta temporária. Outra porta: `AWIKA_VERIFICAR_PORTA`. Recusa começar se a porta já responde.
-2. **Dirigir**: os fluxos F0 a F4 do mapa, pelo lado do servidor: saúde, pareamento com código gerado pelo comando `parear`, criar e editar um bot, um turno com resposta aos poucos, a parada de um turno, e a aprovação: ação aprovada, ação negada, leitura fora da pasta do bot e o gancho sem servidor.
+2. **Dirigir**: os fluxos F0 a F5 e O1 e O2 do mapa, pelo lado do servidor: saúde, pareamento com código gerado pelo comando `parear`, criar e editar um bot, um turno com resposta aos poucos, a parada de um turno, e a aprovação: ação aprovada, ação negada, leitura fora da pasta do bot e o gancho sem servidor. Depois mata o servidor no meio de um turno, sobe de novo com os mesmos dados e confere o histórico. Por fim, faz o backup com o servidor no ar e o restaura numa pasta nova, com um segundo servidor nas duas portas seguintes.
 3. **Observar**: status e corpo de cada resposta, e os eventos do fluxo `/v1/eventos`, contra o resultado esperado do mapa.
 4. **Encerrar**: fecha o fluxo, derruba o processo, apaga o banco temporário e confere que a porta ficou livre.
 5. **Relatar**: uma linha por verificação e a lista do que não foi verificado.
@@ -37,6 +37,33 @@ $C exec -T -e AWIKA_VERIFICAR_BASE=http://127.0.0.1:8790 -e AWIKA_VERIFICAR_CODI
 ```
 
 Nesse modo o comando também confere que o bot lembra do turno anterior e prova a aprovação pelo disco: o arquivo do comando aprovado existe na pasta do bot, e o do comando negado não. Por isso ele precisa rodar dentro do contêiner do servidor, como acima.
+
+## Ensaio no host: queda, vigia, backup e restauração
+
+O comando acima mata e sobe o processo do servidor, mas não passa pelo Docker. O que depende do contêiner é conferido no host, à mão, depois de uma mudança em `deploy/`, no `Dockerfile`, em `saude.ts` ou em `backup.ts`. Usar um servidor de ensaio, nunca um com dado real:
+
+```sh
+export COMPOSE_PROJECT_NAME=awikabot-ensaio AWIKA_SUBREDE=172.28.0.0/16 AWIKA_PORTA_HOST=8799
+C="docker compose -f deploy/compose.yaml"
+```
+
+1. **Queda (F5)**: com um turno em andamento, matar o processo do servidor e esperar a volta.
+
+   ```sh
+   $C exec -T server sh -c 'kill -9 "$(cat /data/vigia.pid)"'
+   ```
+
+   Esperado: `/healthz` responde de novo em segundos, o `RestartCount` do contêiner sobe em um, a resposta interrompida aparece como `falhou` com o texto que já tinha chegado, e o bot responde a um turno novo lembrando da conversa.
+2. **Vigia (O2)**: travar o servidor sem matá-lo e esperar.
+
+   ```sh
+   $C exec -T server sh -c 'kill -STOP "$(cat /data/vigia.pid)"'
+   ```
+
+   Esperado: em até dois minutos o `RestartCount` sobe em um e `/healthz` volta a responder.
+3. **Backup (O1)**: `sh deploy/backup.sh <pasta>`. Esperado: um `.tar` e o `.sha256` dele; `tar -tf` não lista nenhum arquivo de login; nenhuma cópia do banco fica em `/data/backup`.
+4. **Restauração (O1)**: em outro projeto, com volume novo, `sh deploy/restaurar.sh <arquivo.tar>` e `$C up -d`. Esperado: os mesmos bots e as mesmas conversas do servidor de origem, com o token do mesmo aparelho. Repetir o comando com o servidor no ar e depois com ele parado: os dois são recusados. Para conferir que o bot lembra da conversa, o volume restaurado precisa do login do motor.
+5. **Encerrar**: `$C down -v` nos projetos de ensaio e apagar a pasta do backup, que tem conversas.
 
 ## App no aparelho
 

@@ -63,6 +63,11 @@ export function concluirMensagem(banco: Banco, id: string, texto: string, estado
   return deLinha(linha);
 }
 
+/** Guarda o que já chegou de uma resposta em andamento, para sobrar algo se o servidor cair. */
+export function gravarParcial(banco: Banco, id: string, texto: string): void {
+  banco.prepare("UPDATE mensagens SET texto = ? WHERE id = ? AND estado = 'em_andamento'").run(texto, id);
+}
+
 /** Na partida do servidor: turno que ficou pela metade numa queda não vai terminar. */
 export function marcarInterrompidas(banco: Banco): number {
   const resultado = banco.prepare("UPDATE mensagens SET estado = 'falhou' WHERE estado = 'em_andamento'").run();

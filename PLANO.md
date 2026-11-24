@@ -92,7 +92,7 @@ Um bot executa comandos, então o servidor equivale a um terminal remoto no Pi.
    Verificar: fluxos 1 a 3 no aparelho, passando pelo túnel.
 3. Aprovações e push.
    Verificar: fluxo 4 com o app fechado e o celular bloqueado.
-4. Robustez no Pi: retomada depois de queda, backup do banco e health check vigiado.
+4. Concluída em 23/11, no lado do servidor. Robustez no Pi: retomada depois de queda, backup do banco e health check vigiado.
    Verificar: derrubar o contêiner no meio de um turno e conferir o fluxo 5 na volta; restaurar o backup num ambiente descartável.
 5. Revisão de segurança e distribuição por TestFlight e teste interno da Play.
 
@@ -192,11 +192,40 @@ Não coberto:
 - os cartões em aparelho: nenhuma tela foi aberta;
 - o acesso pelo túnel.
 
+## Etapa 4: resultado (2026-11-23)
+
+O servidor passa a aguentar queda, travamento e perda do volume. Nada mudou no contrato com o app: uma resposta interrompida usa o estado `falhou`, que já existia.
+
+- **Queda**: o texto de uma resposta em andamento vai para o banco a cada segundo. Na volta, o turno interrompido aparece como falha com o que já tinha chegado, os pedidos de aprovação pendentes expiram e o bot aceita um turno novo. Numa parada normal, o servidor espera os turnos fecharem.
+- **Saúde vigiada**: `/healthz` passa pelo banco. A conferência da imagem derruba o servidor na terceira falha seguida, e o contêiner o levanta.
+- **Backup**: o comando `backup` copia o banco com o servidor no ar. O `deploy/backup.sh` junta o banco, as pastas dos bots e as conversas do motor num arquivo, sem o login. O `deploy/restaurar.sh` só restaura num volume sem esses dados.
+
+| Verificação | Resultado |
+|---|---|
+| Testes | 32 no `core`, 122 no servidor e 460 no app. |
+| Falsificação | Cinco quebras de propósito, uma por vez: partida sem marcar os turnos, sem gravação do texto em andamento, parada sem esperar, saúde sem tocar o banco e backup sem recusar destino existente. Todas foram acusadas, pelos testes ou pelo runbook. A da parada só foi acusada depois de o teste ser endurecido. |
+| `pnpm verificar`, motor simulado | 21 de 21, em duas execuções iguais. Inclui matar o processo no meio de um turno e restaurar o backup numa pasta nova, com outro servidor. |
+| `pnpm verificar`, motor real no Pi | 12 de 12, nos fluxos F0 a F4, com a imagem desta etapa. |
+| Queda no Pi, motor real | Servidor morto no meio de um turno: o contêiner voltou em 2 segundos, a resposta interrompida ficou como falha com 551 caracteres guardados, e no turno seguinte o bot lembrou do número pedido antes da queda. |
+| Vigia no Pi | Servidor travado de propósito: derrubado e de volta em 101 segundos, sem ninguém intervir. O aparelho pareado continuou entrando. |
+| Turnos simultâneos no Pi, motor real | Quatro turnos ao mesmo tempo: pico de 681 MiB no contêiner, lido a cada poucos segundos, contra o limite de 2 GB. O quinto foi recusado pelo teto. |
+| Backup e restauração no Pi | Arquivo de 4,9 MB com 57 entradas e nenhuma do login. Num volume novo, em outro projeto: os mesmos 8 bots e conversas idênticas, com o token do mesmo aparelho. Restaurar com o servidor no ar e num volume com dados foi recusado. |
+| Memória do bot depois de restaurar | Dados do ensaio apagados do volume e restaurados do arquivo: o bot respondeu o número pedido no começo da conversa. |
+
+Não coberto:
+
+- queda de energia do Pi inteiro: o ensaio matou o processo, não desligou a placa;
+- para onde o backup vai, a cifra dele e a rotina agendada: o script grava numa pasta do host;
+- aviso para fora quando o Pi some: a vigia mora dentro do contêiner;
+- o fluxo F5 no aparelho: nenhuma tela foi aberta;
+- um bot cuja conversa do motor se perdeu continua sem saída pelo app.
+
 ## Riscos
 
 - Aprovação: um comando aprovado roda com os direitos do contêiner e alcança tudo o que está no volume, inclusive o login do motor. A proteção é a pessoa ler o comando no cartão.
-- Memória: os 8 GB são divididos com outros serviços, e cada turno é um processo de CLI. A etapa 0 mediu um turno por vez; falta medir turnos simultâneos.
-- Energia: o servidor fica numa placa doméstica e pode reiniciar por queda de energia. Precisa voltar sozinho.
+- Memória: os 8 GB são divididos com outros serviços, e cada turno é um processo de CLI. A etapa 4 mediu quatro turnos simultâneos curtos, com pico de 681 MiB; turnos longos com ferramentas podem passar disso.
+- Energia: o servidor fica numa placa doméstica e pode reiniciar por queda de energia. A etapa 4 provou a volta depois de o processo morrer; a queda de energia da placa não foi ensaiada.
+- Backup: enquanto o arquivo ficar só no Pi, a perda do cartão leva o servidor e o backup juntos.
 - Termos de uso: a página "Legal and compliance" do Claude Code não diz se um servidor sempre ligado, comandado pelo celular, conta como uso comum da assinatura, e manda perguntar à Anthropic em caso de dúvida. Ela reserva o direito de aplicar as restrições sem aviso. A saída segura é chave de API.
 - Formato das CLIs: a saída muda entre versões. Fixar a versão na imagem e testar o driver contra ela.
 - Push: o serviço da Expo é um terceiro no caminho do aviso.

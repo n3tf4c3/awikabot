@@ -97,6 +97,13 @@ describe('saúde', () => {
     });
   });
 
+  it('responde 503 quando o banco não responde', async () => {
+    ambiente.banco.close();
+    const resposta = await ambiente.pedir('/healthz');
+    expect(resposta.status).toBe(503);
+    expect(await erroDe(resposta)).toBe('banco_indisponivel');
+  });
+
   it.each(['POST', 'PUT', 'DELETE'])('recusa %s com 405', async (metodo) => {
     const resposta = await ambiente.pedir('/healthz', { metodo });
     expect(resposta.status).toBe(405);

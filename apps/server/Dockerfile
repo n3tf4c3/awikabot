@@ -47,7 +47,9 @@ COPY --from=build /repo/apps/server/dist/server.mjs /app/server.mjs
 USER awikabot
 VOLUME /data
 EXPOSE 8790
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD ["node", "-e", "fetch('http://127.0.0.1:8790/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+# A conferência de saúde também vigia: na terceira falha seguida ela derruba o servidor
+# travado, e a política de reinício do contêiner o levanta de novo.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+  CMD ["node", "/app/server.mjs", "saude", "--reiniciar"]
 ENTRYPOINT ["node", "/app/server.mjs"]
 CMD ["servir"]

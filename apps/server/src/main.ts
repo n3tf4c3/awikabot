@@ -4,6 +4,7 @@ import { serve } from '@hono/node-server';
 import pacote from '../package.json' with { type: 'json' };
 import { criarApp } from './app';
 import { expirarPendentesNaPartida, GestorDeAprovacoes } from './aprovacoes';
+import { BackupRecusado, fazerBackup } from './backup';
 import { abrirBanco, type Banco } from './banco';
 import { marcarInterrompidas } from './conversa';
 import { criarCodigo, LimitadorDeTentativas, listarDispositivos, revogar } from './dispositivos';
@@ -12,6 +13,7 @@ import { Barramento } from './eventos';
 import { criarAppDoGancho, executarGancho, Ganchos } from './gancho';
 import { criarMotorClaudeCode } from './motor-claude-code';
 import { criarMotorSimulado } from './motor-simulado';
+import { conferirSaude, registrarProcesso } from './saude';
 import { GestorDeTurnos } from './turnos';
 
 function lerEnvOuSair(): Env {
@@ -62,16 +64,24 @@ function servir(env: Env, banco: Banco): void {
     console.log(`awikabot ${pacote.version} ouvindo em ${env.AWIKA_HOST}:${env.AWIKA_PORTA}, motor ${env.AWIKA_MOTOR}`);
     if (interrompidas > 0) console.log(`${interrompidas} turno(s) interrompido(s) na última parada foram marcados como falha.`);
   }) as Server;
+  // A vigia da saúde precisa saber qual processo derrubar se o servidor travar.
+  const esquecerProcesso = registrarProcesso(env.AWIKA_DADOS);
 
+  let encerrando = false;
   const encerrar = (): void => {
-    turnos.pararTodos();
-    servidorDoGancho.close();
-    servidorDoGancho.closeAllConnections();
-    servidor.close(() => {
-      banco.close();
-      process.exit(0);
+    if (encerrando) return;
+    encerrando = true;
+    // Primeiro os turnos: cada resposta é gravada como parada, com o que já tinha chegado.
+    void turnos.pararTodos().then(() => {
+      servidorDoGancho.close();
+      servidorDoGancho.closeAllConnections();
+      servidor.close(() => {
+        banco.close();
+        esquecerProcesso();
+        process.exit(0);
+      });
+      servidor.closeAllConnections();
     });
-    servidor.closeAllConnections();
   };
   process.on('SIGTERM', encerrar);
   process.on('SIGINT', encerrar);
@@ -79,8 +89,30 @@ function servir(env: Env, banco: Banco): void {
 
 const formatarInstante = (instante: number | null): string => (instante === null ? '-' : new Date(instante).toISOString());
 
-function administrar(comando: string, argumento: string | undefined): void {
-  const env = lerEnvOuSair();
+const USO = 'Uso: servir | parear | dispositivos | revogar <id> | backup <arquivo> | saude';
+
+function copiarBanco(banco: Banco, destino: string | undefined): void {
+  if (!destino) {
+    console.error('Informe o arquivo de destino do backup. Ele não pode existir.');
+    process.exitCode = 64;
+    return;
+  }
+  try {
+    const resumo = fazerBackup(banco, destino);
+    console.log(`Backup gravado em ${resumo.arquivo}`);
+    console.log(`${resumo.bytes} bytes, sha256 ${resumo.sha256}`);
+    console.log(
+      `esquema ${resumo.versaoDoEsquema}, ${resumo.bots} bot(s), ${resumo.mensagens} mensagem(ns), ${resumo.aparelhosAtivos} aparelho(s) ativo(s)`,
+    );
+    console.log('O arquivo leva as conversas e os aparelhos pareados. Guarde-o cifrado.');
+  } catch (erro) {
+    // Erro que não é a recusa conhecida pode citar o caminho; a mensagem do SQLite não leva dado do banco.
+    console.error(erro instanceof BackupRecusado ? erro.message : `Backup não concluído: ${erro instanceof Error ? erro.message : 'erro desconhecido'}`);
+    process.exitCode = 1;
+  }
+}
+
+function administrar(env: Env, comando: string, argumento: string | undefined): void {
   const banco = abrirBanco(path.join(env.AWIKA_DADOS, 'awikabot.db'));
 
   switch (comando) {
@@ -105,8 +137,11 @@ function administrar(comando: string, argumento: string | undefined): void {
         console.log('Aparelho revogado.');
       }
       break;
+    case 'backup':
+      copiarBanco(banco, argumento);
+      break;
     default:
-      console.error('Uso: servir | parear | dispositivos | revogar <id>');
+      console.error(USO);
       process.exitCode = 64;
   }
 }
@@ -115,6 +150,17 @@ const [comando = 'servir', argumento] = process.argv.slice(2);
 if (comando === 'gancho') {
   // Chamado pelo motor antes de cada ferramenta. Não abre o banco nem lê a configuração do servidor.
   await executarGancho();
+} else if (comando === 'saude') {
+  // Chamado pelo health check da imagem. Não abre o banco: pergunta ao servidor que está no ar.
+  const env = lerEnvOuSair();
+  const { saudavel, derrubou } = await conferirSaude({
+    host: env.AWIKA_HOST,
+    porta: env.AWIKA_PORTA,
+    reiniciar: argumento === '--reiniciar',
+    pasta: env.AWIKA_DADOS,
+  });
+  if (derrubou) console.error('O servidor não respondeu a conferências seguidas e foi derrubado para reiniciar.');
+  process.exitCode = saudavel ? 0 : 1;
 } else {
-  administrar(comando, argumento);
+  administrar(lerEnvOuSair(), comando, argumento);
 }
