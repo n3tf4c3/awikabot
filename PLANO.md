@@ -48,7 +48,7 @@ Cinco fluxos, cada um conferido no aparelho:
 4. Aprovar ou negar uma ação pelo celular, com aviso push mesmo com o app fechado.
 5. Ver o que está rodando e o histórico depois de o servidor reiniciar.
 
-Fica fora da primeira versão: app de desktop e web, computador ou VM para o bot, apps conectados (Gmail, Slack), voz, salas com vários bots, importação de times e temas. Rotinas agendadas e webhooks são as candidatas à segunda versão.
+Fica fora da primeira versão: app web, computador ou VM para o bot, apps conectados (Gmail, Slack), voz, salas com vários bots, importação de times e temas. Rotinas agendadas e webhooks são as candidatas à segunda versão. O app de desktop para Windows e Mac, pedido em 23/11, está planejado como etapa 6, sem data.
 
 ## Arquitetura
 
@@ -95,6 +95,8 @@ Um bot executa comandos, então o servidor equivale a um terminal remoto no Pi.
 4. Concluída em 23/11, no lado do servidor. Robustez no Pi: retomada depois de queda, backup do banco e health check vigiado.
    Verificar: derrubar o contêiner no meio de um turno e conferir o fluxo 5 na volta; restaurar o backup num ambiente descartável.
 5. Revisão de segurança e distribuição por TestFlight e teste interno da Play.
+6. App de desktop para Windows e Mac, em Rust com GPUI. Só planejada; ver "Etapa 6: plano do app de desktop".
+   Verificar: os fluxos 1 a 5 percorridos no Windows e num Mac, com o app instalado pelo pacote assinado.
 
 ## Etapa 0: resultado (2026-11-23)
 
@@ -245,6 +247,81 @@ Não coberto:
 - as decisões que a revisão deixou registradas: `http://` na rede local, token de aparelho sem validade, aprovação sem biometria, assinatura das atualizações do app e saída de rede do contêiner;
 - o gate de publicação sobre o commit final, e o teste dinâmico das rotas de pareamento e aprovação.
 
+## Etapa 6: plano do app de desktop (2026-11-23)
+
+Pedido do titular: versão para Windows e Mac, em Rust, com o design do termIAX. Nada foi implementado.
+
+### Premissas
+
+| Premissa | Base |
+|---|---|
+| Rust com GPUI, como o termIAX. | O termIAX já resolveu, para Windows, o tema, os componentes de base, o empacotamento, a assinatura, o atualizador e o QA no Windows Sandbox. Uma segunda tecnologia de desktop abriria tudo isso de novo. |
+| O app de desktop é mais um cliente do mesmo servidor. | Mesmo pareamento por código, mesmas rotas e mesmo fluxo de eventos do app de celular. O servidor não muda. |
+| O código fica em `apps/desktop`, como um workspace Cargo dentro deste repositório. | Um repositório só, com a CI conferindo os três lados do contrato. O pnpm não enxerga essa pasta. |
+| A primeira versão faz o que o app de celular faz, mais o aviso do sistema para pedido de aprovação. | Parear, bots, conversa e cartão de aprovação. Com o app na bandeja, o aviso do sistema cobre no computador o que o aviso push cobriria no celular. |
+
+### O que vem do termIAX
+
+Decisão do titular em 23/11: vem só o visual. O termIAX é proprietário e privado, e nenhum arquivo dele entra neste repositório.
+
+- **Vem**: os valores do tema, claro e escuro (cores, fontes e espaçamentos), a aparência dos componentes, e o que o termIAX ensinou sobre o processo: o roteiro de release em etapas, a assinatura e o QA no Windows Sandbox.
+- **É escrito aqui, do zero**: os componentes de base (botão, campo de texto, área de texto), a leitura do fluxo de eventos, o aviso do sistema, a lista de conversa e o cartão de aprovação, os scripts de empacotamento e tudo de macOS. O termIAX é só Windows; a versão de Mac dele está em espera por falta de Mac.
+
+### Contrato
+
+Os esquemas ficam no `core`, em zod, e a regra do projeto é não redeclarar limite nem enum fora dele. Para o cliente em Rust:
+
+1. o `core` gera os tipos em Rust direto dos esquemas, num arquivo versionado, com um teste que falha se o arquivo estiver desatualizado;
+2. um teste de contrato roda o cliente Rust contra o servidor de verdade, com o motor simulado, na CI. É o papel que o `contrato-app.test.ts` cumpre para o app de celular.
+
+O plano original passava por um JSON Schema intermediário e gerava os tipos no build. Na prova, gerar o arquivo Rust direto ficou mais simples e dispensou uma dependência no build.
+
+### Passos
+
+1. **Prova**: uma janela que pareia e mostra uma conversa com resposta aos poucos.
+   Verificar: compila no Windows e no macOS na CI; teste de contrato verde.
+2. **Cliente**: sessão no cofre do sistema, regra do 401, retomada do fluxo de eventos.
+   Verificar: os mesmos casos de sessão e de fluxo que `apps/mobile/src/lib` testa, contra o servidor.
+3. **Telas**: parear, bots, conversa, cartão de aprovação e aviso do sistema.
+   Verificar: fluxos 1 a 5 percorridos no Windows.
+4. **Distribuição no Windows**: pacote, assinatura e atualizador, pelo roteiro do termIAX.
+   Verificar: instalar, atualizar e desinstalar no Windows Sandbox.
+5. **macOS**: build, pacote, assinatura e notarização.
+   Verificar: fluxos 1 a 4 percorridos num Mac.
+
+### Passo 1: resultado da prova (2026-11-23)
+
+Existe uma janela que pareia com o servidor e conversa com um bot, com a resposta chegando aos poucos. Fica em `apps/desktop`: um crate de cliente, sem interface, e um crate com a janela em GPUI.
+
+| Verificação | Resultado |
+|---|---|
+| Contrato | Os tipos em Rust saem do `core`; o teste do `core` acusa o arquivo adulterado ou atrasado. |
+| Cliente contra o servidor de verdade | Pareia, recusa o código repetido, cria bot, recebe a resposta aos poucos com as posições conferidas, aprova uma ação, despareia e vê o fluxo parar sozinho. |
+| Janela dirigida pelo teclado, sem tela | Digita endereço e código, erra o código e corrige com a tecla de apagar, pareia com Enter, envia uma mensagem e despareia, contra o servidor de verdade. |
+| App de verdade no Windows | Levado do pareamento à conversa com teclas e cliques mandados só à janela dele, com capturas. A prova achou um defeito que os testes não pegam: texto longo não quebrava a linha e empurrava a tela. Corrigido e conferido de novo. |
+| Testes | 22 do cliente, 1 de contrato e 6 da janela, mais 2 no `core` para o gerador. |
+| Falsificação | Seis quebras de propósito, uma por vez, todas acusadas. |
+| `clippy` e `rustfmt` | Sem avisos. |
+
+Não coberto:
+
+- macOS: nada foi compilado nem aberto num Mac; o job da CI ainda não rodou;
+- o que os passos seguintes trazem: sessão guardada no cofre do sistema, cartões de aprovação, aviso do sistema, criar e editar bot com formulário, parar um turno, tema claro;
+- o campo de texto é o mínimo: sem seleção, copiar nem desfazer, e uma mensagem longa some pela direita enquanto é digitada;
+- pacote, assinatura e atualizador.
+
+### Decisões que são do titular
+
+- **Mac sem Mac**: a CI do GitHub compila e testa no macOS, sem custo num repositório público, mas ninguém abre a tela. O passo 5 depende de alguém com Mac e da conta de desenvolvedor da Apple, a mesma que o TestFlight do iOS exige.
+- **Quando**: depois de a primeira versão estar conferida no celular, ou em paralelo.
+
+### Riscos
+
+- A GPUI vem do repositório do Zed, fixada por commit, porque o crate publicado está parado. A troca de commit segue a do termIAX.
+- Passam a existir dois clientes, em duas linguagens. Quem segura a igualdade é o teste de contrato, não a revisão.
+- O que foi escrito em TypeScript para o app (sessão, fluxo de eventos, regras de tela) é reescrito em Rust, com os testes.
+- Os componentes de base também são escritos aqui. Um campo de texto com seleção, área de transferência e teclado ABNT2 é a peça mais trabalhosa.
+
 ## Riscos
 
 - Aprovação: um comando aprovado roda com os direitos do contêiner e alcança tudo o que está no volume, inclusive o login do motor. A proteção é a pessoa ler o comando no cartão.
@@ -259,6 +336,7 @@ Não coberto:
 
 - Assinatura de cada pessoa ou chave de API no uso contínuo: depende da leitura dos termos acima. A prova usou a assinatura.
 - Subdomínio do túnel. O domínio `awikabot.com` já está registrado na Cloudflare; a ligação do túnel fica para depois.
+- App de desktop: quem confere a versão de Mac, e quando a etapa 6 começa. Ver "Etapa 6: plano do app de desktop".
 
 ## Referência: OpenMausBot em 2026-11-23
 

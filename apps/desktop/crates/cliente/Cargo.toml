@@ -1,0 +1,20 @@
+[package]
+name = "awikabot-cliente"
+description = "Cliente do servidor do awikabot: contrato, pedidos HTTP e fluxo de eventos. Sem interface."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+ureq.workspace = true
+
+[features]
+# Sobe o servidor de verdade para os testes deste crate e do app.
+teste-suporte = []
+
+[dev-dependencies]
+awikabot-cliente = { path = ".", features = ["teste-suporte"] }

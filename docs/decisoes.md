@@ -31,6 +31,10 @@ O padrão é o da skill `bootstrap-monorepo`. Aqui fica só o que desvia dele, c
 | Gravação negada fora da pasta do bot e na configuração do motor | Toda gravação vai para a pessoa | O cartão antigo mostrava só o nome do arquivo. Negar sem perguntar tira da pessoa uma decisão que ela não tinha como tomar bem. |
 | `/healthz` sem versão | Versão e protocolo na saúde | A rota não pede token. O app recebe a versão na resposta do pareamento. |
 | Ambiente do motor por lista de nomes | Herdar o ambiente do servidor | Um segredo posto no ambiente do servidor chegaria a todo comando aprovado. |
+| App de desktop em Rust com GPUI | Reaproveitar o app Expo, ou Tauri | O termIAX já resolveu tema, empacotamento, assinatura e QA de um app em GPUI para Windows. Outra tecnologia abriria tudo isso de novo. O custo é reescrever em Rust a lógica de cliente que o celular tem em TypeScript. |
+| Do termIAX, só os valores do tema | Copiar os componentes de base dele | O termIAX é proprietário e privado; este repositório é MIT e público. Decisão do titular em 23/11. |
+| Tipos do contrato em Rust gerados direto do `core`, num arquivo versionado | JSON Schema intermediário e geração no build | Um gerador pequeno, do próprio `core`, dispensa uma dependência de geração no build do Rust e deixa o arquivo legível na revisão. O teste do `core` falha se ele ficar para trás. |
+| Fluxo de eventos do desktop numa thread própria | Executor de segundo plano da GPUI | O fluxo bloqueia enquanto durar. No executor, prenderia uma das threads dele e travaria os testes, que rodam as tarefas em linha. Os pedidos curtos usam o executor. |
 | `packages/core` exporta o TypeScript de origem | — | O servidor é empacotado pelo esbuild e o app pelo Metro; os dois leem a origem, e não há passo de build do core para esquecer. |
 | ESLint 9, não o 10 | — | O `eslint-plugin-react` que vem com o `eslint-config-expo` 58 falha no ESLint 10. |
 | Motor na imagem do servidor, em versão fixa | — | O Claude Code é instalado como a Anthropic publica, com a atualização automática desligada. Trocar de versão é mudar o `CLAUDE_CODE_VERSION` e testar. |

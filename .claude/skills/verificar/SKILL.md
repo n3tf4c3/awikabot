@@ -67,6 +67,23 @@ C="docker compose -f deploy/compose.yaml"
 4. **Restauração (O1)**: em outro projeto, com volume novo, `sh deploy/restaurar.sh <arquivo.tar>` e `$C up -d`. Esperado: os mesmos bots e as mesmas conversas do servidor de origem, com o token do mesmo aparelho. Repetir o comando com o servidor no ar e depois com ele parado: os dois são recusados. Para conferir que o bot lembra da conversa, o volume restaurado precisa do login do motor.
 5. **Encerrar**: `$C down -v` nos projetos de ensaio e apagar a pasta do backup, que tem conversas.
 
+## App de desktop
+
+De dentro de `apps/desktop`, depois de `pnpm server:build`:
+
+```sh
+cargo test --workspace
+```
+
+Os testes sobem o servidor de verdade com o motor simulado. O de contrato confere o cliente; os de `janela.rs` dirigem a janela pelo teclado, sem tela. Eles não veem o desenho: quebra de linha, encaixe e cor só aparecem com o app aberto. No Windows:
+
+```sh
+cargo build -p awikabot-desktop
+powershell -ExecutionPolicy Bypass -File ../../scripts/desktop-prova-visual.ps1
+```
+
+O script leva o app do pareamento a uma conversa e grava capturas numa pasta temporária, cujo caminho ele imprime. Olhar as imagens é parte da verificação, e apagar a pasta depois também. No macOS não há prova visual: relatar como não verificado.
+
 ## App no aparelho
 
 O comando não abre o app. Para conferir uma mudança de tela:

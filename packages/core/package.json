@@ -12,7 +12,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "contrato": "vitest run src/contrato-rust.test.ts --update"
   },
   "dependencies": {
     "zod": "catalog:"
