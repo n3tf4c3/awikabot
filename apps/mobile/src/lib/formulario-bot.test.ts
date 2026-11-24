@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { EsquemaBotEdicao, LIMITES, type Bot } from '@awikabot/core';
+import { EsquemaBotEdicao, EsquemaBotEntrada, LIMITES, type Bot } from '@awikabot/core';
+import tabela from '../../../../packages/core/casos/bot-entrada.json';
 import { CAMPOS_BOT_VAZIOS, camposDoBot, edicaoDoBot, validarBot } from './formulario-bot';
 
 const bot: Bot = {
@@ -108,5 +109,60 @@ describe('edicaoDoBot', () => {
   it('formulário aberto e salvo sem mexer não gera edição', () => {
     const lido = validarBot(camposDoBot(bot));
     expect(lido.ok && edicaoDoBot(bot, lido.entrada)).toBeNull();
+  });
+});
+
+// A mesma tabela que o app de desktop testa em `apps/desktop/crates/cliente/src/formulario_bot.rs`,
+// onde a regra é escrita à mão. Aqui quem responde é o esquema do contrato: se um caso discordar
+// dele, o caso está errado. Mudar o esquema exige mudar a tabela, e a tabela mudada quebra o
+// teste do desktop até a regra de lá ser igualada.
+describe('tabela de casos compartilhada com o app de desktop', () => {
+  /** Um texto da tabela: inteiro, ou em partes, com trechos repetidos para os casos de limite. */
+  type Texto = string | (string | { repete: string; vezes: number })[];
+  interface Caso {
+    caso: string;
+    nome: Texto;
+    instrucoes: Texto;
+    modelo: Texto;
+    entrada?: { nome: Texto; instrucoes: Texto; modelo: Texto | null };
+    erros?: string[];
+  }
+
+  const casos: Caso[] = tabela.casos;
+  const montar = (texto: Texto): string =>
+    typeof texto === 'string' ? texto : texto.map((parte) => (typeof parte === 'string' ? parte : parte.repete.repeat(parte.vezes))).join('');
+
+  it('tem casos de todos os tipos, cada um com o seu nome', () => {
+    expect(casos.length).toBeGreaterThanOrEqual(90);
+    expect(new Set(casos.map((caso) => caso.caso)).size).toBe(casos.length);
+    expect(new Set(casos.map((caso) => (caso.erros ?? ['aceito']).join(',')))).toEqual(
+      new Set(['aceito', 'nome', 'instrucoes', 'modelo', 'modelo,nome', 'instrucoes,nome', 'instrucoes,modelo', 'instrucoes,modelo,nome']),
+    );
+  });
+
+  it('distingue as três formas de contar o tamanho: o esquema conta caracteres Unicode', () => {
+    const emoji = '😀';
+    expect([emoji.length, [...emoji].length]).toEqual([2, 1]);
+    // Em unidades UTF-16 este nome passaria do limite; em caracteres, não.
+    expect(validarBot({ ...CAMPOS_BOT_VAZIOS, nome: emoji.repeat(LIMITES.nomeBot) }).ok).toBe(true);
+    expect(validarBot({ ...CAMPOS_BOT_VAZIOS, nome: emoji.repeat(LIMITES.nomeBot + 1) }).ok).toBe(false);
+  });
+
+  it.each(casos.map((caso) => [caso.caso, caso] as const))('%s', (_nome, caso) => {
+    const lido = validarBot({ nome: montar(caso.nome), instrucoes: montar(caso.instrucoes), modelo: montar(caso.modelo) });
+    if (caso.entrada === undefined) {
+      expect(caso.erros?.length).toBeGreaterThan(0);
+      expect(lido.ok ? lido : Object.keys(lido.erros).sort()).toEqual(caso.erros);
+      return;
+    }
+    expect(caso.erros).toBeUndefined();
+    const entrada = {
+      nome: montar(caso.entrada.nome),
+      instrucoes: montar(caso.entrada.instrucoes),
+      modelo: caso.entrada.modelo === null ? null : montar(caso.entrada.modelo),
+    };
+    expect(lido).toEqual({ ok: true, entrada });
+    // O que o formulário entrega é o que o servidor lê, sem mudar mais nada.
+    expect(EsquemaBotEntrada.parse(entrada)).toEqual(entrada);
   });
 });

@@ -24,12 +24,12 @@ O que quem cuida do servidor consegue completar, sem o app.
 
 ## App de desktop
 
-Prova do passo 1 da etapa 6. O desktop é mais um cliente dos mesmos fluxos; só estes existem nele hoje.
+O desktop é mais um cliente dos mesmos fluxos (etapa 6, passos 1 a 3). A janela é testada sem tela, pelo apoio de testes da GPUI, com teclas e cliques nos botões de verdade, contra o servidor de verdade com o motor simulado. O que só a tela mostra é conferido no Windows com `scripts/desktop-prova-visual.ps1`. Num Mac, a CI compila e roda os testes, e ninguém viu a tela.
 
 | ID | No desktop | Teste |
 |---|---|---|
 | F1 | tela "Parear", com "Endereço do servidor", "Código de pareamento" e "Nome deste computador"; "Desparear" na lateral | cliente: `apps/desktop/crates/cliente/tests/contrato.rs` (contra o servidor). Janela: `janela.rs`, dirigida pelo teclado (sem tela). App de verdade no Windows: `scripts/desktop-prova-visual.ps1`. A sessão fica no cofre de credenciais do sistema, e o app reabre já pareado: `sessao.rs` (unidade), `cofre_do_sistema.rs` (o cofre de verdade, só no Windows) e `janela.rs` |
-| F2 | só "Novo bot", com nome automático | cliente: `tests/contrato.rs`. Janela: `janela.rs`. Editar bot ainda não existe |
-| F3 | conversa com resposta aos poucos e "Enviar" | cliente: `tests/contrato.rs` e `conversa.rs` (unidade). Janela: `janela.rs`. Parar um turno ainda não existe |
-| F4 | sem tela | cliente: `tests/contrato.rs` aprova uma ação pela API. A janela não mostra o cartão: um turno que pede aprovação fica esperando até expirar |
+| F2 | "Novo bot" na lateral e "Editar" no alto da conversa abrem o formulário, com "Nome", "Modelo" e "Instruções"; "Salvar" e "Cancelar" | cliente: `tests/contrato.rs` (criar e editar contra o servidor) e `formulario_bot.rs` (unidade, contra a tabela `packages/core/casos/bot-entrada.json`, a mesma do celular). Janela: `janela.rs` cria e edita pelo formulário, com teclado e clique. App de verdade no Windows: prova visual |
+| F3 | conversa com resposta aos poucos; "Enviar", que vira "Parar" enquanto o bot responde. O campo de mensagem tem várias linhas, seleção, copiar, colar e desfazer | cliente: `tests/contrato.rs` (enviar e parar) e `conversa.rs` (unidade). Janela: `janela.rs` envia e para pelo botão. Campo de texto: `edicao.rs` (unidade) e `campo.rs` (teclado e mouse, sem tela). App de verdade no Windows: prova visual |
+| F4 | cartão "Pedido de aprovação" na conversa, com o pedido inteiro, "Aprovar" e "Negar"; "aguardando aprovação" na lista de bots; aviso do sistema quando a janela não está na frente | cliente: `tests/contrato.rs` (aprovar, negar, decidir de novo, lista de pendentes) e `aprovacoes.rs` (unidade). Janela: `janela.rs` aprova e nega pelo botão, mostra o pedido que já esperava, acompanha a decisão de outro aparelho e confere o aviso do sistema pela plataforma de teste da GPUI. App de verdade no Windows: prova visual, que lê o aviso na central de notificações. Com o app fechado não há aviso: o pedido expira em 15 minutos |
 | F5 | sem tela própria | o cliente refaz a conexão do ponto em que parou: `apps/desktop/crates/cliente/tests/fluxo.rs`, contra um servidor de mentira que cai e volta. Sem teste com o servidor de verdade reiniciando |

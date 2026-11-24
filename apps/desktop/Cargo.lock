@@ -498,6 +498,7 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "keyring",
+ "unicode-segmentation",
 ]
 
 [[package]]

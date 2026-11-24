@@ -16,6 +16,8 @@ awikabot-cliente.workspace = true
 futures = "0.3"
 gpui.workspace = true
 gpui_platform.workspace = true
+# Passo do cursor por caractere como a pessoa o vê (letra com acento à parte, emoji composto).
+unicode-segmentation = "1"
 
 # O cofre de credenciais de cada sistema. Só o backend nativo: nada de arquivo nem de serviço à parte.
 [target.'cfg(windows)'.dependencies]
