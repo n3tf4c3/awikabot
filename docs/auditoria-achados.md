@@ -12,6 +12,7 @@ Status: `ABERTO`, `PARCIAL`, `RESOLVIDO`, `ACEITO`, `ADIADO`, `FALSO POSITIVO (j
 | 2026-11-23 | Resolução dos achados 1 a 8, com teste dinâmico do achado 1 | a partir de `e9095e9` | adendo no mesmo relatório |
 | 2026-11-24 | Verificação de segurança (estática): servidor, celular, desktop, instalador, atualizador, release e CI | `f9616d6` | `relatorios/seguranca-2026-11-24-153000.md` |
 | 2026-11-24 | Resolução dos achados 9 e 10, com QA no Sandbox do pacote sem assinatura | a partir de `f9616d6` | adendo no mesmo relatório |
+| 2026-11-24 | Verificação de segurança (estática), reemitida depois do PR 15: aprovada como gate, sem achado novo | `1d1368c` | `relatorios/seguranca-2026-11-24-160600.md` |
 
 ## Achados
 
