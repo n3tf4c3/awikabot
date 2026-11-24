@@ -10,7 +10,7 @@
 // está no ar, com o motor real, e um código de pareamento gerado nele. Gasta
 // uso da conta do motor e deixa um bot de teste no banco desse servidor.
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,9 +28,9 @@ function registrar(id, nome, passou, detalhe) {
   console.log(`${passou ? 'PASSOU' : 'FALHOU'}  ${id}  ${nome}: ${detalhe}`);
 }
 
-async function responde() {
+async function responde(base = BASE) {
   try {
-    return (await fetch(`${BASE}/healthz`)).ok;
+    return (await fetch(`${base}/healthz`)).ok;
   } catch {
     return false;
   }
@@ -45,8 +45,8 @@ async function esperar(condicao, limiteMs) {
   return false;
 }
 
-async function pedir(caminho, { metodo, corpo, token } = {}) {
-  const resposta = await fetch(`${BASE}${caminho}`, {
+async function pedir(caminho, { metodo, corpo, token, base } = {}) {
+  const resposta = await fetch(`${base ?? BASE}${caminho}`, {
     method: metodo ?? (corpo === undefined ? 'GET' : 'POST'),
     headers: {
       ...(corpo === undefined ? {} : { 'content-type': 'application/json' }),
@@ -93,8 +93,24 @@ async function abrirEventos(token) {
   };
 }
 
+/** Inicia o pacote de produção do servidor com o ambiente dado e guarda a saída dele. */
+function iniciarServidor(pasta, ambiente) {
+  const processo = spawn(process.execPath, ['dist/server.mjs'], { cwd: pasta, env: ambiente, stdio: ['ignore', 'pipe', 'pipe'] });
+  const servico = { processo, saida: '', saiu: new Promise((ok) => { processo.once('exit', ok); }) };
+  processo.stdout.on('data', (parte) => { servico.saida += parte; });
+  processo.stderr.on('data', (parte) => { servico.saida += parte; });
+  return servico;
+}
+
+/** Roda um subcomando do servidor (`parear`, `backup`, `saude`) e devolve a saída e o código. */
+function comandoDoServidor(args, ambiente = local.ambiente) {
+  return spawnSync(process.execPath, ['dist/server.mjs', ...args], { cwd: local.servidor, env: ambiente, encoding: 'utf8' });
+}
+
 // 1. Subir (só no modo local).
 let local = null;
+/** O que o runbook cria além do servidor principal: desfeito no encerramento, passe ou falhe. */
+const extras = { processos: [], pastas: [] };
 if (!motorReal) {
   if (await responde()) {
     console.error(`FALHOU  a porta ${PORTA} já tem um servidor respondendo; encerre-o ou mude AWIKA_VERIFICAR_PORTA.`);
@@ -117,16 +133,12 @@ if (!motorReal) {
     AWIKA_DADOS: dados,
     AWIKA_MOTOR: 'simulado',
   };
-  const processo = spawn(process.execPath, ['dist/server.mjs'], { cwd: servidor, env: ambiente, stdio: ['ignore', 'pipe', 'pipe'] });
-  local = { servidor, dados, ambiente, processo, saida: '', saiu: new Promise((ok) => { processo.once('exit', ok); }) };
-  processo.stdout.on('data', (parte) => { local.saida += parte; });
-  processo.stderr.on('data', (parte) => { local.saida += parte; });
+  local = { servidor, dados, ambiente, ...iniciarServidor(servidor, ambiente) };
 }
 
 function codigoDePareamento() {
   if (motorReal) return process.env.AWIKA_VERIFICAR_CODIGO;
-  const comando = spawnSync(process.execPath, ['dist/server.mjs', 'parear'], { cwd: local.servidor, env: local.ambiente, encoding: 'utf8' });
-  return /[A-Z2-7]{4}-[A-Z2-7]{4}-[A-Z2-7]{4}/.exec(comando.stdout ?? '')?.[0];
+  return /[A-Z2-7]{4}-[A-Z2-7]{4}-[A-Z2-7]{4}/.exec(comandoDoServidor(['parear']).stdout ?? '')?.[0];
 }
 
 let fluxo = null;
@@ -138,6 +150,11 @@ try {
     const saude = await pedir('/healthz');
     registrar('F0', 'saúde do servidor', saude.status === 200 && saude.corpo.status === 'ok' && Number.isInteger(saude.corpo.protocolo),
       `status ${saude.status}, corpo ${JSON.stringify(saude.corpo)}`);
+    if (local) {
+      // O comando que o health check da imagem executa, aqui sem a opção de reiniciar.
+      const vigia = comandoDoServidor(['saude']);
+      registrar('O2', 'comando de saúde com o servidor no ar', vigia.status === 0, `saída ${vigia.status}`);
+    }
 
     // F1: parear.
     const codigo = codigoDePareamento();
@@ -265,6 +282,67 @@ try {
         } catch { /* fica a marca de saída ilegível */ }
         registrar('F4', 'gancho sem servidor nega', gancho.status === 0 && decisaoDoGancho === 'deny', `saída ${gancho.status}, decisão "${decisaoDoGancho}"`);
       }
+
+      if (local) {
+        // F5: o servidor cai no meio de um turno, com um pedido de aprovação esperando em outro bot.
+        const marcaDaQueda = fluxo.eventos.length;
+        const outro = await pedir('/v1/bots', { token, corpo: { nome: 'Espera', instrucoes: '' } });
+        await pedir(`/v1/bots/${outro.corpo?.id}/turnos`, { token, corpo: { texto: '!comando echo depois' } });
+        await pedir(`/v1/bots/${botId}/turnos`, { token, corpo: { texto: Array.from({ length: 600 }, (_, i) => `palavra${i}`).join(' ') } });
+        await fluxo.esperarEvento((e) => e.tipo === 'aprovacao_pedida' && fluxo.eventos.indexOf(e) >= marcaDaQueda);
+        // O texto em andamento vai para o banco a cada segundo: espera passar da primeira gravação.
+        await new Promise((ok) => { setTimeout(ok, 2500); });
+        const pendentesAntes = (await pedir('/v1/aprovacoes', { token })).corpo?.aprovacoes?.length;
+        const ativosAntes = (await pedir('/v1/bots', { token })).corpo?.bots?.filter((bot) => bot.turnoAtivo).length;
+
+        await fluxo.fechar();
+        fluxo = null;
+        local.processo.kill('SIGKILL');
+        await local.saiu;
+        Object.assign(local, iniciarServidor(local.servidor, local.ambiente));
+        const voltou = await esperar(responde, 10_000);
+
+        const botsDepois = await pedir('/v1/bots', { token });
+        const historico = await pedir(`/v1/bots/${botId}/mensagens`, { token });
+        const interrompida = historico.corpo?.mensagens?.at(-1);
+        const ativosDepois = botsDepois.corpo?.bots?.filter((bot) => bot.turnoAtivo).length;
+        registrar('F5', 'depois da queda, o histórico volta e a resposta interrompida vem marcada',
+          voltou && ativosAntes === 2 && botsDepois.status === 200 && botsDepois.corpo.bots.length === 2 && ativosDepois === 0
+          && interrompida?.estado === 'falhou' && String(interrompida?.texto).startsWith('Você disse: palavra0 palavra1 '),
+          `voltou: ${voltou}; turnos ativos antes ${ativosAntes}, depois ${ativosDepois}; última resposta (${interrompida?.estado}) com ${String(interrompida?.texto).length} caracteres guardados`);
+
+        const pendentesDepois = (await pedir('/v1/aprovacoes', { token })).corpo?.aprovacoes?.length;
+        registrar('F5', 'pedido de aprovação não sobrevive à queda', pendentesAntes === 1 && pendentesDepois === 0,
+          `pendentes antes ${pendentesAntes}, depois ${pendentesDepois}`);
+
+        fluxo = await abrirEventos(token);
+        const deVolta = await pedir(`/v1/bots/${botId}/turnos`, { token, corpo: { texto: 'de volta' } });
+        const respondeu = await fluxo.esperarEvento((e) => e.tipo === 'turno_terminado' && e.mensagem.texto === 'Você disse: de volta');
+        registrar('F5', 'o bot conversa de novo depois da queda', deVolta.status === 201 && respondeu, `status ${deVolta.status}, resposta ${respondeu ? 'recebida' : 'não recebida'}`);
+
+        // O1: backup com o servidor no ar, e restauração numa pasta nova, com outro servidor.
+        const copia = path.join(local.dados, 'copias', 'awikabot.db');
+        const backup = comandoDoServidor(['backup', copia]);
+        registrar('O1', 'backup com o servidor no ar', backup.status === 0 && existsSync(copia) && /sha256 [0-9a-f]{64}/.test(backup.stdout),
+          `saída ${backup.status}; ${backup.stdout.split('\n').slice(1, 3).join('; ')}`);
+        const repetido = comandoDoServidor(['backup', copia]);
+        registrar('O1', 'backup não escreve por cima de um arquivo', repetido.status === 1, `saída ${repetido.status}`);
+
+        const restaurada = mkdtempSync(path.join(os.tmpdir(), 'awikabot-verificar-restauro-'));
+        extras.pastas.push(restaurada);
+        copyFileSync(copia, path.join(restaurada, 'awikabot.db'));
+        const baseRestaurada = `http://127.0.0.1:${PORTA + 2}`;
+        const segundo = iniciarServidor(local.servidor, { ...local.ambiente, AWIKA_PORTA: String(PORTA + 2), AWIKA_PORTA_GANCHO: String(PORTA + 3), AWIKA_DADOS: restaurada });
+        extras.processos.push(segundo);
+        const subiu = await esperar(() => responde(baseRestaurada), 10_000);
+        const original = await pedir(`/v1/bots/${botId}/mensagens`, { token });
+        const copiada = subiu ? await pedir(`/v1/bots/${botId}/mensagens`, { token, base: baseRestaurada }) : { status: 0, corpo: null };
+        const botsCopiados = subiu ? await pedir('/v1/bots', { token, base: baseRestaurada }) : { status: 0, corpo: null };
+        const textos = (lista) => JSON.stringify(lista.corpo?.mensagens?.map((m) => [m.seq, m.estado, m.texto]));
+        registrar('O1', 'restaurar o backup numa pasta nova',
+          subiu && copiada.status === 200 && botsCopiados.corpo?.bots?.length === 2 && original.corpo.mensagens.length >= 4 && textos(copiada) === textos(original),
+          `servidor restaurado ${subiu ? 'no ar' : 'não subiu'}; o mesmo aparelho entra: status ${copiada.status}; ${botsCopiados.corpo?.bots?.length} bots e ${copiada.corpo?.mensagens?.length} mensagens iguais às do original: ${textos(copiada) === textos(original)}`);
+      }
     }
   }
 } catch (erro) {
@@ -272,6 +350,12 @@ try {
 } finally {
   // 4. Encerrar.
   if (fluxo) await fluxo.fechar();
+  for (const extra of extras.processos) {
+    extra.processo.kill();
+    await extra.saiu;
+  }
+  // Só pastas que este comando criou com `mkdtempSync`.
+  for (const pasta of extras.pastas) rmSync(pasta, { recursive: true, force: true });
   if (local) {
     local.processo.kill();
     await local.saiu;
@@ -281,12 +365,14 @@ try {
 if (local) {
   const portaLivre = await esperar(async () => !(await responde()), 5_000);
   registrar('--', 'encerramento', portaLivre, portaLivre ? `porta ${PORTA} liberada` : `porta ${PORTA} ainda responde`);
+  const vigia = comandoDoServidor(['saude']);
+  registrar('O2', 'comando de saúde com o servidor parado', vigia.status === 1, `saída ${vigia.status}`);
 }
 
 // 5. Relatar.
 const falhas = resultados.filter((resultado) => !resultado.passou);
 console.log(`\n${resultados.length - falhas.length} de ${resultados.length} verificações passaram em ${((Date.now() - inicio) / 1000).toFixed(1)}s, com o motor ${motorReal ? 'real' : 'simulado'}.`);
 console.log(motorReal
-  ? 'Não verificado por este comando: o app no aparelho; o aviso push; o fluxo F5.'
-  : 'Não verificado por este comando: o app no aparelho; o motor real; o aviso push; o fluxo F5.');
+  ? 'Não verificado por este comando: o app no aparelho; o aviso push; a queda (F5), o backup e a vigia da saúde, que têm ensaio próprio no host.'
+  : 'Não verificado por este comando: o app no aparelho; o motor real; o aviso push; o reinício do contêiner pelo Docker e a vigia derrubando um servidor travado.');
 process.exit(falhas.length === 0 ? 0 : 1);

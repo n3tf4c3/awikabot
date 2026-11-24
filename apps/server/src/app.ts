@@ -74,7 +74,15 @@ export function criarApp(deps: Dependencias): Hono<Ambiente> {
   });
   app.notFound((c) => c.json({ erro: 'nao_encontrado' }, 404));
 
-  app.get('/healthz', (c) => c.json(saude()));
+  // A saúde passa pelo banco: "ok" quer dizer que o servidor atende e que o banco responde.
+  app.get('/healthz', (c) => {
+    try {
+      deps.banco.prepare('SELECT 1').get();
+    } catch {
+      return c.json({ erro: 'banco_indisponivel' }, 503);
+    }
+    return c.json(saude());
+  });
   app.all('/healthz', (c) => {
     c.header('allow', 'GET');
     return c.json({ erro: 'metodo_nao_permitido' }, 405);

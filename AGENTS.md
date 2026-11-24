@@ -8,7 +8,7 @@ Gerenciador de bots: um servidor mantém agentes de IA rodando e apps de iOS e A
 apps/server     servidor Node 24 (Hono, SQLite embutido); roda em contêiner, com o motor na imagem
 apps/mobile     app Expo (iOS e Android)
 packages/core   contratos e validação compartilhados (zod), sem framework
-deploy/         compose do servidor
+deploy/         compose do servidor e scripts de backup e restauração
 docs/           mapa de fluxos e decisões que fogem do padrão
 scripts/        runbook de verificação em forma de comando
 spike/          provas descartáveis; não é código do produto
@@ -27,7 +27,7 @@ spike/          provas descartáveis; não é código do produto
 - **Chamada do motor** (`apps/server/src/motor-claude-code.ts`): o texto da pessoa vai pela entrada padrão e toda opção vai na forma `--nome=valor`. Nunca passar valor vindo do app como argumento solto.
 - **Banco**: `node:sqlite`, síncrono, num arquivo em `AWIKA_DADOS`. Migrações em `apps/server/src/banco.ts`, numeradas pela posição na lista; nunca editar uma já publicada.
 - **Motor simulado** (`AWIKA_MOTOR=simulado`): só para teste e para o `pnpm verificar`. Em produção ele derruba a partida.
-- **Comandos do servidor**: `node dist/server.mjs servir | parear | dispositivos | revogar <id>`. O `parear` imprime um código de uso único.
+- **Comandos do servidor**: `node dist/server.mjs servir | parear | dispositivos | revogar <id> | backup <arquivo> | saude`. O `parear` imprime um código de uso único. O `backup` copia o banco com o servidor no ar. O `saude` é o que o health check da imagem executa.
 
 ## Comandos (da raiz)
 
@@ -55,6 +55,12 @@ Todo workspace declara `lint`, `typecheck` e `test`: `pnpm -r` pula em silêncio
 - **Porta do gancho só em loopback** (`AWIKA_PORTA_GANCHO`): nunca publicar no compose nem passar pelo túnel.
 - **Política de ferramentas num lugar só**: `apps/server/src/politica.ts`. Ferramenta nova ou desconhecida vai para a pessoa; só entra na lista de leitura com teste em `politica.test.ts`.
 - **Gancho que falha nega**: sem servidor, sem configuração ou com resposta ilegível, a ação não roda.
+- **Queda não apaga o que já chegou**: o texto de uma resposta em andamento vai para o banco a cada segundo (`apps/server/src/turnos.ts`). Na partida, todo turno que ficou pela metade vira `falhou` e todo pedido de aprovação pendente expira; nada volta a rodar sozinho.
+- **Parada espera os turnos**: no `SIGTERM`, o servidor para os turnos e espera até 5 segundos cada resposta ser gravada como `parada`, antes de fechar o banco.
+- **Saúde passa pelo banco**: `/healthz` só responde `ok` se o banco responde; senão, `503`.
+- **Vigia só na imagem**: `saude --reiniciar` mata o servidor na terceira conferência seguida sem resposta, e a política de reinício do contêiner o levanta. A opção só aparece no `HEALTHCHECK` do `Dockerfile`; sem ela, o comando só observa.
+- **Backup nunca escreve por cima e nunca leva o login**: o comando `backup` recusa um destino que já existe. O `deploy/backup.sh` junta o banco, as pastas dos bots e as conversas do motor; `claude/.credentials.json` fica de fora.
+- **Restauração só em volume sem dados**: o `deploy/restaurar.sh` recusa com o servidor no ar, e recusa um volume que já tem o banco, ou qualquer pasta de bot ou conversa do motor que venha no arquivo.
 - **401 só derruba a sessão que fez o pedido**: o app captura a sessão no início do pedido e só a apaga se ela ainda for a atual, e só quando o corpo do 401 traz o código `nao_autenticado` do servidor. Um 401 de proxy ou túnel e um erro de rede nunca deslogam.
 - **Cliente do app testado contra o servidor**: `apps/server/src/contrato-app.test.ts` usa a lógica de `apps/mobile/src/lib` pela rede. Rota ou evento novo que o app consome ganha um caso ali.
 - **Endereço do servidor no app**: `https://` sempre, menos `localhost` e endereços de rede privada, que aceitam `http://`.
@@ -84,7 +90,9 @@ A memória do projeto fica no ai-memory, no escopo do `.ai-memory.toml`. Ao conc
 - Não há aviso push: com o app fechado, um pedido de aprovação expira em 15 minutos e a ação não roda.
 - Um comando aprovado roda com os direitos do contêiner: lê tudo o que está no volume, inclusive o login do motor. O cartão mostra o comando inteiro, e é ele que a pessoa aprova.
 - Um bot cuja sessão do motor se perdeu não tem como começar uma conversa nova pelo app.
-- O servidor guarda só o texto final de cada resposta; os trechos intermediários vivem na memória do processo.
+- Numa queda, perde-se até um segundo do texto que estava chegando, e a ação que rodava no momento pode ter ficado pela metade. A resposta aparece como falha; o bot não a refaz sozinho.
+- O backup fica no host e sai sem cifra: tirar o arquivo do Pi, cifrar e agendar a rotina ainda é manual.
+- Ninguém é avisado se o Pi inteiro sair do ar: a vigia mora dentro do contêiner. Um monitor de fora depende do túnel.
 - O app não tem identificador de pacote nem projeto no EAS; não gera build de loja ainda. Ver `docs/decisoes.md`.
 - O app não foi aberto em aparelho: telas, teclado, cofre do sistema e o fluxo de eventos no Hermes estão sem verificação. A leitura de QR no pareamento ainda não existe.
 - Em build de release do Android, `http://` para a rede local é bloqueado pelo sistema; fora de desenvolvimento, o servidor precisa de HTTPS.
