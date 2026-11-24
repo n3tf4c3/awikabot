@@ -138,6 +138,186 @@ function Get-PastaDeEvidencias {
     return $pasta
 }
 
+# A pasta de evidências do commit de onde um pacote saiu, pelo `build-info.json` dele.
+function Get-PastaDeEvidenciasDoPacote {
+    param($Informacoes)
+    $origem = [pscustomobject]@{ Curto = $Informacoes.commit.Substring(0, 7); ComMudancas = [bool]$Informacoes.com_mudancas }
+    return Get-PastaDeEvidencias $Informacoes.versao $origem
+}
+
+# O pacote pedido ou, sem pedido, o mais recente.
+function Resolve-Pacote {
+    param([string]$Pacote)
+    if (-not $Pacote) {
+        $Pacote = Get-ChildItem (Join-Path $script:PastaDeBuild 'pacotes') -Directory -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+    }
+    if (-not $Pacote -or -not (Test-Path $Pacote)) { throw 'nenhum pacote encontrado; rode o empacotar.ps1 antes' }
+    return (Resolve-Path $Pacote).Path
+}
+
+# O repositório e o começo da etiqueta dos releases, lidos de onde o atualizador do app os lê:
+# o que é publicado tem de estar onde o app instalado procura.
+function Get-DestinoDosReleases {
+    $fonte = Get-Content -Raw (Join-Path $script:PastaDoDesktop 'crates\cliente\src\atualizacao.rs')
+    $repositorio = [regex]::Match($fonte, '(?m)^const REPOSITORIO: &str = "([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)";')
+    $prefixo = [regex]::Match($fonte, '(?m)^pub const PREFIXO_DA_ETIQUETA: &str = "([a-z0-9-]+)";')
+    if (-not $repositorio.Success -or -not $prefixo.Success) { throw 'nao achei o repositorio ou a etiqueta dos releases em atualizacao.rs' }
+    return [pscustomobject]@{ Repositorio = $repositorio.Groups[1].Value; Prefixo = $prefixo.Groups[1].Value }
+}
+
+# Os releases do repositório no GitHub, rascunhos inclusive, como a API os devolve.
+function Get-Releases {
+    param([string]$Gh, [string]$Repositorio)
+    $texto = (Invoke-Programa $Gh @('api', "repos/$Repositorio/releases?per_page=100") $script:RaizDoRepositorio) -join "`n"
+    return @($texto | ConvertFrom-Json | ForEach-Object { $_ })
+}
+
+# A etiqueta existe no repositório do GitHub? Devolve o commit para onde ela aponta, ou nada.
+function Get-CommitDaEtiqueta {
+    param([string]$Gh, [string]$Repositorio, [string]$Etiqueta)
+    $texto = (Invoke-Programa $Gh @('api', "repos/$Repositorio/git/matching-refs/tags/$Etiqueta") $script:RaizDoRepositorio) -join "`n"
+    $achada = @($texto | ConvertFrom-Json | ForEach-Object { $_ }) | Where-Object { $_.ref -eq "refs/tags/$Etiqueta" } | Select-Object -First 1
+    if ($achada) { return $achada.object.sha }
+    return $null
+}
+
+# A maior versão do desktop já pública: o atualizador só oferece versão maior que a instalada.
+function Get-MaiorVersaoPublica {
+    param($Releases, [string]$Prefixo)
+    $versoes = @($Releases | Where-Object { -not $_.draft -and -not $_.prerelease -and $_.tag_name -like "$Prefixo*" } |
+        ForEach-Object { $_.tag_name.Substring($Prefixo.Length) } | Where-Object { $_ -match '^\d+\.\d+\.\d+$' } |
+        ForEach-Object { [version]$_ })
+    if ($versoes.Count -eq 0) { return $null }
+    return ($versoes | Sort-Object -Descending | Select-Object -First 1)
+}
+
+# O commit está na `main` do repositório remoto? A `main` é buscada antes, para valer a de agora.
+function Test-CommitNaMain {
+    param([string]$Commit)
+    Invoke-Programa 'git' @('fetch', '--quiet', 'origin', 'main') $script:RaizDoRepositorio | Out-Null
+    # O git sai com 1 quando o commit não está na `main`, e com erro quando nem o conhece.
+    try { Invoke-Programa 'git' @('merge-base', '--is-ancestor', $Commit, 'origin/main') $script:RaizDoRepositorio | Out-Null; return $true }
+    catch { return $false }
+}
+
+# A versão que o Cargo declara num commit, lida do Git e não da pasta de trabalho.
+function Get-VersaoNoCommit {
+    param([string]$Commit)
+    $cargo = (Invoke-Programa 'git' @('show', "${Commit}:apps/desktop/Cargo.toml") $script:RaizDoRepositorio) -join "`n"
+    $achada = [regex]::Match($cargo, '(?ms)^\[workspace\.package\].*?^version\s*=\s*"(\d+\.\d+\.\d+)"')
+    if (-not $achada.Success) { throw "nao achei a versao do desktop no commit $Commit" }
+    return $achada.Groups[1].Value
+}
+
+function Read-Evidencia {
+    param([string]$Arquivo)
+    if (-not (Test-Path $Arquivo)) { return $null }
+    try { return Get-Content -Raw $Arquivo | ConvertFrom-Json } catch { return $null }
+}
+
+# Os três arquivos que vão para o release, pelo nome que o atualizador procura.
+function Get-NomesDosPublicados {
+    param([string]$Versao)
+    return @("awikabot-$Versao-windows-x64.exe", 'awikabot-desktop-windows-x64.json', 'SHA256SUMS')
+}
+
+# Grava a evidência da conferência dos artefatos: o hash de cada arquivo que vai para o release.
+# É contra ela que a publicação confere o que está subindo. Devolve o arquivo gravado.
+function Write-EvidenciaDosArtefatos {
+    param([string]$Pacote, [string]$Pasta, [string]$Versao, [string]$Commit)
+    $arquivos = [ordered]@{}
+    foreach ($nome in (Get-NomesDosPublicados $Versao)) { $arquivos[$nome] = Get-Sha256 (Join-Path $Pacote $nome) }
+    $evidencia = [ordered]@{
+        aprovado = $true
+        versao   = $Versao
+        commit   = $Commit
+        quando   = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+        arquivos = $arquivos
+    }
+    $arquivo = Join-Path $Pasta 'artefatos.json'
+    Write-TextoSemBom $arquivo ((($evidencia | ConvertTo-Json -Depth 4) -replace "`r`n", "`n") + "`n")
+    return $arquivo
+}
+
+# A evidência de uma rodada de QA no Sandbox: amarra o resultado ao pacote testado e ao tipo de
+# rodada. Devolve o nome do arquivo na pasta do candidato e o texto dele.
+function New-EvidenciaDoQa {
+    param($Manifesto, $Informacoes, $Resultado, [bool]$ComRede, [bool]$MarcaDeDownload, [bool]$SmartAppControlDesligado)
+    $evidencia = [ordered]@{
+        aprovado                    = $Resultado.aprovado
+        versao                      = $Manifesto.versao
+        instalador                  = $Manifesto.arquivo
+        sha256                      = $Manifesto.sha256
+        assinado                    = $Informacoes.assinado
+        commit                      = $Informacoes.commit
+        com_rede                    = $ComRede
+        marca_de_download           = $MarcaDeDownload
+        smart_app_control_desligado = $SmartAppControlDesligado
+        resultado                   = $Resultado
+    }
+    $nome = if ($ComRede) { 'qa-sandbox-com-rede.json' } else { 'qa-sandbox-sem-rede.json' }
+    return [pscustomobject]@{ Nome = $nome; Texto = (($evidencia | ConvertTo-Json -Depth 8) + "`n") }
+}
+
+# O que falta nas evidências de um candidato para ele poder ser publicado: as conferências do
+# commit, a conferência dos artefatos e as duas rodadas de QA, todas do mesmo commit e do mesmo
+# instalador. Devolve um problema por linha; nada, se está tudo lá.
+function Get-ProblemasDasEvidencias {
+    param([string]$Pasta, [string]$Versao, [string]$Commit)
+    $candidato = Read-Evidencia (Join-Path $Pasta 'candidato.json')
+    if (-not $candidato) { 'falta a evidencia das conferencias do candidato (candidato.json)' }
+    else {
+        if (-not $candidato.aprovado) { 'as conferencias do candidato nao foram aprovadas' }
+        if ($candidato.commit -ne $Commit) { 'as conferencias do candidato sao de outro commit' }
+        if ($candidato.com_mudancas) { 'as conferencias do candidato rodaram com mudancas sem commit' }
+        if ($candidato.versao -ne $Versao) { 'as conferencias do candidato sao de outra versao' }
+    }
+    $instalador = $null
+    $artefatos = Read-Evidencia (Join-Path $Pasta 'artefatos.json')
+    if (-not $artefatos) { 'falta a evidencia da conferencia dos artefatos (artefatos.json)' }
+    else {
+        if (-not $artefatos.aprovado) { 'a conferencia dos artefatos nao foi aprovada' }
+        if ($artefatos.commit -ne $Commit) { 'a conferencia dos artefatos e de outro commit' }
+        if ($artefatos.versao -ne $Versao) { 'a conferencia dos artefatos e de outra versao' }
+        $nomes = Get-NomesDosPublicados $Versao
+        $registrados = @($artefatos.arquivos.PSObject.Properties | ForEach-Object { $_.Name })
+        if ((($registrados | Sort-Object) -join '|') -ne (($nomes | Sort-Object) -join '|')) { 'a conferencia dos artefatos nao registra exatamente os tres arquivos do release' }
+        else { $instalador = $artefatos.arquivos.PSObject.Properties[$nomes[0]].Value }
+    }
+    foreach ($rodada in @(@{ Nome = 'sem rede'; Arquivo = 'qa-sandbox-sem-rede.json'; ComRede = $false }, @{ Nome = 'com rede'; Arquivo = 'qa-sandbox-com-rede.json'; ComRede = $true })) {
+        $qa = Read-Evidencia (Join-Path $Pasta $rodada.Arquivo)
+        if (-not $qa) { "falta o QA no Sandbox $($rodada.Nome) ($($rodada.Arquivo))"; continue }
+        if (-not $qa.aprovado) { "o QA no Sandbox $($rodada.Nome) reprovou o pacote" }
+        if ($qa.commit -ne $Commit) { "o QA no Sandbox $($rodada.Nome) e de outro commit" }
+        if (-not $instalador -or $qa.sha256 -ne $instalador) { "o QA no Sandbox $($rodada.Nome) testou outro instalador" }
+        if (-not $qa.assinado) { "o QA no Sandbox $($rodada.Nome) rodou com pacote sem assinatura" }
+        if ($qa.smart_app_control_desligado -ne $false) { "o QA no Sandbox $($rodada.Nome) rodou com o Smart App Control desligado" }
+        if ([bool]$qa.com_rede -ne $rodada.ComRede) { "a evidencia do QA $($rodada.Nome) e de outro tipo de rodada" }
+        if ($rodada.ComRede -and -not $qa.marca_de_download) { 'o QA com rede rodou sem a marca de download' }
+    }
+}
+
+# Os hashes dos arquivos de uma pasta batem com os que a conferência dos artefatos registrou?
+# Devolve um problema por arquivo que falta ou difere.
+function Get-ProblemasDosArquivos {
+    param([string]$Pasta, $Artefatos, [string]$Versao, [string]$Onde)
+    foreach ($nome in (Get-NomesDosPublicados $Versao)) {
+        $arquivo = Join-Path $Pasta $nome
+        $registro = $Artefatos.arquivos.PSObject.Properties[$nome]
+        if (-not (Test-Path $arquivo)) { "falta $nome $Onde" }
+        elseif (-not $registro -or (Get-Sha256 $arquivo) -ne $registro.Value) { "$nome $Onde nao e o arquivo que foi conferido" }
+    }
+}
+
+# Uma pasta temporária própria, que quem chama apaga no fim.
+function New-PastaTemporaria {
+    param([string]$Nome)
+    $pasta = Join-Path ([IO.Path]::GetTempPath()) ("awikabot-$Nome-" + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force $pasta | Out-Null
+    return $pasta
+}
+
 function Get-Sha256 {
     param([string]$Arquivo)
     return (Get-FileHash -Algorithm SHA256 -LiteralPath $Arquivo).Hash.ToLowerInvariant()

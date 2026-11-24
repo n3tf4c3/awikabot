@@ -501,14 +501,29 @@ Por fim, o começo do subpasso 6, o roteiro de release (`docs/release-desktop.md
 | Opção de conferir pacote | Recusa um executável assinado pela Microsoft, com a revogação consultada, um sem assinatura e um que não existe. |
 | CI do PR 12 | Falhou no macOS, por três motivos de recusa que só o Windows produz; corrigido, passou nos dois sistemas. |
 
-Ainda sem script: publicar o rascunho e aprovar. Dependem de existir um pacote assinado para serem exercitados.
+Depois, as duas últimas etapas do roteiro:
+
+- **Publicar o rascunho** (`publicar-rascunho.ps1`). Só sobe pacote assinado, de commit que está na `main`, com as conferências do candidato, a conferência dos artefatos e as duas rodadas de QA aprovadas para aquele commit e aquele instalador. Os arquivos têm de ser os que foram conferidos, a versão maior que a última pública e a etiqueta nova. Depois de criar o rascunho, baixa os arquivos de volta e compara. `-Ensaio` confere e não envia.
+- **Aprovar** (`aprovar.ps1`). Confere o rascunho contra o GitHub de agora e publica pelo número dele. Depois confere que ficou público e que a etiqueta aponta para o commit. A versão é escrita à mão, e sem `-Ensaio` só o titular roda.
+- **Evidência por etapa.** A conferência dos artefatos, cada rodada de QA, o rascunho e a publicação gravam um arquivo na pasta do commit em `relatorios/release`, e cada etapa lê os das anteriores. Copiar a evidência do QA à mão deixou de existir.
+- **Repositório e etiqueta num lugar só.** Os scripts leem os dois de `atualizacao.rs`: o que é publicado vai para onde o app instalado procura.
+
+| Verificação | Resultado |
+|---|---|
+| Teste dos scripts de publicação (`testes/testar-publicacao.ps1`) | Com um `gh` de mentira, 43 de 43 casos: o caminho bom das duas etapas, o ensaio que não envia, as notas do release, e 34 defeitos plantados um por vez no pacote, nas evidências ou no GitHub de mentira, cada um recusado pelo motivo certo. As evidências do teste saem das mesmas funções que os scripts de verdade usam. Entrou nas conferências do candidato. |
+| Falsificação do teste | Treze conferências tiradas dos scripts, uma por vez; o teste acusou todas. |
+| Sandbox, depois da mudança na evidência | Pacote de desenvolvimento, sem assinatura: 18 de 18 passos, e a cópia da evidência chegou à pasta do commit com o tipo de rodada e a marca de Smart App Control desligado. |
+| Conferências do candidato, como ensaio | 13 de 13 passos, já com o teste dos scripts de publicação. |
+| Ensaio contra o GitHub de verdade | Com o pacote de desenvolvimento, a etapa 5 consulta o GitHub e recusa por seis motivos, entre eles a falta de assinatura e de evidências. A etapa 6 para antes, por não haver rascunho. |
+
+Nenhum rascunho foi criado no GitHub: depende de existir um pacote assinado. Criar o rascunho, baixá-lo de volta e publicar só rodaram contra o `gh` de mentira; se o `gh` de verdade se comportar de outro jeito com um rascunho, isso aparece na primeira publicação, que ainda é só rascunho.
 
 Depende do titular para seguir:
 
 - aprovar o ícone, ou pedir outro;
 - abrir a sessão do certificado em nuvem e informar a impressão digital dele, para assinar (subpasso 3) e repetir o QA com o pacote assinado e o Smart App Control ligado.
 
-Não coberto ainda: a assinatura de verdade; o QA com pacote assinado, com rede e com a marca de arquivo baixado; a atualização de um app instalado para uma versão publicada; a tela do atualizador vista no app de verdade; o roteiro de release. No Sandbox a conta é administradora, e a instalação sem privilégios é conferida pelo lugar dos arquivos e do registro, não com um usuário comum. Os scripts de distribuição só rodaram neste PC; a CI passa a montar o pacote sem assinatura no Windows, e esse passo ainda não rodou lá.
+Não coberto ainda: a assinatura de verdade; o QA com pacote assinado, com rede e com a marca de arquivo baixado; a atualização de um app instalado para uma versão publicada; a tela do atualizador vista no app de verdade; o roteiro de release de ponta a ponta, com rascunho e publicação de verdade. No Sandbox a conta é administradora, e a instalação sem privilégios é conferida pelo lugar dos arquivos e do registro, não com um usuário comum. Os scripts de distribuição só rodaram neste PC; a CI passa a montar o pacote sem assinatura no Windows, e esse passo ainda não rodou lá.
 
 ### Decisões que são do titular
 
