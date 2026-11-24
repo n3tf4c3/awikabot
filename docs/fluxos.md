@@ -28,8 +28,8 @@ Prova do passo 1 da etapa 6. O desktop é mais um cliente dos mesmos fluxos; só
 
 | ID | No desktop | Teste |
 |---|---|---|
-| F1 | tela "Parear", com "Endereço do servidor", "Código de pareamento" e "Nome deste computador"; "Desparear" na lateral | cliente: `apps/desktop/crates/cliente/tests/contrato.rs` (contra o servidor). Janela: `janela.rs`, dirigida pelo teclado (sem tela). App de verdade no Windows: `scripts/desktop-prova-visual.ps1`. A sessão não é guardada: fechar o app despareia só o computador, não o servidor |
+| F1 | tela "Parear", com "Endereço do servidor", "Código de pareamento" e "Nome deste computador"; "Desparear" na lateral | cliente: `apps/desktop/crates/cliente/tests/contrato.rs` (contra o servidor). Janela: `janela.rs`, dirigida pelo teclado (sem tela). App de verdade no Windows: `scripts/desktop-prova-visual.ps1`. A sessão fica no cofre de credenciais do sistema, e o app reabre já pareado: `sessao.rs` (unidade), `cofre_do_sistema.rs` (o cofre de verdade, só no Windows) e `janela.rs` |
 | F2 | só "Novo bot", com nome automático | cliente: `tests/contrato.rs`. Janela: `janela.rs`. Editar bot ainda não existe |
 | F3 | conversa com resposta aos poucos e "Enviar" | cliente: `tests/contrato.rs` e `conversa.rs` (unidade). Janela: `janela.rs`. Parar um turno ainda não existe |
 | F4 | sem tela | cliente: `tests/contrato.rs` aprova uma ação pela API. A janela não mostra o cartão: um turno que pede aprovação fica esperando até expirar |
-| F5 | sem cobertura | o cliente refaz a conexão e pede nova carga, sem teste de queda do servidor |
+| F5 | sem tela própria | o cliente refaz a conexão do ponto em que parou: `apps/desktop/crates/cliente/tests/fluxo.rs`, contra um servidor de mentira que cai e volta. Sem teste com o servidor de verdade reiniciando |

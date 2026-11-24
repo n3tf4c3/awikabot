@@ -17,6 +17,13 @@ futures = "0.3"
 gpui.workspace = true
 gpui_platform.workspace = true
 
+# O cofre de credenciais de cada sistema. Só o backend nativo: nada de arquivo nem de serviço à parte.
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3.6", default-features = false, features = ["windows-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3.6", default-features = false, features = ["apple-native"] }
+
 [dev-dependencies]
 awikabot-cliente = { workspace = true, features = ["teste-suporte"] }
 gpui = { workspace = true, features = ["test-support"] }

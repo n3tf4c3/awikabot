@@ -1,0 +1,393 @@
+{
+  "descricao": "Casos da regra do endereço do servidor. O app de celular (apps/mobile/src/lib/endereco-servidor.ts) e o de desktop (apps/desktop/crates/cliente/src/endereco.rs) testam contra esta mesma tabela: cada entrada dá a URL normalizada ou o motivo da recusa.",
+  "casos": [
+    {
+      "entrada": "  https://bots.exemplo.com/  ",
+      "url": "https://bots.exemplo.com"
+    },
+    {
+      "entrada": "https://bots.exemplo.com:443",
+      "url": "https://bots.exemplo.com"
+    },
+    {
+      "entrada": "https://bots.exemplo.com:8443",
+      "url": "https://bots.exemplo.com:8443"
+    },
+    {
+      "entrada": "HTTPS://Bots.Exemplo.COM/Awika/",
+      "url": "https://bots.exemplo.com/Awika"
+    },
+    {
+      "entrada": "bots.exemplo.com",
+      "url": "https://bots.exemplo.com"
+    },
+    {
+      "entrada": "bots.exemplo.com:8787/api",
+      "url": "https://bots.exemplo.com:8787/api"
+    },
+    {
+      "entrada": "8.8.8.8",
+      "url": "https://8.8.8.8"
+    },
+    {
+      "entrada": "192.168.1.10:8787",
+      "url": "http://192.168.1.10:8787"
+    },
+    {
+      "entrada": "localhost:8787",
+      "url": "http://localhost:8787"
+    },
+    {
+      "entrada": "LOCALHOST",
+      "url": "http://localhost"
+    },
+    {
+      "entrada": "dev.localhost:8787",
+      "url": "https://dev.localhost:8787"
+    },
+    {
+      "entrada": "https://dev.localhost",
+      "url": "https://dev.localhost"
+    },
+    {
+      "entrada": "http://localhost:8787",
+      "url": "http://localhost:8787"
+    },
+    {
+      "entrada": "http://127.0.0.1:8787",
+      "url": "http://127.0.0.1:8787"
+    },
+    {
+      "entrada": "http://10.0.2.2:8787",
+      "url": "http://10.0.2.2:8787"
+    },
+    {
+      "entrada": "http://172.16.0.1",
+      "url": "http://172.16.0.1"
+    },
+    {
+      "entrada": "http://172.31.255.254",
+      "url": "http://172.31.255.254"
+    },
+    {
+      "entrada": "http://192.168.0.5:8787",
+      "url": "http://192.168.0.5:8787"
+    },
+    {
+      "entrada": "http://169.254.10.20",
+      "url": "http://169.254.10.20"
+    },
+    {
+      "entrada": "http://[::1]:8787",
+      "url": "http://[::1]:8787"
+    },
+    {
+      "entrada": "http://[fd12:3456:789a::1]",
+      "url": "http://[fd12:3456:789a::1]"
+    },
+    {
+      "entrada": "http://[fe80::1]",
+      "url": "http://[fe80::1]"
+    },
+    {
+      "entrada": "http://192.168.0.5:80/",
+      "url": "http://192.168.0.5"
+    },
+    {
+      "entrada": "https://192.168.0.5",
+      "url": "https://192.168.0.5"
+    },
+    {
+      "entrada": "https://[2001:db8::1]:8443",
+      "url": "https://[2001:db8::1]:8443"
+    },
+    {
+      "entrada": "[fd00::1]",
+      "url": "http://[fd00::1]"
+    },
+    {
+      "entrada": "HTTP://[FD00::1]:8790/",
+      "url": "http://[fd00::1]:8790"
+    },
+    {
+      "entrada": "http://[0:0:0:0:0:0:0:1]",
+      "url": "http://[0:0:0:0:0:0:0:1]"
+    },
+    {
+      "entrada": "http://[::]",
+      "motivo": "http_fora_da_rede_local"
+    },
+    {
+      "entrada": "https://bots.exemplo.com/a%20b",
+      "url": "https://bots.exemplo.com/a%20b"
+    },
+    {
+      "entrada": "https://bots.exemplo.com//awika//",
+      "url": "https://bots.exemplo.com//awika"
+    },
+    {
+      "entrada": "localhost:80",
+      "url": "http://localhost"
+    },
+    {
+      "entrada": "https://localhost:443/x/",
+      "url": "https://localhost/x"
+    },
+    {
+      "entrada": "http://localhost:443",
+      "url": "http://localhost:443"
+    },
+    {
+      "entrada": "abc.123",
+      "url": "https://abc.123"
+    },
+    {
+      "entrada": "https://bots.exemplo.com:08443",
+      "url": "https://bots.exemplo.com:8443"
+    },
+    {
+      "entrada": "https://bots.exemplo.com/~ana/(v1);x=1",
+      "url": "https://bots.exemplo.com/~ana/(v1);x=1"
+    },
+    {
+      "entrada": "https://xn--bts-5na.com",
+      "url": "https://xn--bts-5na.com"
+    },
+    {
+      "entrada": "https://a.b.c.d.exemplo.com",
+      "url": "https://a.b.c.d.exemplo.com"
+    },
+    {
+      "entrada": "http://bots.exemplo.com",
+      "motivo": "http_fora_da_rede_local"
+    },
+    {
+      "entrada": "http://8.8.8.8",
+      "motivo": "http_fora_da_rede_local"
+    },
+    {
+      "entrada": "http://172.32.0.1",
+      "motivo": "http_fora_da_rede_local"
+    },
+    {
+      "entrada": "http://172.15.0.1",
+      "motivo": "http_fora_da_rede_local"
+    },
+    {
+      "entrada": "http://192.169.0.1",
+      "motivo": "http_fora_da_rede_local"
+    },
+    {
+      "entrada": "http://100.64.0.1",
+      "motivo": "http_fora_da_rede_local"
+    },
+    {
+      "entrada": "http://meupc.local",
+      "motivo": "http_fora_da_rede_local"
+    },
+    {
+      "entrada": "http://dev.localhost",
+      "motivo": "http_fora_da_rede_local"
+    },
+    {
+      "entrada": "http://localhost.localhost:8787",
+      "motivo": "http_fora_da_rede_local"
+    },
+    {
+      "entrada": "http://localhost.exemplo.com",
+      "motivo": "http_fora_da_rede_local"
+    },
+    {
+      "entrada": "http://[2001:db8::1]",
+      "motivo": "http_fora_da_rede_local"
+    },
+    {
+      "entrada": "http://0.0.0.0",
+      "motivo": "http_fora_da_rede_local"
+    },
+    {
+      "entrada": "http://[fec0::1]",
+      "motivo": "http_fora_da_rede_local"
+    },
+    {
+      "entrada": "http://[::2]",
+      "motivo": "http_fora_da_rede_local"
+    },
+    {
+      "entrada": "",
+      "motivo": "vazio"
+    },
+    {
+      "entrada": "   ",
+      "motivo": "vazio"
+    },
+    {
+      "entrada": "ftp://bots.exemplo.com",
+      "motivo": "esquema"
+    },
+    {
+      "entrada": "ws://localhost:8787",
+      "motivo": "esquema"
+    },
+    {
+      "entrada": "file:///etc/passwd",
+      "motivo": "esquema"
+    },
+    {
+      "entrada": "https://ana:senha@bots.exemplo.com",
+      "motivo": "credenciais"
+    },
+    {
+      "entrada": "ana@bots.exemplo.com",
+      "motivo": "credenciais"
+    },
+    {
+      "entrada": "http://ana@localhost",
+      "motivo": "credenciais"
+    },
+    {
+      "entrada": "https://",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://bots exemplo.com",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://bots.exemplo.com?x=1",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://bots.exemplo.com/#topo",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://bots..exemplo.com",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://-bots.exemplo.com",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://bots_1.exemplo.com",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://bots.exemplo.com:0",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://bots.exemplo.com:65536",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://bots.exemplo.com:porta",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://256.1.1.1",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://10.0.1",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://[::1",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://[1::2::3]",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://[12345::1]",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://::1",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://bots.exemplo.com/a b",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://999.1.1.1",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://010.0.0.1",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://127.1",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://bots.exemplo.com.",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://bots.exemplo.com:123456",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://[::ffff:1.2.3.4]",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://[fe80::1%eth0]",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://[1:2:3:4:5:6:7]",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://[1:2:3:4:5:6:7:8:9]",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://bóts.exemplo.com",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://bots.exemplo.com/café",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "mailto:ana",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://bots.exemplo.com/a\b",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://bots.exemplo.com/<x>",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com",
+      "url": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com"
+    },
+    {
+      "entrada": "/caminho",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": ":8080",
+      "motivo": "invalido"
+    },
+    {
+      "entrada": "https://[]",
+      "motivo": "invalido"
+    }
+  ]
+}

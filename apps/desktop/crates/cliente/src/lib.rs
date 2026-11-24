@@ -13,4 +13,5 @@ pub mod fluxo;
 pub(crate) mod opcional_nulo;
 #[cfg(feature = "teste-suporte")]
 pub mod servidor_de_teste;
+pub mod sessao;
 pub mod sse;

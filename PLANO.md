@@ -305,10 +305,34 @@ Existe uma janela que pareia com o servidor e conversa com um bot, com a respost
 
 Não coberto:
 
-- macOS: nada foi compilado nem aberto num Mac; o job da CI ainda não rodou;
+- macOS: a CI compilou o app e passou os testes lá (PR 6), mas ninguém abriu a tela num Mac;
 - o que os passos seguintes trazem: sessão guardada no cofre do sistema, cartões de aprovação, aviso do sistema, criar e editar bot com formulário, parar um turno, tema claro;
 - o campo de texto é o mínimo: sem seleção, copiar nem desfazer, e uma mensagem longa some pela direita enquanto é digitada;
 - pacote, assinatura e atualizador.
+
+### Passo 2: resultado do cliente (2026-11-23)
+
+O app guarda a sessão e abre já pareado. A regra do 401 e a retomada do fluxo passam a ter os testes que o celular tem.
+
+- **Sessão no cofre do sistema**: Gerenciador de Credenciais no Windows, Chaves no macOS. Vale só depois de guardada; ao sair, o cofre é esvaziado antes de qualquer outra coisa.
+- **Regra do endereço igual à do celular**: os dois lados testam contra uma tabela única de 97 casos, em `packages/core/casos`. A regra em Rust foi reescrita para seguir a do celular passo a passo.
+- **Foco**: ao trocar de tela, o teclado cai no campo certo.
+
+| Verificação | Resultado |
+|---|---|
+| Sessão guardada | Lida de volta; lixo, endereço adulterado e token que não cabe num cabeçalho não viram sessão; sem conseguir apagar, grava um valor inútil. |
+| Cofre de verdade no Windows | Um item de teste é gravado, lido e apagado no Gerenciador de Credenciais. |
+| Regra do 401 na janela | Token revogado no servidor volta ao pareamento e esvazia o cofre; 401 de proxy e servidor fora do ar mantêm a sessão; recusa atrasada de uma sessão antiga não derruba a nova; pareamento que não pôde ser guardado não vale, e o token é revogado. |
+| Fluxo de eventos, contra um servidor de mentira | Retomada do último id sem pedir carga de novo, id do sinal de vida, id que não cabe em cabeçalho, evento fora do contrato, espera crescente, conexão estável zerando a espera, teto da conexão, parar. |
+| Testes | 31 do cliente, 1 de contrato, 12 do fluxo e 13 do app; 558 no app de celular, com a tabela de endereços. |
+| Falsificação | Dez quebras de propósito, uma por vez, todas acusadas. |
+| App de verdade no Windows | Pareia, conversa, fecha, reabre direto na conversa com o histórico, despareia; o item entra e sai do cofre. |
+
+Não coberto:
+
+- o cofre de verdade no macOS: o teste fica desligado lá, e ninguém conferiu num Mac;
+- silêncio do fluxo: uma conexão que morre em silêncio só é percebida no teto de um minuto, não em três sinais de vida como no celular;
+- pausar o fluxo com a janela minimizada, que o celular faz com o app em segundo plano.
 
 ### Decisões que são do titular
 

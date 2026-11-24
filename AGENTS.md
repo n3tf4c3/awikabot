@@ -59,6 +59,8 @@ Todo workspace declara `lint`, `typecheck` e `test`: `pnpm -r` pula em silêncio
 - **Contrato em Rust é gerado**: `apps/desktop/crates/cliente/src/contrato.rs` sai de `packages/core/src/contrato-rust.ts` e não se edita à mão. O teste do `core` falha enquanto o arquivo estiver para trás; esquema novo entra na lista desse gerador.
 - **Do termIAX, só o visual**: o tema do desktop repete os valores do termIAX (`apps/desktop/crates/app/src/tema.rs`). Nenhum arquivo nem trecho de código dele entra neste repositório, que é público.
 - **Cliente do desktop sem interface**: endereço do servidor, pedidos, fluxo de eventos e a regra da conversa ficam em `apps/desktop/crates/cliente`, sem GPUI, com teste. `tests/contrato.rs` roda esse cliente contra o servidor de verdade; rota ou evento novo que o desktop consome ganha um caso ali.
+- **Sessão do desktop no cofre do sistema**: o token do computador fica no Gerenciador de Credenciais do Windows ou nas Chaves do macOS (`cofre_do_sistema.rs`), nunca num arquivo. A sessão só vale depois de guardada; se o cofre recusar, o token é revogado no servidor. Ao sair, o cofre é esvaziado antes de qualquer outra coisa. O que volta do cofre passa de novo pela regra do endereço.
+- **Mesma regra do 401 no desktop**: todo pedido volta com a credencial que o fez; o resultado só vale se ela ainda for a da sessão atual, e só a recusa do token pelo servidor desfaz o pareamento. Resposta de proxy e servidor fora do ar mantêm a sessão.
 - **Janela testada pelo teclado**: os testes de `janela.rs` digitam e apertam teclas pelo apoio de testes da GPUI, contra o servidor de verdade. O que só a tela mostra, como quebra de linha e encaixe, é conferido com `scripts/desktop-prova-visual.ps1`.
 - **Ambiente validado na partida**: só `apps/server/src/env.ts` interpreta variáveis de ambiente; o `main.ts` entrega `process.env` a ele e mais ninguém o lê. Configuração inválida derruba o processo antes de atender pedidos, e a mensagem cita só o nome da variável, nunca o valor.
 - **O motor não herda o ambiente do servidor**: `ambienteDoMotor`, em `env.ts`, passa só uma lista de nomes (sistema, idioma, proxy, `ANTHROPIC_*`, `CLAUDE_*`). Segredo novo no ambiente do servidor não chega aos bots sem entrar nessa lista, com teste em `env.test.ts`.
@@ -83,7 +85,7 @@ Todo workspace declara `lint`, `typecheck` e `test`: `pnpm -r` pula em silêncio
 - **Restauração só em volume sem dados**: o `deploy/restaurar.sh` recusa com o servidor no ar, e recusa um volume que já tem o banco, ou qualquer pasta de bot ou conversa do motor que venha no arquivo. Um arquivo com qualquer entrada além do banco, de `trabalho/` e de `claude/projects/` é recusado inteiro.
 - **401 só derruba a sessão que fez o pedido**: o app captura a sessão no início do pedido e só a apaga se ela ainda for a atual, e só quando o corpo do 401 traz o código `nao_autenticado` do servidor. Um 401 de proxy ou túnel e um erro de rede nunca deslogam.
 - **Cliente do app testado contra o servidor**: `apps/server/src/contrato-app.test.ts` usa a lógica de `apps/mobile/src/lib` pela rede. Rota ou evento novo que o app consome ganha um caso ali.
-- **Endereço do servidor no app**: `https://` sempre, menos `localhost` e endereços de rede privada, que aceitam `http://`.
+- **Endereço do servidor no app**: `https://` sempre, menos `localhost` e endereços de rede privada, que aceitam `http://`. A regra existe em dois lugares, no celular (`endereco-servidor.ts`) e no desktop (`endereco.rs`), e os dois testam contra a mesma tabela, `packages/core/casos/endereco-servidor.json`. Mudar a regra é mudar a tabela e os dois lados.
 - **Segredos fora do Git e do banco**: `.env*` é ignorado. Nada de token, senha, endereço interno ou nome de conta em código, documento ou mensagem de commit. O repositório é público.
 - **Lógica de tela em helper puro** (`apps/mobile/src/lib`), testado com o mesmo runner do servidor.
 - **Fim de linha LF** em todo o repositório (`.gitattributes`).
@@ -118,6 +120,7 @@ A memória do projeto fica no ai-memory, no escopo do `.ai-memory.toml`. Ao conc
 - Em build de release do Android, `http://` para a rede local é bloqueado pelo sistema; fora de desenvolvimento, o servidor precisa de HTTPS.
 - Os códigos de erro (`nao_autenticado`, `codigo_invalido` e os demais) são texto solto no servidor e no app, ainda não constantes do `core`.
 - O app não guarda conversas no aparelho: cada abertura busca do servidor.
-- O app de desktop é uma prova: não guarda a sessão (pareia a cada abertura), não mostra os cartões de aprovação, só cria bot com nome automático, e o campo de texto não tem seleção, copiar nem desfazer. Só há tema escuro. Não há instalador, assinatura nem atualizador.
-- O desktop nunca foi aberto num Mac. O build e os testes de macOS dependem da CI, e a tela de lá não foi vista por ninguém.
+- O app de desktop ainda não mostra os cartões de aprovação, só cria bot com nome automático, não para um turno, e o campo de texto não tem seleção, copiar nem desfazer. Só há tema escuro. Não há instalador, assinatura nem atualizador.
+- O desktop nunca foi aberto num Mac. Lá ele compila e passa nos testes pela CI, mas a tela não foi vista por ninguém, e o teste do cofre de verdade fica desligado: o chaveiro da CI pode pedir senha.
+- No desktop, a sessão que volta do cofre não confere o tamanho do token contra o contrato: um token estranho só é recusado pelo servidor.
 - No desktop, cada conexão do fluxo de eventos dura no máximo um minuto e é refeita do ponto em que parou: o cliente HTTP usado não tem prazo por leitura.
