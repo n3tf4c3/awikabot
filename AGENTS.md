@@ -87,6 +87,7 @@ Todo workspace declara `lint`, `typecheck` e `test`: `pnpm -r` pula em silêncio
 - **Cliente do app testado contra o servidor**: `apps/server/src/contrato-app.test.ts` usa a lógica de `apps/mobile/src/lib` pela rede. Rota ou evento novo que o app consome ganha um caso ali.
 - **Endereço do servidor no app**: `https://` sempre, menos `localhost` e endereços de rede privada, que aceitam `http://`. A regra existe em dois lugares, no celular (`endereco-servidor.ts`) e no desktop (`endereco.rs`), e os dois testam contra a mesma tabela, `packages/core/casos/endereco-servidor.json`. Mudar a regra é mudar a tabela e os dois lados.
 - **Segredos fora do Git e do banco**: `.env*` é ignorado. Nada de token, senha, endereço interno ou nome de conta em código, documento ou mensagem de commit. O repositório é público.
+- **Publicação por agentes**: peça autorização explícita antes de fazer push ou abrir um PR. Com autorização, revise os commits enviados e use o gancho normal de pre-push.
 - **Lógica de tela em helper puro** (`apps/mobile/src/lib`), testado com o mesmo runner do servidor.
 - **Fim de linha LF** em todo o repositório (`.gitattributes`).
 
@@ -95,13 +96,15 @@ Todo workspace declara `lint`, `typecheck` e `test`: `pnpm -r` pula em silêncio
 - **Mapa de fluxos**: `docs/fluxos.md`. Fluxo novo entra lá, com o teste ou escrito como "sem cobertura".
 - **Runbook**: `.claude/skills/verificar/SKILL.md`. Rodar `pnpm verificar` antes de dar por concluída uma mudança que altera comportamento visto pelo usuário, e antes de um commit autorizado. Relatar o que foi exercitado e o que não foi.
 - **Carimbo no commit**: a mensagem leva o trailer `Verificado-por:` com o que rodou contra aquela árvore: `suite` (lint, build, typecheck e testes), `verificar` seguido dos fluxos (`verificar F0`), `desktop` (rustfmt, clippy e testes do workspace Cargo), ou `nenhum (motivo)`. Mais de um valor, separados por vírgula. O carimbo descreve o que rodou, nunca o que deveria ter rodado. Usar `git commit --trailer "Verificado-por: suite, verificar F0"`.
-- **Gancho de pre-push**: cobra o carimbo dos commits enviados. Ativar uma vez por clone:
+- **Gancho de pre-push**: examina as alterações e mensagens dos commits com [Gitleaks](https://github.com/gitleaks/gitleaks/releases) antes de publicar e cobra o carimbo de verificação. Instale o Gitleaks (8.30.1 validado) e ative o gancho uma vez por clone:
 
   ```sh
   git config core.hooksPath .githooks
   ```
 
-  O modo fica em `git config verificacao.gate`: `observar` (padrão, só avisa), `impor` (recusa o push) ou `off`.
+  O gancho procura `gitleaks` no PATH. Para indicar um executável fora do PATH, use `git config --local verificacao.gitleaksPath "caminho-do-executável"`. Se a varredura falhar ou apontar um possível segredo, o push é recusado e o valor detectado é ocultado na saída.
+
+  O modo do carimbo fica em `git config verificacao.gate`: `observar` (padrão, só avisa), `impor` (recusa o push) ou `off`. A varredura de segredos vale nos três modos.
 
 ## Memória e retomada
 
