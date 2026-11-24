@@ -17,6 +17,10 @@ catalog:
 # sem isto, resolve para um patch à frente do react fixado pelo SDK.
 overrides:
   react-dom: 19.3.0
+  # GHSA-g3hv-75wg-m249: o minimatch de 7.0.0 a 11.0.0 pode travar num padrão montado para isso.
+  # O @expo/fingerprint 0.21 pede a linha 10, que não recebeu a correção. Tirar esta linha quando
+  # o pacote do Expo passar a pedir a 11.
+  '@expo/fingerprint>minimatch': ^11.0.1
 
 # Convenção da casa para monorepo com app Expo.
 nodeLinker: hoisted
