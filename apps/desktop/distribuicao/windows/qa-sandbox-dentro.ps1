@@ -20,6 +20,7 @@ $exeDoApp = Join-Path $pastaDoApp 'awikabot.exe'
 $atalho = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\awikabot.lnk'
 $registroDaIdentidade = "HKCU:\Software\Classes\AppUserModelId\$identidade"
 $itemNoCofre = 'sessao.awikabot'
+$pastaDeDados = Join-Path $env:LOCALAPPDATA 'awikabot'
 $passos = New-Object System.Collections.ArrayList
 
 function Registrar([string]$passo, [bool]$ok, [string]$detalhe = '') {
@@ -156,7 +157,11 @@ try {
     # Como se o app tivesse sido usado: um item no cofre e o registro que o primeiro aviso grava.
     cmdkey "/generic:$itemNoCofre" /user:sessao /pass:conteudo-de-teste-que-nao-e-uma-sessao | Out-Null
     New-Item -Path $registroDaIdentidade -Force | Out-Null
-    Conferir 'ha o que limpar antes de desinstalar' { if (-not (NoCofre) -or -not (Test-Path $registroDaIdentidade)) { 'o item do cofre ou o registro de teste nao foram criados' } }
+    # E as preferencias e um pacote baixado pelo atualizador.
+    New-Item -ItemType Directory -Force (Join-Path $pastaDeDados 'atualizacoes') | Out-Null
+    Set-Content (Join-Path $pastaDeDados 'preferencias.json') '{}'
+    Set-Content (Join-Path $pastaDeDados 'atualizacoes\pacote-de-teste.exe') 'conteudo de teste'
+    Conferir 'ha o que limpar antes de desinstalar' { if (-not (NoCofre) -or -not (Test-Path $registroDaIdentidade) -or -not (Test-Path (Join-Path $pastaDeDados 'preferencias.json'))) { 'o item do cofre, o registro ou a pasta de dados de teste nao foram criados' } }
     Conferir 'desinstalar em silencio' {
         $codigo = RodarDesinstalador $silencioso
         if ($codigo -ne 0) { "o desinstalador saiu com o codigo $codigo" }
@@ -169,6 +174,7 @@ try {
         if (EntradaDeDesinstalacao 'HKCU:') { return 'sobrou a entrada de desinstalacao' }
         if (Test-Path $registroDaIdentidade) { 'sobrou o registro da identidade do app' }
     }
+    Conferir 'nao sobrou a pasta de dados do app' { if (Test-Path $pastaDeDados) { 'sobrou a pasta de dados' } }
     Conferir 'nao sobrou credencial no cofre' { if (NoCofre) { 'o item do app continua no cofre' } }
     Conferir 'nao sobrou processo' { if ((ProcessosDoApp).Count -gt 0) { 'ha processo do app rodando' } }
 

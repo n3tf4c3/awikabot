@@ -5,9 +5,11 @@
 // Em release no Windows, o app não abre um console junto.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod atualizador;
 mod campo;
 #[cfg(any(windows, target_os = "macos"))]
 mod cofre_do_sistema;
+mod confianca;
 mod desinstalacao;
 mod edicao;
 mod instancia;
@@ -63,8 +65,9 @@ fn main() {
             ..Default::default()
         };
         // Sem janela não há app: uma falha aqui encerra com a mensagem do erro.
-        let janela =
-            cx.open_window(opcoes, |window, cx| cx.new(|cx| Janela::new(cofre(), window, cx))).expect("abrir a janela do awikabot");
+        let janela = cx
+            .open_window(opcoes, |window, cx| cx.new(|cx| Janela::new(cofre(), atualizador::Configuracao::do_app(), window, cx)))
+            .expect("abrir a janela do awikabot");
         janela::ligar_avisos(janela, cx);
         cx.activate(true);
     });

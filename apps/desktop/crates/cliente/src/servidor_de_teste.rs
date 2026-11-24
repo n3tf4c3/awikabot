@@ -26,6 +26,18 @@ impl ServidorDeTeste {
         let pacote = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../server/dist/server.mjs");
         assert!(pacote.exists(), "falta o pacote do servidor; rode `pnpm server:build` na raiz do repositório");
 
+        // Entre achar uma porta livre e o servidor passar a ouvi-la, outro teste rodando ao lado
+        // pode pegá-la. O servidor então sai na partida, e a saída é tentar de novo com outras portas.
+        for _ in 0..5 {
+            if let Some(servidor) = Self::tentar_subir(&pacote) {
+                return servidor;
+            }
+        }
+        panic!("o servidor de teste saiu na partida em cinco tentativas seguidas");
+    }
+
+    /// Sobe o servidor em duas portas livres. `None` se o processo saiu antes de responder.
+    fn tentar_subir(pacote: &Path) -> Option<Self> {
         let porta = porta_livre();
         let dados = std::env::temp_dir().join(format!("awikabot-teste-rust-{}-{porta}", std::process::id()));
         std::fs::create_dir_all(&dados).expect("pasta de dados do teste");
@@ -38,22 +50,31 @@ impl ServidorDeTeste {
             ("AWIKA_MOTOR", "simulado".to_owned()),
         ];
         let processo = Command::new("node")
-            .arg(&pacote)
+            .arg(pacote)
             .envs(ambiente.iter().cloned())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .expect("o Node precisa estar no PATH para subir o servidor");
-        let servidor = Self { processo, base: format!("http://127.0.0.1:{porta}"), dados, pacote, ambiente };
+        let mut servidor = Self { processo, base: format!("http://127.0.0.1:{porta}"), dados, pacote: pacote.to_owned(), ambiente };
 
         let api = Api::new();
         let limite = Instant::now() + Duration::from_secs(15);
-        while api.saude(&servidor.base).is_err() {
+        loop {
+            let respondeu = api.saude(&servidor.base).is_ok();
+            // O processo é conferido depois da resposta: se a porta ficou com outro teste, quem
+            // respondeu foi o servidor dele, e o daqui já saiu. Ao soltar `servidor`, a pasta de
+            // dados desta tentativa é apagada.
+            if matches!(servidor.processo.try_wait(), Ok(Some(_))) {
+                return None;
+            }
+            if respondeu {
+                return Some(servidor);
+            }
             assert!(Instant::now() < limite, "o servidor não respondeu em 15 s");
             std::thread::sleep(Duration::from_millis(100));
         }
-        servidor
     }
 
     /// O código de uso único, como o comando `parear` do servidor o imprime.
