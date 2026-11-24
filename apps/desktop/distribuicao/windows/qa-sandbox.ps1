@@ -23,11 +23,7 @@ if (-not (Test-Path "$env:SystemRoot\System32\WindowsSandbox.exe")) { throw 'o W
 if (Get-Process -Name 'WindowsSandbox*' -ErrorAction SilentlyContinue) { throw 'ja ha um Windows Sandbox aberto; feche-o antes' }
 if ($MarcaDeDownload -and -not $ComRede) { throw '-MarcaDeDownload pede -ComRede: o Windows consulta a reputacao do arquivo' }
 
-if (-not $Pacote) {
-    $Pacote = Get-ChildItem (Join-Path $script:PastaDeBuild 'pacotes') -Directory -ErrorAction SilentlyContinue |
-        Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
-}
-if (-not $Pacote -or -not (Test-Path $Pacote)) { throw 'nenhum pacote encontrado; rode o empacotar.ps1 antes' }
+$Pacote = Resolve-Pacote $Pacote
 $manifesto = Get-Content -Raw (Join-Path $Pacote 'awikabot-desktop-windows-x64.json') | ConvertFrom-Json
 $instalador = Join-Path $Pacote $manifesto.arquivo
 $informacoes = Get-Content -Raw (Join-Path $Pacote 'build-info.json') | ConvertFrom-Json
@@ -80,17 +76,12 @@ if (-not (Test-Path $resultadoDoSandbox)) {
 Start-Sleep -Seconds 2
 $resultado = Get-Content -Raw $resultadoDoSandbox | ConvertFrom-Json
 # A evidência amarra o resultado ao pacote que foi testado.
-$evidencia = [ordered]@{
-    aprovado   = $resultado.aprovado
-    versao     = $manifesto.versao
-    instalador = $manifesto.arquivo
-    sha256     = $manifesto.sha256
-    assinado   = $informacoes.assinado
-    commit     = $informacoes.commit
-    com_rede   = [bool]$ComRede
-    resultado  = $resultado
-}
-Write-TextoSemBom (Join-Path $rodada 'evidencia.json') (($evidencia | ConvertTo-Json -Depth 8) + "`n")
+$evidencia = New-EvidenciaDoQa $manifesto $informacoes $resultado ([bool]$ComRede) ([bool]$MarcaDeDownload) ([bool]$DesligarSmartAppControl)
+Write-TextoSemBom (Join-Path $rodada 'evidencia.json') $evidencia.Texto
+# Uma cópia vai para a pasta de evidências do commit, uma por tipo de rodada: a mais recente vale,
+# aprovada ou não. É dela que a publicação lê.
+$copia = Join-Path (Get-PastaDeEvidenciasDoPacote $informacoes) $evidencia.Nome
+Write-TextoSemBom $copia $evidencia.Texto
 
 "sistema do Sandbox: $($resultado.sistema); Smart App Control: $($resultado.smart_app_control)"
 foreach ($passo in $resultado.passos) {
@@ -99,5 +90,6 @@ foreach ($passo in $resultado.passos) {
 }
 foreach ($evento in @($resultado.eventos)) { "  evento: $evento" }
 "evidencia: $(Join-Path $rodada 'evidencia.json')"
+"copia na pasta do candidato: $copia"
 if (-not $resultado.aprovado) { throw 'o QA no Sandbox reprovou o pacote' }
 'QA no Sandbox: aprovado'

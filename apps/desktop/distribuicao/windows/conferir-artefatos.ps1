@@ -9,16 +9,13 @@
 # desenvolvimento usa, é recusado aqui de propósito.
 #
 # O script lista tudo o que achou de errado, não só o primeiro problema, e sai com código 1.
+# Aprovado, grava `artefatos.json` na pasta de evidências do commit, em relatorios/release.
 param(
     [string]$Pacote
 )
 . (Join-Path $PSScriptRoot 'comum.ps1')
 
-if (-not $Pacote) {
-    $Pacote = Get-ChildItem (Join-Path $script:PastaDeBuild 'pacotes') -Directory -ErrorAction SilentlyContinue |
-        Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
-}
-if (-not $Pacote -or -not (Test-Path $Pacote)) { throw 'nenhum pacote encontrado; rode o empacotar.ps1 antes' }
+$Pacote = Resolve-Pacote $Pacote
 
 $problemas = New-Object System.Collections.ArrayList
 function Anotar([string]$problema) { [void]$problemas.Add($problema) }
@@ -99,5 +96,7 @@ if ($problemas.Count -gt 0) {
     foreach ($problema in $problemas) { "RECUSADO  $problema" }
     throw "o pacote nao pode ser publicado: $($problemas.Count) problema(s)"
 }
+$evidencia = Write-EvidenciaDosArtefatos $Pacote (Get-PastaDeEvidenciasDoPacote $informacoes) $manifesto.versao $informacoes.commit
 "versao $($manifesto.versao), commit $($informacoes.commit.Substring(0, 7)), instalador $($manifesto.sha256)"
+"evidencia: $evidencia"
 'artefatos conferidos: o pacote pode seguir para o QA e para a publicacao'

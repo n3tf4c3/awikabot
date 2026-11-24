@@ -52,10 +52,13 @@ Do app de desktop, de dentro de `apps/desktop`, depois de `pnpm server:build`:
 | `powershell -ExecutionPolicy Bypass -File distribuicao/windows/qa-sandbox.ps1` | confere o instalador no Windows Sandbox: instala, abre, atualiza, desinstala |
 | `powershell -ExecutionPolicy Bypass -File distribuicao/windows/conferir-candidato.ps1` | conferências do commit de onde um pacote vai sair; grava a evidência em `relatorios/release` |
 | `powershell -ExecutionPolicy Bypass -File distribuicao/windows/conferir-artefatos.ps1` | só passa um pacote que pode ser publicado: assinado, com hashes e versões batendo |
-
-O roteiro de release do desktop, etapa por etapa, está em `docs/release-desktop.md`.
+| `powershell -ExecutionPolicy Bypass -File distribuicao/windows/publicar-rascunho.ps1 -Ensaio` | confere pacote, evidências e GitHub para a publicação e não envia nada; sem `-Ensaio`, cria o release em rascunho |
+| `powershell -ExecutionPolicy Bypass -File distribuicao/windows/aprovar.ps1 -Versao <x.y.z> -Ensaio` | confere o rascunho contra as evidências e não publica; sem `-Ensaio`, só o titular roda |
+| `powershell -ExecutionPolicy Bypass -File distribuicao/windows/testes/testar-publicacao.ps1` | testa os dois scripts acima com um `gh` de mentira, um defeito por vez |
 | `cargo test --workspace` | testes do cliente e da janela; sobem o servidor de verdade com o motor simulado |
 | `cargo fmt --all --check` e `cargo clippy --workspace --all-targets -- -D warnings` | formatação e lint |
+
+O roteiro de release do desktop, etapa por etapa, está em `docs/release-desktop.md`.
 
 Todo workspace declara `lint`, `typecheck` e `test`: `pnpm -r` pula em silêncio quem não declara.
 
@@ -78,6 +81,8 @@ Todo workspace declara `lint`, `typecheck` e `test`: `pnpm -r` pula em silêncio
 - **Atualização do desktop: consultar não baixa, baixar não instala**: `apps/desktop/crates/cliente/src/atualizacao.rs` só oferece versão maior que a do app, de release público com etiqueta `desktop-v`. O pacote só ganha o nome final depois de conferidos tamanho e SHA-256, e nenhum texto vindo da rede vira parte de um endereço. Tamanho e hash não dizem de quem o pacote é: antes de instalar, vale a assinatura.
 - **A assinatura é a âncora da atualização**: `apps/desktop/crates/app/src/confianca.rs` pede ao Windows que confira a assinatura do pacote baixado, com revogação, e exige o publicador do app e a autoridade que emitiu o certificado. O pacote que não passa é apagado. A conferência roda depois do download e de novo na hora de instalar (`atualizador.rs`). Trocar de certificado, de titular ou de autoridade pede antes uma versão que aceite os dois: quem já instalou recusaria a atualização.
 - **Release do desktop em etapas amarradas**: conferências do candidato, assinatura e pacote, conferência dos artefatos, QA no Sandbox, rascunho e aprovação do titular (`docs/release-desktop.md`). Um pacote só sai de um commit sem mudança pendente. O pacote publicável é conferido pelo próprio app, com a regra do atualizador (`awikabot.exe --conferir-pacote`). As evidências ficam em `relatorios/release`, fora do Git e de `target/`.
+- **Cada etapa do release lê a evidência da anterior**: conferência dos artefatos, QA e rascunho gravam um arquivo na pasta do commit, com o SHA-256 do que viram. O `publicar-rascunho.ps1` só sobe arquivos iguais aos conferidos, baixa o rascunho de volta e compara. O repositório e a etiqueta saem de `atualizacao.rs`, que é onde o app instalado procura. Mudou um desses scripts, roda `testes/testar-publicacao.ps1`.
+- **Tornar um release público é do titular**: agente roda `aprovar.ps1` só com `-Ensaio`. Publicar cria a etiqueta e faz o app de quem já instalou avisar da versão nova; não há como recolher. Criar o rascunho também envia arquivos ao GitHub e pede autorização explícita, como um push.
 - **Vulnerabilidade em dependência do desktop para o pacote**: `cargo deny check advisories sources` (`apps/desktop/deny.toml`) e `avisos-osv.mjs`, que consulta a OSV. Aviso aceito entra no arquivo com motivo e data. Dependência sem manutenção que vem por dentro da GPUI é listada e não para. Repositório Git novo como origem de dependência entra na lista do `deny.toml` por decisão.
 - **O app de desenvolvimento não se atualiza nem consulta versão**: o painel de atualização só existe no build de release do Windows. A consulta é no máximo uma por dia, pode ser desligada na tela, e não leva credencial. As preferências ficam num arquivo comum, na pasta de dados do app; a sessão, nunca.
 - **Texto do campo sem interface**: o que cada tecla faz com o texto (cursor, seleção, limite, desfazer) fica em `apps/desktop/crates/app/src/edicao.rs`, sem GPUI, com teste. `campo.rs` só liga teclas, mouse e área de transferência a isso e desenha. O limite conta caracteres, como o esquema do contrato.
