@@ -8,8 +8,9 @@ import { BackupRecusado, fazerBackup } from './backup';
 import { abrirBanco, type Banco } from './banco';
 import { marcarInterrompidas } from './conversa';
 import { criarCodigo, LimitadorDeTentativas, listarDispositivos, revogar } from './dispositivos';
-import { EnvInvalida, lerEnv, type Env } from './env';
+import { ambienteDoMotor, EnvInvalida, lerEnv, lerEnvDoGancho, type Env } from './env';
 import { Barramento } from './eventos';
+import { configuracaoGerenciada, gerenciadaInstalada } from './configuracao-motor';
 import { criarAppDoGancho, executarGancho, Ganchos } from './gancho';
 import { criarMotorClaudeCode } from './motor-claude-code';
 import { criarMotorSimulado } from './motor-simulado';
@@ -29,14 +30,23 @@ function lerEnvOuSair(): Env {
   }
 }
 
+/** A linha de comando do gancho: este mesmo programa, com o subcomando `gancho`. */
+const comandoDoGancho = (): string => `${JSON.stringify(process.execPath)} ${JSON.stringify(process.argv[1] ?? '')} gancho`;
+
 function servir(env: Env, banco: Banco): void {
+  const ganchoGerenciado = env.AWIKA_GANCHO === 'gerenciado';
+  if (ganchoGerenciado && env.AWIKA_MOTOR === 'claude-code' && !gerenciadaInstalada(comandoDoGancho())) {
+    // Sem o gancho instalado, o motor rodaria sem ninguém para perguntar. Melhor não subir.
+    console.error('AWIKA_GANCHO=gerenciado, mas a configuração gerenciada do motor não está instalada como esperado.');
+    process.exit(1);
+  }
   const interrompidas = marcarInterrompidas(banco);
   expirarPendentesNaPartida(banco);
 
   const barramento = new Barramento();
   const aprovacoes = new GestorDeAprovacoes({ banco, barramento });
   const ganchos = new Ganchos();
-  const motor = env.AWIKA_MOTOR === 'simulado' ? criarMotorSimulado() : criarMotorClaudeCode({ binario: env.AWIKA_CLAUDE_BIN });
+  const motor = env.AWIKA_MOTOR === 'simulado' ? criarMotorSimulado() : criarMotorClaudeCode({ binario: env.AWIKA_CLAUDE_BIN, ambiente: ambienteDoMotor(process.env), ganchoGerenciado });
   const turnos = new GestorDeTurnos({
     banco,
     motor,
@@ -46,8 +56,7 @@ function servir(env: Env, banco: Banco): void {
     aprovacoes: {
       ganchos,
       aprovacoes,
-      // O gancho é este mesmo programa, chamado pelo motor com o subcomando `gancho`.
-      comando: `${JSON.stringify(process.execPath)} ${JSON.stringify(process.argv[1] ?? '')} gancho`,
+      comando: comandoDoGancho(),
       porta: env.AWIKA_PORTA_GANCHO,
     },
   });
@@ -89,7 +98,7 @@ function servir(env: Env, banco: Banco): void {
 
 const formatarInstante = (instante: number | null): string => (instante === null ? '-' : new Date(instante).toISOString());
 
-const USO = 'Uso: servir | parear | dispositivos | revogar <id> | backup <arquivo> | saude';
+const USO = 'Uso: servir | parear | dispositivos | revogar <id> | backup <arquivo> | saude | configuracao-do-motor';
 
 function copiarBanco(banco: Banco, destino: string | undefined): void {
   if (!destino) {
@@ -149,7 +158,10 @@ function administrar(env: Env, comando: string, argumento: string | undefined): 
 const [comando = 'servir', argumento] = process.argv.slice(2);
 if (comando === 'gancho') {
   // Chamado pelo motor antes de cada ferramenta. Não abre o banco nem lê a configuração do servidor.
-  await executarGancho();
+  await executarGancho(lerEnvDoGancho(process.env));
+} else if (comando === 'configuracao-do-motor') {
+  // Usado no build da imagem: imprime a configuração gerenciada do motor, com o gancho deste programa.
+  console.log(JSON.stringify(configuracaoGerenciada(comandoDoGancho()), null, 2));
 } else if (comando === 'saude') {
   // Chamado pelo health check da imagem. Não abre o banco: pergunta ao servidor que está no ar.
   const env = lerEnvOuSair();

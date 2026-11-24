@@ -11,6 +11,7 @@ import {
   LIMITES,
   VERSAO_PROTOCOLO,
   type Dispositivo,
+  type InfoDoServidor,
   type Saude,
 } from '@awikabot/core';
 import type { ZodType } from 'zod';
@@ -18,7 +19,7 @@ import type { GestorDeAprovacoes } from './aprovacoes';
 import type { Banco } from './banco';
 import { criarBot, editarBot, listarBots, obterBot, paraContrato } from './bots';
 import { listarMensagens } from './conversa';
-import { autenticar, parear, revogar, type LimitadorDeTentativas } from './dispositivos';
+import { autenticar, dispositivoAtivo, parear, revogar, type LimitadorDeTentativas } from './dispositivos';
 import type { Barramento, EventoNumerado } from './eventos';
 import type { GestorDeTurnos } from './turnos';
 
@@ -61,12 +62,19 @@ function inteiroDaQuery(valor: string | undefined, minimo: number, maximo: numbe
 export function criarApp(deps: Dependencias): Hono<Ambiente> {
   const app = new Hono<Ambiente>();
   const intervaloPingMs = deps.intervaloPingMs ?? INTERVALO_PING_MS;
-  const saude = (): Saude => ({ status: 'ok', versao: deps.versao, protocolo: VERSAO_PROTOCOLO });
+  // Versão e protocolo só saem na resposta do pareamento, para quem provou ter um código.
+  const servidor = (): InfoDoServidor => ({ versao: deps.versao, protocolo: VERSAO_PROTOCOLO });
 
   app.use('*', async (c, next) => {
     await next();
     c.header('cache-control', 'no-store');
     c.header('x-content-type-options', 'nosniff');
+    // A API só devolve JSON e um fluxo de eventos: nada aqui deve ser carregado ou emoldurado por uma página.
+    c.header('content-security-policy', "default-src 'none'; frame-ancestors 'none'");
+    c.header('x-frame-options', 'DENY');
+    c.header('referrer-policy', 'no-referrer');
+    // Só tem efeito quando a resposta chega por HTTPS, que é o caso do túnel.
+    c.header('strict-transport-security', 'max-age=31536000');
   });
   app.onError((erro, c) => {
     console.error(`erro interno: ${erro.message}`);
@@ -81,7 +89,7 @@ export function criarApp(deps: Dependencias): Hono<Ambiente> {
     } catch {
       return c.json({ erro: 'banco_indisponivel' }, 503);
     }
-    return c.json(saude());
+    return c.json({ status: 'ok' } satisfies Saude);
   });
   app.all('/healthz', (c) => {
     c.header('allow', 'GET');
@@ -100,7 +108,7 @@ export function criarApp(deps: Dependencias): Hono<Ambiente> {
       deps.limitador.registrarFalha();
       return c.json({ erro: 'codigo_invalido' }, 401);
     }
-    return c.json({ token: pareado.token, dispositivo: pareado.dispositivo, servidor: saude() });
+    return c.json({ token: pareado.token, dispositivo: pareado.dispositivo, servidor: servidor() });
   });
 
   // Daqui para baixo, tudo em /v1 exige o token de um aparelho pareado e não revogado.
@@ -187,6 +195,7 @@ export function criarApp(deps: Dependencias): Hono<Ambiente> {
 
   app.get('/v1/eventos', (c) => {
     const token = c.get('token');
+    const aparelho = c.get('dispositivo').id;
     const desde = c.req.header('last-event-id') ?? c.req.query('desde');
 
     return streamSSE(c, async (fluxo) => {
@@ -206,10 +215,18 @@ export function criarApp(deps: Dependencias): Hono<Ambiente> {
       try {
         // Primeiro sinal de vida: o app sabe que a conexão abriu antes de qualquer evento.
         await fluxo.writeSSE({ id: cursorInicial, event: 'ping', data: '' });
-        while (!fluxo.aborted && !fluxo.closed) {
+        let revogado = false;
+        while (!revogado && !fluxo.aborted && !fluxo.closed) {
           for (let item = fila.shift(); item !== undefined; item = fila.shift()) {
+            // Aparelho revogado não recebe mais nada, nem no meio de um turno: a conferência é
+            // a cada evento, e vale também para a revogação feita pelo comando do servidor.
+            if (!dispositivoAtivo(deps.banco, aparelho)) {
+              revogado = true;
+              break;
+            }
             await fluxo.writeSSE({ id: item.id, event: 'evento', data: JSON.stringify(item.evento) });
           }
+          if (revogado) break;
           const semNovidade = await new Promise<boolean>((ok) => {
             const relogio = setTimeout(() => ok(true), intervaloPingMs);
             acordar = () => {
@@ -219,7 +236,7 @@ export function criarApp(deps: Dependencias): Hono<Ambiente> {
           });
           acordar = null;
           if (semNovidade) {
-            // Aparelho revogado perde o fluxo no próximo sinal de vida.
+            // Sem evento para conferir, a revogação é vista no sinal de vida.
             if (!autenticar(deps.banco, token)) break;
             await fluxo.writeSSE({ event: 'ping', data: '' });
           }

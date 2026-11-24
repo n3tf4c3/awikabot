@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EnvInvalida, lerEnv } from './env';
+import { ambienteDoMotor, EnvInvalida, lerEnv, lerEnvDoGancho } from './env';
 
 describe('lerEnv', () => {
   it('usa loopback, a porta padrão e o motor real quando nada é informado', () => {
@@ -12,6 +12,7 @@ describe('lerEnv', () => {
       AWIKA_MOTOR: 'claude-code',
       AWIKA_CLAUDE_BIN: 'claude',
       AWIKA_TURNOS_SIMULTANEOS: 4,
+      AWIKA_GANCHO: 'opcao',
     });
   });
 
@@ -58,5 +59,53 @@ describe('lerEnv', () => {
       expect([...invalida.campos].sort()).toEqual(['AWIKA_PORTA', 'NODE_ENV']);
       expect(invalida.message).not.toContain('secreto');
     }
+  });
+});
+
+describe('ambienteDoMotor', () => {
+  it('passa o que o motor precisa e segura a configuração e os segredos do servidor', () => {
+    const origem = {
+      PATH: '/usr/bin',
+      HOME: '/data',
+      CLAUDE_CONFIG_DIR: '/data/claude',
+      DISABLE_AUTOUPDATER: '1',
+      ANTHROPIC_API_KEY: 'chave-do-motor',
+      LC_ALL: 'pt_BR.UTF-8',
+      HTTPS_PROXY: 'http://proxy:3128',
+      Path: 'C:\\Windows',
+      AWIKA_DADOS: '/data',
+      AWIKA_PORTA_GANCHO: '8791',
+      AWIKA_TURNO_TOKEN: 'de-outro-turno',
+      EXPO_ACCESS_TOKEN: 'segredo-de-push',
+      DATABASE_URL: 'segredo',
+      NODE_OPTIONS: '--require ./x.js',
+      VAZIA: undefined,
+    };
+    expect(ambienteDoMotor(origem)).toEqual({
+      PATH: '/usr/bin',
+      HOME: '/data',
+      CLAUDE_CONFIG_DIR: '/data/claude',
+      DISABLE_AUTOUPDATER: '1',
+      ANTHROPIC_API_KEY: 'chave-do-motor',
+      LC_ALL: 'pt_BR.UTF-8',
+      HTTPS_PROXY: 'http://proxy:3128',
+      Path: 'C:\\Windows',
+    });
+  });
+});
+
+describe('lerEnvDoGancho', () => {
+  it('lê a porta e o token do turno', () => {
+    expect(lerEnvDoGancho({ AWIKA_PORTA_GANCHO: '8791', AWIKA_TURNO_TOKEN: 'abc' })).toEqual({ porta: 8791, token: 'abc' });
+  });
+
+  it.each([
+    ['sem nada', {}],
+    ['sem token', { AWIKA_PORTA_GANCHO: '8791' }],
+    ['token vazio', { AWIKA_PORTA_GANCHO: '8791', AWIKA_TURNO_TOKEN: '' }],
+    ['porta que não é número', { AWIKA_PORTA_GANCHO: 'abc', AWIKA_TURNO_TOKEN: 'abc' }],
+    ['porta fora da faixa', { AWIKA_PORTA_GANCHO: '70000', AWIKA_TURNO_TOKEN: 'abc' }],
+  ])('devolve nulo %s', (_caso, origem) => {
+    expect(lerEnvDoGancho(origem)).toBeNull();
   });
 });

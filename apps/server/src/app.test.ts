@@ -30,7 +30,7 @@ afterAll(() => {
   rmSync(pastaTemporaria, { recursive: true, force: true });
 });
 
-function montar(opcoes: { atrasoMs?: number; limite?: number } = {}) {
+function montar(opcoes: { atrasoMs?: number; limite?: number; intervaloPingMs?: number } = {}) {
   const banco = abrirBanco(':memory:');
   const barramento = new Barramento();
   const turnos = new GestorDeTurnos({
@@ -47,7 +47,7 @@ function montar(opcoes: { atrasoMs?: number; limite?: number } = {}) {
     turnos,
     aprovacoes: new GestorDeAprovacoes({ banco, barramento }),
     limitador: new LimitadorDeTentativas(),
-    intervaloPingMs: 40,
+    intervaloPingMs: opcoes.intervaloPingMs ?? 40,
   });
 
   const pedir = (caminho: string, opcoesPedido: { metodo?: string; corpo?: unknown; token?: string | null } = {}) => {
@@ -90,11 +90,19 @@ describe('saúde', () => {
     expect(resposta.headers.get('content-type')).toMatch(/^application\/json/);
     expect(resposta.headers.get('cache-control')).toBe('no-store');
     expect(resposta.headers.get('x-content-type-options')).toBe('nosniff');
-    expect(EsquemaSaude.parse(await resposta.json())).toEqual({
-      status: 'ok',
-      versao: '9.9.9-teste',
-      protocolo: VERSAO_PROTOCOLO,
-    });
+    expect(resposta.headers.get('content-security-policy')).toBe("default-src 'none'; frame-ancestors 'none'");
+    expect(resposta.headers.get('x-frame-options')).toBe('DENY');
+    expect(resposta.headers.get('referrer-policy')).toBe('no-referrer');
+    expect(resposta.headers.get('strict-transport-security')).toBe('max-age=31536000');
+    // Sem token, a rota diz só que o servidor está de pé: nem versão, nem protocolo.
+    const corpo: unknown = await resposta.json();
+    expect(corpo).toEqual({ status: 'ok' });
+    expect(EsquemaSaude.safeParse(corpo).success).toBe(true);
+  });
+
+  it('entrega a versão e o protocolo só na resposta do pareamento', async () => {
+    const pareado = await ambiente.parearAparelho();
+    expect(pareado.servidor).toEqual({ versao: '9.9.9-teste', protocolo: VERSAO_PROTOCOLO });
   });
 
   it('responde 503 quando o banco não responde', async () => {
@@ -397,6 +405,66 @@ describe('conversa (F3)', () => {
 });
 
 describe('fluxo de eventos pela rede', () => {
+  it('corta o fluxo de um aparelho revogado no meio de um turno, sem esperar o silêncio', async () => {
+    // Sinal de vida bem mais longo que o teste: se o fluxo fechar, foi pela conferência a cada evento.
+    const lento = montar({ atrasoMs: 5, intervaloPingMs: 60_000 });
+    const pareado = await lento.parearAparelho('Aparelho perdido');
+    const outro = await lento.parearAparelho('Aparelho do dono');
+    const servidor = serve({ fetch: lento.app.fetch, hostname: '127.0.0.1', port: 0 }) as Server;
+    await new Promise<void>((pronto) => servidor.once('listening', () => pronto()));
+    const base = `http://127.0.0.1:${(servidor.address() as AddressInfo).port}`;
+    const comToken = (token: string) => ({ authorization: `Bearer ${token}`, 'content-type': 'application/json' });
+
+    try {
+      const abrir = async (token: string) => {
+        const fluxo = await fetch(`${base}/v1/eventos`, { headers: comToken(token) });
+        const leitor = fluxo.body!.getReader();
+        const decodificador = new TextDecoder();
+        const estado = { recebido: '', fechou: false };
+        void (async () => {
+          for (;;) {
+            const { done, value } = await leitor.read();
+            if (done) break;
+            estado.recebido += decodificador.decode(value, { stream: true });
+          }
+          estado.fechou = true;
+        })().catch(() => {
+          estado.fechou = true;
+        });
+        return estado;
+      };
+      const esperar = async (condicao: () => boolean, limiteMs = 3000): Promise<boolean> => {
+        const fim = Date.now() + limiteMs;
+        while (!condicao() && Date.now() < fim) await new Promise((ok) => setTimeout(ok, 5));
+        return condicao();
+      };
+      const trechos = (estado: { recebido: string }): number => estado.recebido.split('"tipo":"texto"').length - 1;
+
+      const doPerdido = await abrir(pareado.token);
+      const doDono = await abrir(outro.token);
+      const criado = await fetch(`${base}/v1/bots`, { method: 'POST', headers: comToken(outro.token), body: JSON.stringify({ nome: 'Scout' }) });
+      const botId = EsquemaBot.parse(await criado.json()).id;
+      const longo = Array.from({ length: 600 }, (_, i) => `p${i}`).join(' ');
+      await fetch(`${base}/v1/bots/${botId}/turnos`, { method: 'POST', headers: comToken(outro.token), body: JSON.stringify({ texto: longo }) });
+      expect(await esperar(() => trechos(doPerdido) >= 5 && trechos(doDono) >= 5)).toBe(true);
+
+      // A revogação pelo comando do servidor mexe só no banco: nenhum aviso passa pelo processo.
+      expect(revogar(lento.banco, pareado.dispositivo.id)).toBe(true);
+      expect(await esperar(() => doPerdido.fechou, 1000)).toBe(true);
+      const noCorte = trechos(doPerdido);
+
+      // O turno segue para quem continua pareado, e nada mais chega ao aparelho revogado.
+      expect(lento.turnos.ativo(botId)).toBe(true);
+      expect(await esperar(() => trechos(doDono) >= noCorte + 20)).toBe(true);
+      expect(trechos(doPerdido)).toBe(noCorte);
+      expect(doDono.fechou).toBe(false);
+    } finally {
+      await lento.turnos.pararTodos();
+      servidor.closeAllConnections();
+      await new Promise<void>((fim) => servidor.close(() => fim()));
+    }
+  });
+
   it('entrega os eventos de um turno e fecha quando o aparelho é revogado', async () => {
     const pareado = await ambiente.parearAparelho('Aparelho do fluxo');
     const servidor = serve({ fetch: ambiente.app.fetch, hostname: '127.0.0.1', port: 0 }) as Server;

@@ -66,7 +66,7 @@ describe('parearAparelho', () => {
   const resposta = (protocolo: number = VERSAO_PROTOCOLO): RespostaPareamento => ({
     token: TOKEN,
     dispositivo,
-    servidor: { status: 'ok', versao: '0.2.0', protocolo },
+    servidor: { versao: '0.2.0', protocolo },
   });
 
   function montar(parear: Api['parear'], cofre: Cofre = cofreEmMemoria()) {

@@ -148,7 +148,7 @@ try {
     registrar('F0', 'saúde do servidor', false, `sem resposta em ${BASE}/healthz; saída do servidor: ${local?.saida.trim() || '(não disponível)'}`);
   } else {
     const saude = await pedir('/healthz');
-    registrar('F0', 'saúde do servidor', saude.status === 200 && saude.corpo.status === 'ok' && Number.isInteger(saude.corpo.protocolo),
+    registrar('F0', 'saúde do servidor, sem expor a versão', saude.status === 200 && JSON.stringify(saude.corpo) === '{"status":"ok"}',
       `status ${saude.status}, corpo ${JSON.stringify(saude.corpo)}`);
     if (local) {
       // O comando que o health check da imagem executa, aqui sem a opção de reiniciar.
@@ -160,8 +160,8 @@ try {
     const codigo = codigoDePareamento();
     const pareado = codigo ? await pedir('/v1/parear', { corpo: { codigo, nome: 'Runbook' } }) : { status: 0, corpo: null };
     const token = pareado.corpo?.token;
-    registrar('F1', 'parear com código do servidor', pareado.status === 200 && typeof token === 'string',
-      `código ${codigo ? 'informado' : 'ausente'}, status ${pareado.status}`);
+    registrar('F1', 'parear com código do servidor', pareado.status === 200 && typeof token === 'string' && Number.isInteger(pareado.corpo?.servidor?.protocolo),
+      `código ${codigo ? 'informado' : 'ausente'}, status ${pareado.status}, protocolo ${pareado.corpo?.servidor?.protocolo}`);
     const repetido = codigo ? await pedir('/v1/parear', { corpo: { codigo, nome: 'Outro' } }) : { status: 0 };
     registrar('F1', 'código não vale duas vezes', repetido.status === 401, `status ${repetido.status}`);
     const semToken = await pedir('/v1/bots');
@@ -255,6 +255,22 @@ try {
         const vazou = /accessToken|refreshToken|claudeAiOauth|sk-ant-/.test(String(fora.resposta?.texto));
         registrar('F4', 'leitura fora da pasta do bot é negada', !vazou,
           `conteúdo do arquivo na resposta: ${vazou ? 'SIM' : 'não'}; pedidos de aprovação que surgiram e foram negados: ${fora.pedidas.length}`);
+
+        // Gravação: fora da pasta e na configuração do motor, o servidor nega sem nem mostrar cartão.
+        // Todo pedido que surgir é aprovado, para a prova não depender de alguém negar. A prova é o disco.
+        const dados = process.env.AWIKA_DADOS ?? '';
+        const alvoFora = path.join(dados, 'fora-da-pasta.txt');
+        const gravaFora = await turnoCom(`Use a ferramenta Write para gravar o arquivo ${alvoFora} com o conteúdo "x". Se não for permitido, responda só "negado" e não tente de outro jeito.`, 'aprovar');
+        const pedidosDeWrite = (turno) => turno.pedidas.filter((e) => ['Write', 'Edit', 'MultiEdit'].includes(e.aprovacao.ferramenta)).length;
+        const gravaConfiguracao = await turnoCom('Use a ferramenta Write para gravar o arquivo .claude/settings.json com o conteúdo "{}". Se não for permitido, responda só "negado" e não tente de outro jeito.', 'aprovar');
+        registrar('F4', 'gravação fora da pasta e na configuração do motor é negada',
+          pedidosDeWrite(gravaFora) === 0 && !existsSync(alvoFora) && pedidosDeWrite(gravaConfiguracao) === 0 && !noDisco(path.join('.claude', 'settings.json')),
+          `cartões de gravação: ${pedidosDeWrite(gravaFora)} e ${pedidosDeWrite(gravaConfiguracao)}; no disco: fora da pasta ${existsSync(alvoFora) ? 'EXISTE' : 'não existe'}, .claude/settings.json ${noDisco(path.join('.claude', 'settings.json')) ? 'EXISTE' : 'não existe'}`);
+        const gravaDentro = await turnoCom('Use a ferramenta Write para gravar o arquivo dentro.txt com o conteúdo "awika-dentro". Depois responda só "feito".', 'aprovar');
+        const cartao = gravaDentro.pedidas.find((e) => e.aprovacao.ferramenta === 'Write')?.aprovacao.resumo ?? '';
+        registrar('F4', 'gravação na pasta do bot pede aprovação e mostra o conteúdo',
+          noDisco('dentro.txt') && cartao.includes('dentro.txt') && cartao.includes('awika-dentro'),
+          `no disco: dentro.txt ${noDisco('dentro.txt') ? 'existe' : 'não existe'}; cartão mostra o conteúdo: ${cartao.includes('awika-dentro')}`);
       } else {
         const aprovado = await turnoCom('!comando echo oi', 'aprovar');
         registrar('F4', 'ação aprovada roda',
@@ -268,6 +284,17 @@ try {
         registrar('F4', 'leitura fora da pasta do bot é negada',
           fora.pedidas.length === 0 && String(fora.resposta?.texto).startsWith('Leitura negada'),
           `${fora.pedidas.length} pedido(s), resposta "${fora.resposta?.texto}"`);
+        const gravaFora = await turnoCom('!gravar ../../fora.txt', 'aprovar');
+        const gravaConfiguracao = await turnoCom('!gravar .claude/settings.json', 'aprovar');
+        registrar('F4', 'gravação fora da pasta e na configuração do motor é negada',
+          gravaFora.pedidas.length === 0 && String(gravaFora.resposta?.texto) === 'Gravação negada: o bot só grava arquivos na própria pasta de trabalho'
+          && gravaConfiguracao.pedidas.length === 0 && String(gravaConfiguracao.resposta?.texto) === 'Gravação negada: o bot não altera a configuração do motor',
+          `${gravaFora.pedidas.length} e ${gravaConfiguracao.pedidas.length} pedido(s); respostas "${gravaFora.resposta?.texto}" e "${gravaConfiguracao.resposta?.texto}"`);
+        const gravaDentro = await turnoCom('!gravar notas.txt', 'aprovar');
+        registrar('F4', 'gravação na pasta do bot pede aprovação e mostra o conteúdo',
+          gravaDentro.pedidas.length === 1 && gravaDentro.pedidas[0].aprovacao.resumo === 'Gravar o arquivo notas.txt\n\nconteúdo de teste'
+          && gravaDentro.resposta?.texto === 'Gravação permitida: notas.txt',
+          `${gravaDentro.pedidas.length} pedido(s), resposta "${gravaDentro.resposta?.texto}"`);
 
         // O lado do gancho que o motor executa: sem servidor para perguntar, nega.
         const gancho = spawnSync(process.execPath, ['dist/server.mjs', 'gancho'], {

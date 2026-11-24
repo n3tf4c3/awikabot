@@ -17,8 +17,9 @@ async function consultarGancho(gancho: Gancho, ferramenta: string, entrada: Reco
 
 /**
  * Motor de teste: devolve o texto recebido, palavra por palavra. Não fala com modelo nenhum.
- * Dois textos fazem o papel de um pedido de ferramenta, sem executar nada:
- * `!comando <linha>` pede para rodar um comando e `!ler <caminho>` pede para ler um arquivo.
+ * Três textos fazem o papel de um pedido de ferramenta, sem executar nada: `!comando <linha>`
+ * pede para rodar um comando, `!ler <caminho>` pede para ler um arquivo e `!gravar <caminho>`
+ * pede para gravar um.
  */
 export function criarMotorSimulado(opcoes: { atrasoMs?: number } = {}): Motor {
   const atrasoMs = opcoes.atrasoMs ?? 15;
@@ -55,7 +56,7 @@ export function criarMotorSimulado(opcoes: { atrasoMs?: number } = {}): Motor {
       relogio = setTimeout(() => passo(0), atrasoMs);
     };
 
-    const ferramenta = /^!(comando|ler) (.+)$/s.exec(pedido.texto);
+    const ferramenta = /^!(comando|ler|gravar) (.+)$/s.exec(pedido.texto);
     if (ferramenta) {
       const [, tipo = '', alvo = ''] = ferramenta;
       const consulta =
@@ -63,8 +64,15 @@ export function criarMotorSimulado(opcoes: { atrasoMs?: number } = {}): Motor {
           ? Promise.resolve<RespostaDoGancho>({ decisao: 'deny', motivo: 'sem gancho' })
           : tipo === 'comando'
             ? consultarGancho(pedido.gancho, 'Bash', { command: alvo })
-            : consultarGancho(pedido.gancho, 'Read', { file_path: alvo });
-      const [permitido, negado] = tipo === 'comando' ? ['Comando permitido', 'Comando negado'] : ['Leitura permitida', 'Leitura negada'];
+            : tipo === 'gravar'
+              ? consultarGancho(pedido.gancho, 'Write', { file_path: alvo, content: 'conteúdo de teste' })
+              : consultarGancho(pedido.gancho, 'Read', { file_path: alvo });
+      const rotulos: Record<string, [string, string]> = {
+        comando: ['Comando permitido', 'Comando negado'],
+        ler: ['Leitura permitida', 'Leitura negada'],
+        gravar: ['Gravação permitida', 'Gravação negada'],
+      };
+      const [permitido, negado] = rotulos[tipo] ?? ['Permitido', 'Negado'];
       void consulta.then((resposta) => {
         falar(resposta.decisao === 'allow' ? `${permitido}: ${alvo}` : `${negado}: ${resposta.motivo}`);
       });

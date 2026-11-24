@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { Hono } from 'hono';
-import { LIMITES } from '@awikabot/core';
+import { ESPERA_APROVACAO_MS, LIMITES } from '@awikabot/core';
 import type { GestorDeAprovacoes } from './aprovacoes';
 import { novoToken } from './ids';
 import { avaliarFerramenta } from './politica';
@@ -83,28 +83,42 @@ export function criarAppDoGancho(deps: { ganchos: Ganchos; aprovacoes: GestorDeA
 }
 
 /**
- * O lado do gancho que o Claude Code executa antes de cada ferramenta (`PreToolUse`):
- * repassa o pedido ao servidor e espera a resposta pelo tempo que for. Qualquer falha nega.
+ * Quanto o gancho espera o servidor. O servidor responde em até `ESPERA_APROVACAO_MS`; se ele
+ * travar, o gancho nega por conta própria antes de o motor cortá-lo, porque um gancho cortado
+ * por tempo não bloqueia a ferramenta.
  */
-export async function executarGancho(): Promise<void> {
+export const PRAZO_DO_PEDIDO_MS = ESPERA_APROVACAO_MS + 30_000;
+
+/**
+ * O lado do gancho que o Claude Code executa antes de cada ferramenta (`PreToolUse`):
+ * repassa o pedido ao servidor e espera a resposta. Qualquer falha nega, inclusive o silêncio.
+ */
+export async function executarGancho(
+  configuracao: { porta: number; token: string } | null,
+  opcoes: { prazoMs?: number; escrever?: (saida: string) => void; lerEntrada?: () => string } = {},
+): Promise<void> {
+  const escrever = opcoes.escrever ?? ((saida: string) => process.stdout.write(saida));
+  let respondido = false;
   const responder = (decisao: 'allow' | 'deny', motivo: string): void => {
-    process.stdout.write(
+    // Uma resposta só: a que chegar depois do prazo, ou depois de um erro, não troca a decisão.
+    if (respondido) return;
+    respondido = true;
+    escrever(
       JSON.stringify({
         hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: decisao, permissionDecisionReason: motivo },
       }),
     );
   };
 
-  const porta = Number(process.env.AWIKA_PORTA_GANCHO);
-  const token = process.env.AWIKA_TURNO_TOKEN;
-  if (!Number.isInteger(porta) || porta < 1 || !token) {
+  if (configuracao === null) {
     responder('deny', 'gancho sem configuração');
     return;
   }
+  const { porta, token } = configuracao;
 
   let entrada = '{}';
   try {
-    entrada = readFileSync(0, 'utf8') || '{}';
+    entrada = (opcoes.lerEntrada ?? (() => readFileSync(0, 'utf8')))() || '{}';
   } catch {
     // Sem entrada, o servidor recebe um pedido vazio e nega.
   }
@@ -136,10 +150,16 @@ export async function executarGancho(): Promise<void> {
         });
       },
     );
+    const relogio = setTimeout(() => {
+      responder('deny', 'servidor de aprovação não respondeu a tempo');
+      pedido.destroy();
+      fim();
+    }, opcoes.prazoMs ?? PRAZO_DO_PEDIDO_MS);
     pedido.on('error', () => {
       responder('deny', 'servidor de aprovação fora do ar');
       fim();
     });
+    pedido.on('close', () => clearTimeout(relogio));
     pedido.end(entrada);
   });
 }

@@ -27,6 +27,20 @@ else
   echo "aviso: sem $arquivo.sha256; a integridade do arquivo não foi conferida" >&2
 fi
 
+# O arquivo só pode trazer o que o backup.sh põe nele. Qualquer outra entrada, como um
+# arquivo de configuração do motor, faz a restauração ser recusada antes de tocar no volume.
+estranhas=$(tar -tf "$arquivo" | awk '
+  $0 ~ /(^|\/)\.\.(\/|$)/ { print; next }
+  $0 == "awikabot.db" || $0 == "trabalho" || index($0, "trabalho/") == 1 { next }
+  $0 == "claude/projects" || index($0, "claude/projects/") == 1 { next }
+  { print }
+' | head -n 3)
+if [ -n "$estranhas" ]; then
+  echo "o arquivo traz entradas que um backup do awikabot não tem; nada foi restaurado. Primeiras:" >&2
+  printf '%s\n' "$estranhas" >&2
+  exit 1
+fi
+
 if compose ps -q server </dev/null | grep -q .; then
   echo "o servidor deste projeto está no ar; pare-o antes de restaurar" >&2
   exit 1
@@ -49,6 +63,8 @@ if ! printf '%s\n' "$itens" | compose run --rm -T --no-deps --entrypoint sh serv
 fi
 
 # -k: se, apesar da conferência, algum arquivo já existir, o tar para em vez de trocá-lo.
-compose run --rm -T --no-deps --entrypoint tar server -C /data -k -xf - <"$arquivo"
+membros=$(tar -tf "$arquivo" | awk -F/ '$1 == "awikabot.db" || $1 == "trabalho" { print $1 } $1 == "claude" { print "claude/projects" }' | sort -u)
+# shellcheck disable=SC2086
+compose run --rm -T --no-deps --entrypoint tar server -C /data -k -xf - $membros <"$arquivo"
 
 echo "Restaurado. Se o volume é novo, faça o login do motor (ver deploy/compose.yaml) e suba o servidor."

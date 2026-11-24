@@ -25,13 +25,16 @@ const Id = z.string().regex(/^[a-z0-9]{16}$/);
 /** Milissegundos desde 1970. */
 const Instante = z.number().int().nonnegative();
 
-/** Resposta de `GET /healthz`. */
-export const EsquemaSaude = z.object({
-  status: z.literal('ok'),
+/** Resposta de `GET /healthz`, que não pede token: só o estado, sem nada que identifique o servidor. */
+export const EsquemaSaude = z.strictObject({ status: z.literal('ok') });
+export type Saude = z.infer<typeof EsquemaSaude>;
+
+/** O que o app precisa saber do servidor. Só sai na resposta do pareamento. */
+export const EsquemaInfoDoServidor = z.object({
   versao: z.string().min(1).max(64),
   protocolo: z.number().int().positive(),
 });
-export type Saude = z.infer<typeof EsquemaSaude>;
+export type InfoDoServidor = z.infer<typeof EsquemaInfoDoServidor>;
 
 /** Corpo de toda resposta de erro. `erro` é um código estável, não um texto para a tela. */
 export const EsquemaErro = z.object({ erro: z.string().min(1).max(64) });
@@ -61,7 +64,7 @@ export type Dispositivo = z.infer<typeof EsquemaDispositivo>;
 export const EsquemaRespostaPareamento = z.object({
   token: z.string().min(43).max(64),
   dispositivo: EsquemaDispositivo,
-  servidor: EsquemaSaude,
+  servidor: EsquemaInfoDoServidor,
 });
 export type RespostaPareamento = z.infer<typeof EsquemaRespostaPareamento>;
 

@@ -63,8 +63,15 @@ describe('leitura', () => {
 describe('o que muda alguma coisa', () => {
   it.each([
     ['Bash', { command: 'rm -rf x' }, 'rm -rf x'],
-    ['Write', { file_path: 'a.txt', content: 'x' }, 'Gravar o arquivo a.txt'],
+    ['Write', { file_path: 'a.txt', content: 'x' }, 'Gravar o arquivo a.txt\n\nx'],
     ['Edit', { file_path: 'a.txt' }, 'Alterar o arquivo a.txt'],
+    ['Edit', { file_path: 'a.txt', old_string: 'um', new_string: 'dois' }, 'Alterar o arquivo a.txt\n\nSai:\num\nEntra:\ndois'],
+    [
+      'MultiEdit',
+      { file_path: 'a.txt', edits: [{ old_string: 'a', new_string: 'b' }, { old_string: 'c', new_string: '' }] },
+      'Alterar o arquivo a.txt\n\nSai:\na\nEntra:\nb\n\nSai:\nc\nEntra:\n',
+    ],
+    ['NotebookEdit', { notebook_path: 'sub/n.ipynb', new_source: 'print(1)' }, 'Alterar o arquivo sub/n.ipynb\n\nprint(1)'],
     ['WebFetch', { url: 'https://exemplo.com' }, 'Abrir https://exemplo.com'],
     ['WebSearch', { query: 'tempo' }, 'Pesquisar na web: tempo'],
     ['FerramentaNova', { a: 1 }, '{"a":1}'],
@@ -84,7 +91,68 @@ describe('o que muda alguma coisa', () => {
     expect(veredito.resumo.endsWith('… (cortado)')).toBe(true);
   });
 
+  it('corta um conteúdo longo de gravação, mantendo o nome do arquivo no começo', () => {
+    const veredito = avaliarFerramenta('Write', { file_path: 'a.txt', content: 'y'.repeat(LIMITES.resumoAprovacao * 2) }, pasta);
+    expect(veredito.acao).toBe('perguntar');
+    if (veredito.acao !== 'perguntar') return;
+    expect(veredito.resumo).toHaveLength(LIMITES.resumoAprovacao);
+    expect(veredito.resumo.startsWith('Gravar o arquivo a.txt\n\nyyy')).toBe(true);
+  });
+
   it('deixa passar a lista de tarefas do motor, que não toca em nada', () => {
     expect(acao('TodoWrite', { todos: [] })).toBe('permitir');
+  });
+});
+
+describe('gravação', () => {
+  const FERRAMENTAS = ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'] as const;
+  const entradaDe = (ferramenta: string, caminho: unknown): Record<string, unknown> =>
+    ferramenta === 'NotebookEdit' ? { notebook_path: caminho, new_source: 'x' } : { file_path: caminho, content: 'x' };
+
+  describe.each(FERRAMENTAS)('%s', (ferramenta) => {
+    it.each([
+      ['arquivo novo na pasta, relativo', 'novo.txt'],
+      ['arquivo numa subpasta, absoluto', path.join(pasta, 'sub', 'novo.txt')],
+      ['arquivo com nome parecido com o da configuração', 'claude.json'],
+    ])('pergunta antes de gravar %s', (_caso, caminho) => {
+      expect(acao(ferramenta, entradaDe(ferramenta, caminho))).toBe('perguntar');
+    });
+
+    it.each([
+      ['caminho absoluto fora da pasta', path.join(fora, 'x.txt')],
+      ['subida de nível', '../fora/x.txt'],
+      ['subida de nível disfarçada', 'sub/../../fora/x.txt'],
+      ['pasta com o mesmo começo de nome', `${pasta}-outro/x.txt`],
+      ['caminho que não é texto', 42],
+      ['caminho ausente', undefined],
+    ])('nega %s, sem perguntar', (_caso, caminho) => {
+      expect(avaliarFerramenta(ferramenta, entradaDe(ferramenta, caminho), pasta)).toEqual({
+        acao: 'negar',
+        motivo: 'o bot só grava arquivos na própria pasta de trabalho',
+      });
+    });
+
+    it.each([
+      ['a configuração do motor na pasta do bot', '.claude/settings.json'],
+      ['a configuração local do motor', path.join(pasta, '.claude', 'settings.local.json')],
+      ['a configuração escrita com outra caixa', '.Claude/settings.json'],
+      ['uma pasta de configuração dentro de uma subpasta', 'sub/.claude/skills/x/SKILL.md'],
+      ['os servidores MCP do projeto', '.mcp.json'],
+      ['a configuração alcançada por um caminho torto', 'sub/../.claude/settings.json'],
+    ])('nega gravar %s, sem perguntar', (_caso, caminho) => {
+      expect(avaliarFerramenta(ferramenta, entradaDe(ferramenta, caminho), pasta)).toEqual({
+        acao: 'negar',
+        motivo: 'o bot não altera a configuração do motor',
+      });
+    });
+  });
+
+  it('nega a gravação por um atalho que aponta para fora da pasta', (contexto) => {
+    try {
+      symlinkSync(fora, path.join(pasta, 'atalho-de-gravacao'), 'junction');
+    } catch {
+      contexto.skip();
+    }
+    expect(acao('Write', { file_path: 'atalho-de-gravacao/novo.txt', content: 'x' })).toBe('negar');
   });
 });

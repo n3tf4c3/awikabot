@@ -71,7 +71,7 @@ describe('parear', () => {
   const resposta = {
     token: TOKEN_A,
     dispositivo: sessaoA.dispositivo,
-    servidor: { status: 'ok', versao: '0.1.0', protocolo: 1 },
+    servidor: { versao: '0.1.0', protocolo: 1 },
   };
 
   it('manda o pedido sem Authorization e valida a resposta', async () => {

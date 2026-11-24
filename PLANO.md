@@ -220,6 +220,31 @@ Não coberto:
 - o fluxo F5 no aparelho: nenhuma tela foi aberta;
 - um bot cuja conversa do motor se perdeu continua sem saída pelo app.
 
+## Etapa 5: resultado da revisão de segurança (2026-11-23)
+
+A distribuição por TestFlight e pela Play ainda não começou. A revisão de segurança foi feita e os achados, corrigidos.
+
+A conferência estática contra a lista de quesitos da casa encontrou oito achados: um de severidade alta, um de média e seis de baixa. O registro numerado está em `docs/auditoria-achados.md`.
+
+- **O mais grave**: aprovar uma gravação aprovava qualquer caminho e conteúdo, e o motor lia configuração na pasta do bot. Com o motor real, um arquivo plantado ali rodou um comando no turno seguinte, sem cartão. Agora a gravação fica presa à pasta do bot, o cartão mostra o conteúdo, o motor não lê a configuração da pasta e o gancho mora na parte somente leitura da imagem.
+- **Aparelho revogado**: o fluxo de eventos é cortado no evento seguinte, e não só no silêncio.
+- **Os de severidade baixa**: ambiente do motor por lista de nomes, cabeçalhos de segurança, `/healthz` sem versão, imagem base por digest, log sem a saída do motor e restauração que recusa arquivo com entrada estranha.
+
+| Verificação | Resultado |
+|---|---|
+| Testes | 36 no `core`, 216 no servidor e 460 no app. |
+| Falsificação | Oito quebras de propósito, uma por vez, todas acusadas. |
+| `pnpm verificar`, motor simulado | 23 de 23, em duas execuções iguais. |
+| `pnpm verificar`, motor real no Pi | 14 de 14, com o gancho na configuração gerenciada. |
+| Configuração plantada na pasta do bot, motor real | Antes da correção, rodou um comando sem aprovação. Depois, não teve efeito, com cada barreira sozinha e com as duas. |
+| Backup adulterado no Pi | Recusado sem criar volume; o backup bom restaurou com conversas idênticas. |
+
+Não coberto:
+
+- um comando de terminal aprovado continua alcançando o volume inteiro; a proteção é a pessoa ler o comando no cartão;
+- as decisões que a revisão deixou registradas: `http://` na rede local, token de aparelho sem validade, aprovação sem biometria, assinatura das atualizações do app e saída de rede do contêiner;
+- o gate de publicação sobre o commit final, e o teste dinâmico das rotas de pareamento e aprovação.
+
 ## Riscos
 
 - Aprovação: um comando aprovado roda com os direitos do contêiner e alcança tudo o que está no volume, inclusive o login do motor. A proteção é a pessoa ler o comando no cartão.
