@@ -67,3 +67,8 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
       - run: cargo build --release --locked -p awikabot-desktop
+        if: runner.os != 'Windows'
+      # No Windows, o build de release é o de distribuição: compila sem rastro da máquina, confere
+      # o executável, junta as licenças e monta o instalador. Sem assinatura: a chave não vem à CI.
+      - run: powershell -ExecutionPolicy Bypass -File distribuicao/windows/empacotar.ps1
+        if: runner.os == 'Windows'

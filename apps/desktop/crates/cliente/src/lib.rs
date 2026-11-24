@@ -8,6 +8,7 @@ pub mod contrato;
 
 pub mod api;
 pub mod aprovacoes;
+pub mod atualizacao;
 pub mod conversa;
 pub mod endereco;
 pub mod fluxo;

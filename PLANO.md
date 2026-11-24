@@ -366,6 +366,114 @@ Não coberto:
 - Home e End por linha da tela, cursor piscando e rolar ao arrastar o mouse para fora do campo;
 - pacote, assinatura e atualizador, que são o passo 4.
 
+### Passo 4: plano da distribuição no Windows (2026-11-24)
+
+Só plano; nada foi implementado. O passo entrega um instalador assinado do app de desktop, um jeito de o app se atualizar e um roteiro de release repetível, conferidos no Windows Sandbox.
+
+#### De onde o plano parte
+
+| Fato | Fonte |
+|---|---|
+| O app não tem ícone, a versão é `0.0.0`, o executável não leva metadados e não existe release. A CI compila o build de release e joga fora. | `apps/desktop`, conferido em 24/11 |
+| As 322 dependências que entram no executável do Windows têm licença permissiva; nenhuma é GPL. Os crates que vêm do repositório do Zed são Apache-2.0. | `cargo tree`, conferido em 24/11 |
+| O termIAX distribui por instalador por usuário, sem pedir administrador, com o executável e o instalador assinados e carimbo de tempo. A assinatura usa um certificado em nuvem de pessoa física, que exige sessão aberta no PC de quem assina: não serve para CI. | documentos do termIAX, lidos em 24/11 |
+| Lá, o atualizador confia na assinatura do pacote, não numa chave própria: depois de baixar, confere tamanho e SHA-256 e exige o publicador esperado, com revogação conferida. Nada é baixado sem a pessoa pedir, e versão menor ou igual é recusada. | idem |
+| O QA de lá roda num Windows Sandbox sem rede, com uma pasta de entrada só de leitura e uma de saída, usuário sem privilégios, e devolve um `result.json`. Uma segunda rodada usa rede e a marca de arquivo baixado da Internet. Esse QA achou um defeito de atualização que nenhum teste pegava. | idem |
+| Assinatura válida não tira o aviso de reputação do SmartScreen de um publicador pouco conhecido. Sem assinatura, o Smart App Control bloqueia o executável. | idem |
+| Este PC tem o `signtool` do Windows SDK, o Windows Sandbox e o `cargo-deny`. Não tem ferramenta de instalador. | conferido em 24/11 |
+
+Do termIAX vêm o processo e as lições, como decidido em 23/11. Os scripts e o código são escritos aqui.
+
+#### Desenho proposto
+
+- **Executável com identidade.** Ícone, versão e descrição gravados no `.exe` por um `build.rs`, só no Windows. A versão sai de `[workspace.package]`, e o pacote não sai se a do executável divergir. Runtime do C++ embutido (`crt-static`), para o app não depender de nada instalado. Os caminhos da máquina de quem compila são remapeados: sem isso, o binário público levaria o nome de usuário em mensagens de pânico.
+- **Instalador por usuário**, sem administrador, em `%LOCALAPPDATA%\Programs\awikabot`, com atalho no Menu Iniciar que carrega a identidade `awikabot.desktop`, para o aviso do sistema aparecer com o nome e o ícone do app. Leva o executável, a licença e as licenças de terceiros. Não mexe em PATH, inicialização do Windows, firewall nem serviços.
+- **Desinstalação que não deixa credencial.** Tira os arquivos, o atalho e o registro da identidade, e pede ao app para esvaziar o cofre antes de sair: sem isso, o token do computador ficaria no Gerenciador de Credenciais depois de o app ir embora.
+- **Assinatura** do executável e do instalador, com SHA-256 e carimbo de tempo, feita à mão no PC de quem tem o certificado. O script só recebe a impressão digital do certificado; senha e token nunca passam por ele.
+- **Atualização em três passos, cada um a pedido da pessoa.** O app consulta, no máximo uma vez por dia e com opção de desligar, os releases públicos do repositório no GitHub, só os de etiqueta `desktop-v`. Havendo versão maior, avisa. A pessoa pede o download: o arquivo vai para uma pasta do app com nome provisório, e só vale depois de conferidos o tamanho, o SHA-256 e a assinatura, com o publicador esperado. A pessoa pede para instalar: o app chama o instalador e fecha, e o instalador o reabre.
+- **A assinatura é a âncora da atualização.** Quem tomar a conta do GitHub não consegue empurrar um pacote: precisaria também do certificado. Em compensação, trocar de certificado ou de titular exige antes uma versão que aceite os dois.
+- **Release em etapas**, cada uma amarrada à anterior pelo SHA-256 dos pacotes: conferências do candidato, assinatura e pacote, conferência dos artefatos, QA no Sandbox, release em rascunho no GitHub e aprovação do titular, que o torna público e cria a etiqueta. As evidências ficam fora do Git e fora de `target/`.
+
+#### Subpassos
+
+1. **Identidade do executável**: ícone, versão `0.1.0`, metadados, `crt-static`, caminhos remapeados.
+   Verificar: as propriedades do `.exe` mostram produto e versão; ele não importa o runtime do C++; não há caminho da máquina dentro dele.
+2. **Instalador e desinstalação**: pacote por usuário, atalho com a identidade, licenças de terceiros, esvaziar o cofre ao desinstalar.
+   Verificar, no Sandbox, com usuário sem privilégios: instala, o atalho abre o app, desinstala, e não sobra arquivo, atalho, registro nem item no cofre.
+3. **Assinatura e conferência dos artefatos**: assinar, conferir assinatura e carimbo, gerar `SHA256SUMS`.
+   Verificar: o Windows mostra a assinatura como válida; um arquivo adulterado depois de assinado é recusado pela conferência.
+4. **QA no Sandbox como comando**: gera a configuração do Sandbox, roda o roteiro lá dentro e traz o `result.json`. Rodada sem rede e rodada com rede e marca de download.
+   Verificar: duas execuções seguidas com o mesmo resultado, e uma quebra de propósito no pacote que o roteiro precisa acusar.
+5. **Atualizador no app**: consulta, aviso, download conferido e instalação.
+   Verificar: testes contra um servidor falso (versão maior, igual e menor; hash errado; tamanho errado; download cortado); a conferência de assinatura aceita o pacote de verdade e recusa um sem assinatura, um adulterado e um assinado por outro publicador; no Sandbox, uma versão antiga se atualiza para a nova e recusa voltar.
+6. **Roteiro de release e primeira versão**: runbook, conferências do candidato (suíte, `verificar`, desktop, licenças e avisos de segurança das dependências), nova verificação de segurança sobre a `main`, e a versão `0.1.0` em rascunho.
+   Verificar: o rascunho só sai com o QA aprovado para os mesmos hashes; a aprovação é um passo à parte, do titular.
+
+O atualizador entra antes da primeira versão pública: a versão que não sabe se atualizar fica para trás para sempre.
+
+#### Decisões que são do titular, antes de começar
+
+| Decisão | Opções | Recomendação |
+|---|---|---|
+| Ferramenta do instalador | Inno Setup; MSI pelo WiX; MSI montado à mão com o que o Windows traz, como no termIAX | **Inno Setup**: instala por usuário, grava a identidade no atalho e fecha o app aberto, com um roteiro curto. O MSI tem reversão de atualização que falha, mas foi nele que o termIAX achou o defeito mais sutil, e montá-lo à mão é o caminho mais longo para reescrever. Qualquer das duas primeiras exige instalar a ferramenta neste PC. |
+| Certificado | O certificado em nuvem do titular; um programa de assinatura para código aberto; sem assinatura | **O do titular**: já existe e o processo é conhecido. O custo é de exposição: o nome civil do titular vira o publicador de um binário público e fica escrito no atualizador, num repositório público. Sem assinatura, o Smart App Control bloqueia o app. |
+| Ícone | O titular fornece; eu proponho um, simples, para aprovação | Sem ícone não há pacote. |
+| Fonte das atualizações | Releases do GitHub; um endereço próprio | **GitHub**: o repositório é público e não há mais nada para manter. |
+| Bandeja e abrir com o Windows | Neste passo; depois | **Depois.** É o que faria o aviso chegar com a janela fechada, mas pede um crate novo, a provar nos dois sistemas, e o passo já é grande. |
+| Versão portátil, em ZIP | Agora; depois | **Depois**: ninguém pediu, e ela pede um atualizador próprio. |
+
+#### Riscos
+
+- O atualizador é um caminho para executar código baixado. Ele passa por revisão de segurança própria antes da primeira versão, e a conferência de assinatura tem teste com pacote adulterado e com outro publicador.
+- O aviso de reputação do SmartScreen deve aparecer nos primeiros downloads, mesmo com assinatura válida.
+- A sessão do certificado em nuvem pode cair no meio da assinatura; o script precisa refazer só o que faltou.
+- Renovar o certificado com outro nome, ou trocar de autoridade, quebra a atualização de quem já instalou.
+- O Sandbox só prova o Windows 11. Windows 10, atualização com o app aberto no meio de uma resposta e queda de energia ficam sem prova.
+- Antivírus de terceiros podem desconfiar de um executável novo e pouco baixado.
+
+#### Fora deste passo
+
+macOS, que é o passo 5; loja da Microsoft; canal de versões de teste; e o que a tabela de decisões deixa para depois.
+
+### Passo 4: andamento (2026-11-24)
+
+O titular aceitou as recomendações da tabela acima em 24/11: Inno Setup, o certificado dele, ícone proposto aqui, atualizações pelos releases do GitHub; bandeja e versão portátil ficam para depois. Feito até agora o subpasso 1 e a parte sem janela do subpasso 5.
+
+- **Identidade do executável (subpasso 1).** Ícone gerado por `apps/desktop/crates/app/recursos/gerar-icone.mjs` e versionado ao lado; à espera da aprovação do desenho pelo titular. Versão `0.1.0`. O `build.rs` grava ícone, versão e descrição no `.exe`. O runtime do C++ vai embutido em todo build (`apps/desktop/.cargo/config.toml`). O build de distribuição é o `apps/desktop/distribuicao/windows/compilar.ps1`, que troca os caminhos da máquina por nomes neutros e só entrega o executável depois de conferi-lo.
+- **Atualizador, parte sem janela (subpasso 5).** `apps/desktop/crates/cliente/src/atualizacao.rs`: lê a versão, consulta os releases de etiqueta `desktop-v`, lê o manifesto da plataforma e baixa o pacote para um arquivo provisório, que só ganha o nome final depois de conferidos o tamanho e o SHA-256. A etiqueta e os nomes dos arquivos são montados a partir da versão: nada do que a rede respondeu vira parte de um endereço. Falta a conferência da assinatura, a tela e a instalação.
+
+| Verificação | Resultado |
+|---|---|
+| Executável comum, antes | Levava o nome de usuário de quem compilou em 1.183 caminhos e pedia o runtime do C++. |
+| Executável de distribuição | Propriedades com produto e versão `0.1.0`; não pede o runtime do C++; nenhum caminho da máquina dentro dele. O script acusa o executável comum (controle), e o de distribuição abre a janela. |
+| Atualizador contra um servidor de mentira | Oferece só versão maior; ignora rascunho, versão de teste, outro produto, etiqueta malformada e release sem pacote da plataforma; recusa manifesto de outra versão, de outra plataforma, com outro nome de arquivo, com caminho, com tamanho ou hash sem sentido; não segue redirecionamento na lista; segue no arquivo, como o GitHub entrega. |
+| Download | Pacote trocado, maior, menor, cortado ou página de erro não ficam no disco; se o publicado mudou desde a consulta, nada é baixado; cancelar não deixa arquivo. A consulta não manda credencial. |
+| Testes | 96 do cliente, 10 do atualizador, 4 de contrato, 12 do fluxo e 48 do app. `clippy` e `rustfmt` sem avisos. |
+| Falsificação | Doze quebras de propósito no atualizador, uma por vez, todas acusadas. |
+
+Em seguida, com o Inno Setup instalado neste PC por autorização do titular, vieram os subpassos 2 e 4 e o roteiro de assinatura do 3:
+
+- **Instalador e desinstalação (subpasso 2).** `instalador.iss` instala só para o usuário e grava a identidade do app no atalho. A desinstalação chama o app com `--esquecer-sessao`, que revoga o token por melhor esforço e esvazia o cofre, e tira o registro da identidade. Com o app aberto, ela pede para fechá-lo: o app passa a criar uma marca com o nome da identidade enquanto está aberto. O `empacotar.ps1` compila, confere, junta as licenças de terceiros, monta o instalador e grava o manifesto que o atualizador lê e a lista de hashes.
+- **Licenças de terceiros.** `licencas-de-terceiros.mjs` junta o texto das licenças dos 400 componentes que entram no executável e para o pacote se aparecer licença fora da lista das aceitas.
+- **QA no Sandbox como comando (subpasso 4).** `qa-sandbox.ps1` prepara as pastas, abre o Windows Sandbox sem rede e traz o `result.json`; `qa-sandbox-dentro.ps1` é o roteiro que roda lá dentro.
+- **Assinatura (subpasso 3), só escrita.** O `empacotar.ps1 -Assinar` confere o certificado antes de compilar, assina o executável e o instalador com carimbo de tempo e confere as duas assinaturas. Não foi exercitado: depende da sessão do certificado do titular.
+
+| Verificação | Resultado |
+|---|---|
+| Opção de esvaziar o cofre | Esvazia e o token deixa de valer no servidor; esvazia mesmo sem servidor; cofre com lixo termina vazio; avisa quando não conseguiu. |
+| Pacote sem assinatura | Instalador de 6 MB, com a versão conferida; manifesto e lista de hashes com os nomes que o atualizador procura. Duas execuções do script de licenças dão o mesmo arquivo. |
+| Sandbox, pacote sem assinatura, Smart App Control ligado | O Windows bloqueou o instalador, e o roteiro reprovou o pacote dizendo por quê. É o que a pessoa veria com um pacote sem assinatura. |
+| Sandbox, Smart App Control desligado só lá dentro | 17 de 17 passos: instala em silêncio; executável na pasta do usuário, na versão certa; licenças; atalho com a identidade; registro só do usuário; o app abre; com o app aberto a desinstalação recusa; a atualização por cima fecha o app, troca e reabre; desinstala; não sobra arquivo, atalho, registro, credencial no cofre nem processo. |
+| Quebra de propósito no pacote | Um instalador sem a identidade no atalho e sem esvaziar o cofre: o roteiro acusou os dois e passou nos outros 15 passos. |
+| Testes | 96 do cliente, 10 do atualizador, 4 de contrato, 12 do fluxo e 53 do app. `clippy` e `rustfmt` sem avisos. |
+
+Depende do titular para seguir:
+
+- aprovar o ícone, ou pedir outro;
+- abrir a sessão do certificado em nuvem e informar a impressão digital dele, para assinar (subpasso 3) e repetir o QA com o pacote assinado e o Smart App Control ligado.
+
+Não coberto ainda: a assinatura de verdade; o QA com pacote assinado, com rede e com a marca de arquivo baixado; a conferência da assinatura do pacote baixado, a tela do atualizador e a instalação pedida pelo app; o roteiro de release. No Sandbox a conta é administradora, e a instalação sem privilégios é conferida pelo lugar dos arquivos e do registro, não com um usuário comum. Os scripts de distribuição só rodaram neste PC; a CI passa a montar o pacote sem assinatura no Windows, e esse passo ainda não rodou lá.
+
 ### Decisões que são do titular
 
 - **Mac sem Mac**: a CI do GitHub compila e testa no macOS, sem custo num repositório público, mas ninguém abre a tela. O passo 5 depende de alguém com Mac e da conta de desenvolvedor da Apple, a mesma que o TestFlight do iOS exige.
