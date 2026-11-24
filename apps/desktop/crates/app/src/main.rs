@@ -44,6 +44,17 @@ fn main() {
         let esvaziado = desinstalacao::esquecer_sessao(cofre().as_ref(), &awikabot_cliente::api::Api::new());
         std::process::exit(if esvaziado { 0 } else { 1 });
     }
+    // O roteiro de release chama o app assim antes de publicar: o pacote é conferido pela mesma
+    // regra que o atualizador de quem já instalou vai aplicar. Nenhuma janela abre; o código de
+    // saída é a resposta.
+    let mut opcoes = std::env::args().skip_while(|opcao| opcao != confianca::OPCAO_DE_CONFERIR).skip(1);
+    if let Some(arquivo) = opcoes.next() {
+        let aceito = confianca::conferir(std::path::Path::new(&arquivo), &confianca::Politica::do_app());
+        if let Err(recusa) = &aceito {
+            eprintln!("{recusa}");
+        }
+        std::process::exit(if aceito.is_ok() { 0 } else { 1 });
+    }
     instancia::marcar_como_aberto(janela::IDENTIDADE);
     application().run(|cx: &mut App| {
         campo::registrar_teclas(cx);

@@ -486,6 +486,23 @@ Depois, com a primeira parte na `main` (PR 11), veio o resto do subpasso 5:
 
 O caminho feliz com o certificado do app ainda não foi exercitado: não existe pacote assinado por ele. Os testes provam o mecanismo com um arquivo assinado por outro publicador e uma regra de teste.
 
+Por fim, o começo do subpasso 6, o roteiro de release (`docs/release-desktop.md`):
+
+- **Conferências do candidato** (`conferir-candidato.ps1`). A suíte, o `pnpm verificar`, a auditoria do pnpm, rustfmt, clippy e os testes do Rust, o `cargo deny`, a consulta à OSV e a coleta das licenças, parando na primeira falha. Recusa a pasta com mudança sem commit. Grava a evidência em `relatorios/release`.
+- **Avisos de segurança das dependências.** `apps/desktop/deny.toml` e `avisos-osv.mjs`. Em 24/11 não havia vulnerabilidade conhecida. Havia sete avisos de dependência sem manutenção, todos por dentro da GPUI, que ficam listados e não param o pacote.
+- **Conferência dos artefatos** (`conferir-artefatos.ps1`). Só passa um pacote publicável, e pede ao próprio app que o confira pela regra do atualizador (`--conferir-pacote`).
+- **Servidor de teste mais firme.** Uma rodada local falhou porque dois testes disputaram a mesma porta. O apoio de testes passou a perceber o servidor que saiu na partida e a tentar de novo.
+
+| Verificação | Resultado |
+|---|---|
+| Conferências do candidato | Com mudança sem commit, recusa. Como ensaio, 12 de 12 passos, com a evidência gravada. Um programa que falha para o roteiro (controle). |
+| OSV | Na primeira versão do script os sete avisos de manutenção saíram como vulnerabilidade e o script parou: o tipo do aviso estava em outro lugar da resposta. Corrigido; quando a marca falta, o aviso vale como vulnerabilidade. |
+| Conferência dos artefatos | Recusa o pacote de desenvolvimento por não ter assinatura e por ter saído de pasta com mudanças. Numa cópia adulterada, acusa também o tamanho e o hash do instalador, a lista de hashes e a licença que falta. |
+| Opção de conferir pacote | Recusa um executável assinado pela Microsoft, com a revogação consultada, um sem assinatura e um que não existe. |
+| CI do PR 12 | Falhou no macOS, por três motivos de recusa que só o Windows produz; corrigido, passou nos dois sistemas. |
+
+Ainda sem script: publicar o rascunho e aprovar. Dependem de existir um pacote assinado para serem exercitados.
+
 Depende do titular para seguir:
 
 - aprovar o ícone, ou pedir outro;

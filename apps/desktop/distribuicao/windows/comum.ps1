@@ -128,6 +128,16 @@ function Get-CaminhosDaMaquina {
     )
 }
 
+# Onde ficam as evidências de um candidato: fora do Git e fora de target/, para uma limpeza de
+# build não as apagar. A pasta relatorios/ é ignorada pelo Git.
+function Get-PastaDeEvidencias {
+    param([string]$Versao, $Origem)
+    $sufixo = if ($Origem.ComMudancas) { '-com-mudancas' } else { '' }
+    $pasta = Join-Path $script:RaizDoRepositorio "relatorios\release\$Versao-$($Origem.Curto)$sufixo"
+    New-Item -ItemType Directory -Force $pasta | Out-Null
+    return $pasta
+}
+
 function Get-Sha256 {
     param([string]$Arquivo)
     return (Get-FileHash -Algorithm SHA256 -LiteralPath $Arquivo).Hash.ToLowerInvariant()

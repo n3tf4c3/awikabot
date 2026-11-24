@@ -16,6 +16,9 @@ const PUBLICADOR_DO_APP: &str = "Paulo Engels Palma Gomes";
 /// versão que aceite os dois: sem ela, quem já instalou recusa a atualização.
 const EMISSOR_DO_APP: &str = "Certum";
 
+/// A opção de linha de comando que confere um arquivo pela regra do app: `--conferir-pacote <arquivo>`.
+pub const OPCAO_DE_CONFERIR: &str = "--conferir-pacote";
+
 /// O que a assinatura de um pacote precisa ter para ele ser aceito.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Politica {
