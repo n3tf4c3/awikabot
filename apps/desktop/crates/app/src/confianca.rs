@@ -34,18 +34,20 @@ impl Politica {
     }
 }
 
+// Cada sistema só produz parte destes motivos: os três que vêm da conferência do Windows não
+// aparecem fora dele, e o último não aparece nele. Por isso a marcação em cada um, e não no tipo.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Recusa {
+    #[cfg_attr(not(windows), allow(dead_code))]
     SemAssinatura,
     /// O Windows não aceitou a assinatura: arquivo alterado, certificado vencido sem carimbo de
     /// tempo, revogado, de autoridade desconhecida, ou revogação que não pôde ser consultada.
+    #[cfg_attr(not(windows), allow(dead_code))]
     AssinaturaInvalida(u32),
     /// A assinatura vale, mas é de outra pessoa ou de outra autoridade.
-    OutroPublicador {
-        publicador: String,
-        emissor: String,
-    },
+    OutroPublicador { publicador: String, emissor: String },
     /// Não foi possível ler quem assinou.
+    #[cfg_attr(not(windows), allow(dead_code))]
     SemAssinante,
     /// Este sistema não tem pacote de atualização para conferir.
     #[cfg_attr(windows, allow(dead_code))]
