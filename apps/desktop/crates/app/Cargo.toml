@@ -22,7 +22,8 @@ unicode-segmentation = "1"
 # O cofre de credenciais de cada sistema. Só o backend nativo: nada de arquivo nem de serviço à parte.
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3.6", default-features = false, features = ["windows-native"] }
-# A marca de "app aberto" que o desinstalador consulta, e a conferência da assinatura do pacote de atualização.
+# A marca de "app aberto" que o desinstalador consulta, e a conferência do pacote de atualização:
+# a assinatura dele, e o nome do produto e a versão gravados no arquivo.
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Security",
@@ -30,6 +31,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_Security_Cryptography_Catalog",
     "Win32_Security_Cryptography_Sip",
     "Win32_Security_WinTrust",
+    "Win32_Storage_FileSystem",
     "Win32_System_Threading",
 ] }
 

@@ -6,17 +6,27 @@
 //! publicador do app. Quem tomar a conta de onde as versões são publicadas não passa daqui sem a
 //! chave do certificado.
 //!
+//! A assinatura diz de quem é o arquivo, não qual arquivo é: um instalador antigo do app, ou outro
+//! programa do mesmo publicador, tem assinatura tão boa quanto a do pacote oferecido. Por isso,
+//! depois dela, confere-se o nome do produto e a versão que o próprio pacote traz gravados, e que
+//! a assinatura cobre: têm de ser os deste app e os da versão oferecida.
+//!
 //! Só há pacote, e portanto só há conferência, no Windows. Nos outros sistemas tudo é recusado.
 
 use std::path::Path;
+
+use awikabot_cliente::atualizacao::Versao;
 
 /// Quem assina os pacotes do app, como está escrito no certificado.
 const PUBLICADOR_DO_APP: &str = "Paulo Engels Palma Gomes";
 /// A autoridade que emitiu o certificado. Trocar de autoridade ou de titular pede antes uma
 /// versão que aceite os dois: sem ela, quem já instalou recusa a atualização.
 const EMISSOR_DO_APP: &str = "Certum";
+/// O nome do produto gravado no executável e no instalador: o de `build.rs` e o de `instalador.iss`.
+const PRODUTO_DO_APP: &str = "awikabot";
 
-/// A opção de linha de comando que confere um arquivo pela regra do app: `--conferir-pacote <arquivo>`.
+/// A opção de linha de comando que confere um arquivo pela regra do app:
+/// `--conferir-pacote <arquivo> <versão>`.
 pub const OPCAO_DE_CONFERIR: &str = "--conferir-pacote";
 
 /// O que a assinatura de um pacote precisa ter para ele ser aceito.
@@ -28,13 +38,29 @@ pub struct Politica {
     pub emissor_contem: String,
     /// Perguntar à autoridade se algum certificado da cadeia foi revogado. Pede rede.
     pub conferir_revogacao: bool,
+    /// O nome do produto que o pacote traz gravado, igual, letra por letra.
+    pub produto: String,
 }
 
 impl Politica {
     /// A regra do app de verdade.
     pub fn do_app() -> Self {
-        Self { publicador: PUBLICADOR_DO_APP.to_owned(), emissor_contem: EMISSOR_DO_APP.to_owned(), conferir_revogacao: true }
+        Self {
+            publicador: PUBLICADOR_DO_APP.to_owned(),
+            emissor_contem: EMISSOR_DO_APP.to_owned(),
+            conferir_revogacao: true,
+            produto: PRODUTO_DO_APP.to_owned(),
+        }
     }
+}
+
+/// O que um pacote diz de si mesmo: o nome do produto e a versão gravados nos recursos do arquivo.
+/// A assinatura cobre esses recursos, então eles só valem depois de ela ser conferida.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Identidade {
+    pub produto: String,
+    /// As quatro partes da versão do produto. Nos pacotes do app a quarta é sempre zero.
+    pub versao: [u16; 4],
 }
 
 // Cada sistema só produz parte destes motivos: os três que vêm da conferência do Windows não
@@ -52,6 +78,12 @@ pub enum Recusa {
     /// Não foi possível ler quem assinou.
     #[cfg_attr(not(windows), allow(dead_code))]
     SemAssinante,
+    /// A assinatura é de quem devia, mas o arquivo não é o pacote da versão oferecida: é outro
+    /// produto do mesmo publicador, ou outra versão do app.
+    OutroPacote { produto: String, versao: String },
+    /// Não foi possível ler o nome do produto e a versão gravados no pacote.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    SemIdentidade,
     /// Este sistema não tem pacote de atualização para conferir.
     #[cfg_attr(windows, allow(dead_code))]
     NaoSuportado,
@@ -66,6 +98,10 @@ impl std::fmt::Display for Recusa {
                 write!(saida, "o pacote foi assinado por outro publicador ({publicador}, certificado emitido por {emissor})")
             }
             Self::SemAssinante => write!(saida, "não foi possível ler quem assinou o pacote"),
+            Self::OutroPacote { produto, versao } => {
+                write!(saida, "o arquivo assinado não é o pacote da versão esperada (ele se apresenta como {produto} {versao})")
+            }
+            Self::SemIdentidade => write!(saida, "não foi possível ler o nome do produto e a versão gravados no pacote"),
             Self::NaoSuportado => write!(saida, "este sistema não tem pacote de atualização para conferir"),
         }
     }
@@ -80,10 +116,27 @@ fn aceitar(politica: &Politica, publicador: &str, emissor: &str) -> Result<(), R
     }
 }
 
-/// Confere a assinatura de um arquivo contra a regra. Só `Ok` autoriza instalar.
-pub fn conferir(arquivo: &Path, politica: &Politica) -> Result<(), Recusa> {
+/// Decide se o arquivo é o pacote da versão esperada, e não outro programa ou outra versão que o
+/// mesmo publicador assinou.
+fn aceitar_identidade(politica: &Politica, esperada: Versao, lida: &Identidade) -> Result<(), Recusa> {
+    // A quarta parte não existe na versão do app; os pacotes dele saem com zero nela.
+    let [maior, menor, correcao, _] = lida.versao.map(u64::from);
+    // O Inno Setup completa o nome do produto com espaços.
+    let produto = lida.produto.trim();
+    if produto == politica.produto && (Versao { maior, menor, correcao }) == esperada {
+        Ok(())
+    } else {
+        Err(Recusa::OutroPacote { produto: produto.to_owned(), versao: format!("{maior}.{menor}.{correcao}") })
+    }
+}
+
+/// Confere um arquivo contra a regra: a assinatura, e que ele é o pacote da versão `versao`.
+/// Só `Ok` autoriza instalar.
+pub fn conferir(arquivo: &Path, politica: &Politica, versao: Versao) -> Result<(), Recusa> {
     let (publicador, emissor) = assinante(arquivo, politica.conferir_revogacao)?;
-    aceitar(politica, &publicador, &emissor)
+    aceitar(politica, &publicador, &emissor)?;
+    // Só depois de a assinatura valer: é ela que garante que o nome e a versão não foram trocados.
+    aceitar_identidade(politica, versao, &identidade(arquivo)?)
 }
 
 /// Quem assinou o arquivo e quem emitiu o certificado, se o Windows aceita a assinatura.
@@ -179,6 +232,88 @@ pub fn assinante(_arquivo: &Path, _conferir_revogacao: bool) -> Result<(String, 
     Err(Recusa::NaoSuportado)
 }
 
+/// O nome do produto e a versão que o arquivo traz nos recursos de versão.
+#[cfg(windows)]
+pub fn identidade(arquivo: &Path) -> Result<Identidade, Recusa> {
+    use std::ffi::c_void;
+    use std::os::windows::ffi::OsStrExt;
+
+    use windows_sys::Win32::Storage::FileSystem::{GetFileVersionInfoSizeW, GetFileVersionInfoW, VS_FIXEDFILEINFO, VerQueryValueW};
+
+    /// A marca que o Windows grava no começo dos números de versão.
+    const MARCA_DA_VERSAO: u32 = 0xFEEF_04BD;
+
+    /// Acha um valor dentro do bloco de versão: onde ele começa e o tamanho que a API informa (em
+    /// bytes para os números e para a lista de idiomas, em unidades UTF-16 para os textos).
+    ///
+    /// # Safety
+    /// `bloco` tem de ser um bloco de versão preenchido por `GetFileVersionInfoW`.
+    unsafe fn consultar(bloco: &[u32], chave: &str) -> Option<(*const u8, usize)> {
+        let chave: Vec<u16> = chave.encode_utf16().chain(std::iter::once(0)).collect();
+        let mut valor: *mut c_void = std::ptr::null_mut();
+        let mut tamanho = 0u32;
+        // SAFETY: quem chama garante o bloco; a chave termina em zero e vive até o fim da chamada;
+        // os dois destinos são variáveis nossas.
+        let achou = unsafe { VerQueryValueW(bloco.as_ptr().cast(), chave.as_ptr(), &mut valor, &mut tamanho) };
+        (achou != 0 && !valor.is_null() && tamanho > 0).then_some((valor.cast::<u8>().cast_const(), tamanho as usize))
+    }
+
+    /// Lê uma unidade de 16 bits de dentro do bloco, sem presumir alinhamento.
+    ///
+    /// # Safety
+    /// `inicio` mais `indice` unidades tem de cair dentro de um valor devolvido por `consultar`.
+    unsafe fn unidade(inicio: *const u8, indice: usize) -> u16 {
+        // SAFETY: quem chama garante que a posição está dentro do valor.
+        unsafe { inicio.cast::<u16>().add(indice).read_unaligned() }
+    }
+
+    let caminho: Vec<u16> = arquivo.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let mut sem_uso = 0u32;
+    // SAFETY: `caminho` termina em zero e vive até o fim da função; o segundo argumento é uma variável nossa.
+    let tamanho = unsafe { GetFileVersionInfoSizeW(caminho.as_ptr(), &mut sem_uso) };
+    if tamanho == 0 {
+        return Err(Recusa::SemIdentidade);
+    }
+    // Em palavras de 32 bits, que é o alinhamento dos recursos de versão.
+    let mut bloco = vec![0u32; (tamanho as usize).div_ceil(4)];
+    // SAFETY: o destino tem pelo menos `tamanho` bytes, que é o que a chamada anterior pediu.
+    if unsafe { GetFileVersionInfoW(caminho.as_ptr(), 0, tamanho, bloco.as_mut_ptr().cast()) } == 0 {
+        return Err(Recusa::SemIdentidade);
+    }
+
+    // SAFETY: `bloco` acabou de ser preenchido por `GetFileVersionInfoW`. Cada valor é lido dentro
+    // do tamanho que a API devolveu para ele, e copiado para dados nossos antes de o bloco sair de cena.
+    unsafe {
+        let (numeros, bytes) = consultar(&bloco, "\\").ok_or(Recusa::SemIdentidade)?;
+        if bytes < size_of::<VS_FIXEDFILEINFO>() {
+            return Err(Recusa::SemIdentidade);
+        }
+        let numeros = numeros.cast::<VS_FIXEDFILEINFO>().read_unaligned();
+        if numeros.dwSignature != MARCA_DA_VERSAO {
+            return Err(Recusa::SemIdentidade);
+        }
+        let (alta, baixa) = (numeros.dwProductVersionMS, numeros.dwProductVersionLS);
+        let versao = [(alta >> 16) as u16, alta as u16, (baixa >> 16) as u16, baixa as u16];
+
+        // Os textos ficam separados por idioma: vale o primeiro idioma que tiver o nome do produto.
+        let (idiomas, bytes) = consultar(&bloco, "\\VarFileInfo\\Translation").ok_or(Recusa::SemIdentidade)?;
+        let produto = (0..bytes / 4)
+            .find_map(|qual| {
+                let (idioma, pagina) = (unidade(idiomas, qual * 2), unidade(idiomas, qual * 2 + 1));
+                let (texto, unidades) = consultar(&bloco, &format!("\\StringFileInfo\\{idioma:04x}{pagina:04x}\\ProductName"))?;
+                let lido: Vec<u16> = (0..unidades).map(|indice| unidade(texto, indice)).collect();
+                Some(String::from_utf16_lossy(&lido).trim_end_matches('\0').to_owned())
+            })
+            .ok_or(Recusa::SemIdentidade)?;
+        Ok(Identidade { produto, versao })
+    }
+}
+
+#[cfg(not(windows))]
+pub fn identidade(_arquivo: &Path) -> Result<Identidade, Recusa> {
+    Err(Recusa::NaoSuportado)
+}
+
 /// Um executável pequeno com assinatura embutida que existe em qualquer Windows de desenvolvimento
 /// e na CI: o `signtool` do Windows SDK, assinado pela Microsoft. Serve de pacote nos testes.
 #[cfg(all(test, windows))]
@@ -195,12 +330,35 @@ pub fn arquivo_assinado_de_teste() -> std::path::PathBuf {
     versoes.pop().expect("o signtool do Windows SDK")
 }
 
+/// O arquivo assinado de teste, a regra que o aceita e a versão que ele traz gravada: o que um
+/// teste precisa para fazer dele o pacote de uma versão.
+#[cfg(all(test, windows))]
+pub fn pacote_de_teste() -> (std::path::PathBuf, Politica, Versao) {
+    let arquivo = arquivo_assinado_de_teste();
+    let lida = identidade(&arquivo).expect("o signtool traz nome e versão gravados");
+    let [maior, menor, correcao, _] = lida.versao.map(u64::from);
+    let politica = Politica {
+        publicador: "Microsoft Corporation".into(),
+        emissor_contem: "Microsoft".into(),
+        conferir_revogacao: false,
+        produto: lida.produto.trim().to_owned(),
+    };
+    (arquivo, politica, Versao { maior, menor, correcao })
+}
+
 #[cfg(test)]
 mod testes {
     use super::*;
 
+    const V: Versao = Versao { maior: 0, menor: 2, correcao: 0 };
+
     fn regra(publicador: &str, emissor: &str) -> Politica {
-        Politica { publicador: publicador.into(), emissor_contem: emissor.into(), conferir_revogacao: false }
+        Politica {
+            publicador: publicador.into(),
+            emissor_contem: emissor.into(),
+            conferir_revogacao: false,
+            produto: "Produto de Teste".into(),
+        }
     }
 
     #[test]
@@ -220,17 +378,57 @@ mod testes {
     }
 
     #[test]
-    fn a_regra_do_app_confere_a_revogacao() {
+    fn so_o_pacote_do_produto_e_da_versao_esperados_passa() {
+        let do_app = regra("Fulana de Tal", "Autoridade Certa");
+        let pacote = |produto: &str, versao: [u16; 4]| Identidade { produto: produto.into(), versao };
+        assert_eq!(aceitar_identidade(&do_app, V, &pacote("Produto de Teste", [0, 2, 0, 0])), Ok(()));
+        // O Inno Setup grava o nome completado com espaços; a quarta parte da versão não conta.
+        assert_eq!(aceitar_identidade(&do_app, V, &pacote("Produto de Teste          ", [0, 2, 0, 0])), Ok(()));
+        assert_eq!(aceitar_identidade(&do_app, V, &pacote("Produto de Teste", [0, 2, 0, 7])), Ok(()));
+        for (produto, versao) in [
+            // Um instalador antigo do mesmo produto, oferecido como se fosse a versão nova.
+            ("Produto de Teste", [0, 1, 0, 0]),
+            ("Produto de Teste", [0, 1, 9, 0]),
+            // Uma versão que não é a oferecida, mesmo sendo maior.
+            ("Produto de Teste", [0, 2, 1, 0]),
+            ("Produto de Teste", [1, 2, 0, 0]),
+            // Outro programa do mesmo publicador, com o mesmo número de versão.
+            ("Outro Produto", [0, 2, 0, 0]),
+            ("produto de teste", [0, 2, 0, 0]),
+            ("Produto de Teste 2", [0, 2, 0, 0]),
+            ("", [0, 2, 0, 0]),
+        ] {
+            let recusa = aceitar_identidade(&do_app, V, &pacote(produto, versao));
+            assert!(matches!(recusa, Err(Recusa::OutroPacote { .. })), "{produto:?} {versao:?}: {recusa:?}");
+        }
+        // Uma parte da versão esperada que nem cabe no que o arquivo consegue gravar.
+        let grande = Versao { maior: 0, menor: 70_000, correcao: 0 };
+        assert!(aceitar_identidade(&do_app, grande, &pacote("Produto de Teste", [0, 4464, 0, 0])).is_err());
+    }
+
+    #[test]
+    fn a_recusa_por_outro_pacote_diz_o_que_o_arquivo_e() {
+        let do_app = regra("Fulana de Tal", "Autoridade Certa");
+        let antigo = Identidade { produto: "Produto de Teste   ".into(), versao: [0, 1, 0, 0] };
+        let recusa = aceitar_identidade(&do_app, V, &antigo).expect_err("outra versão");
+        assert_eq!(recusa, Recusa::OutroPacote { produto: "Produto de Teste".into(), versao: "0.1.0".into() });
+        assert!(recusa.to_string().contains("Produto de Teste 0.1.0"), "{recusa}");
+    }
+
+    #[test]
+    fn a_regra_do_app_confere_a_revogacao_e_o_produto() {
         let do_app = Politica::do_app();
         assert!(do_app.conferir_revogacao);
         assert!(!do_app.publicador.is_empty() && !do_app.emissor_contem.is_empty());
+        assert_eq!(do_app.produto, "awikabot");
     }
 
     #[cfg(not(windows))]
     #[test]
     fn fora_do_windows_tudo_e_recusado() {
         let este = std::env::current_exe().expect("o executável do teste");
-        assert_eq!(conferir(&este, &Politica::do_app()), Err(Recusa::NaoSuportado));
+        assert_eq!(conferir(&este, &Politica::do_app(), V), Err(Recusa::NaoSuportado));
+        assert_eq!(identidade(&este), Err(Recusa::NaoSuportado));
     }
 
     #[cfg(windows)]
@@ -247,31 +445,66 @@ mod testes {
 
         #[test]
         fn le_quem_assinou_um_arquivo_assinado_e_aceita_com_a_regra_certa() {
-            let assinado = arquivo_assinado_de_teste();
+            let (assinado, da_microsoft, versao) = pacote_de_teste();
             let (publicador, emissor) = assinante(&assinado, false).expect("assinatura válida");
             assert_eq!(publicador, "Microsoft Corporation");
             assert!(emissor.contains("Microsoft"), "{emissor}");
-            assert_eq!(conferir(&assinado, &regra("Microsoft Corporation", "Microsoft")), Ok(()));
+            assert_eq!(conferir(&assinado, &da_microsoft, versao), Ok(()));
+        }
+
+        #[test]
+        fn le_o_nome_do_produto_e_a_versao_gravados_no_arquivo() {
+            // O que se sabe do signtool sem perguntar a ele: é do Windows, na linha 10.
+            let lida = identidade(&arquivo_assinado_de_teste()).expect("nome e versão");
+            assert!(lida.produto.contains("Windows"), "{lida:?}");
+            assert_eq!(lida.versao[0], 10, "{lida:?}");
+            assert!(lida.versao[2] > 0, "{lida:?}");
+
+            let texto = copia("sem-versao", b"isto nem e um programa");
+            let sem_versao = identidade(&texto);
+            let _ = std::fs::remove_file(&texto);
+            assert_eq!(sem_versao, Err(Recusa::SemIdentidade));
+            let ausente = std::env::temp_dir().join("awikabot-teste-confianca-nao-existe.exe");
+            assert_eq!(identidade(&ausente), Err(Recusa::SemIdentidade));
         }
 
         #[test]
         fn assinatura_valida_de_outro_publicador_e_recusada() {
-            let assinado = arquivo_assinado_de_teste();
+            let (assinado, da_microsoft, versao) = pacote_de_teste();
             // A regra do app de verdade: um arquivo da Microsoft, por mais válido que seja, não é um pacote do app.
-            let recusa = conferir(&assinado, &Politica { conferir_revogacao: false, ..Politica::do_app() });
+            let recusa = conferir(&assinado, &Politica { conferir_revogacao: false, ..Politica::do_app() }, versao);
             assert!(matches!(recusa, Err(Recusa::OutroPublicador { .. })), "{recusa:?}");
-            let recusa = conferir(&assinado, &regra("Microsoft Corporation", "Outra Autoridade"));
+            let recusa = conferir(&assinado, &Politica { emissor_contem: "Outra Autoridade".into(), ..da_microsoft }, versao);
             assert!(matches!(recusa, Err(Recusa::OutroPublicador { .. })), "{recusa:?}");
         }
 
         #[test]
+        fn arquivo_do_publicador_certo_que_nao_e_o_pacote_da_versao_esperada_e_recusado() {
+            let (assinado, da_microsoft, versao) = pacote_de_teste();
+            // A assinatura vale e é de quem a regra espera. O arquivo é que é outro: outra versão...
+            for outra in [
+                Versao { correcao: versao.correcao + 1, ..versao },
+                Versao { correcao: versao.correcao - 1, ..versao },
+                Versao { maior: versao.maior + 1, ..versao },
+                V,
+            ] {
+                let recusa = conferir(&assinado, &da_microsoft, outra);
+                assert!(matches!(recusa, Err(Recusa::OutroPacote { .. })), "{outra}: {recusa:?}");
+            }
+            // ... ou outro produto do mesmo publicador, com o número de versão certo.
+            let recusa = conferir(&assinado, &Politica { produto: "awikabot".into(), ..da_microsoft }, versao);
+            assert!(matches!(recusa, Err(Recusa::OutroPacote { .. })), "{recusa:?}");
+        }
+
+        #[test]
         fn arquivo_alterado_depois_de_assinado_e_recusado() {
-            let mut bytes = std::fs::read(arquivo_assinado_de_teste()).expect("ler");
+            let (assinado, da_microsoft, versao) = pacote_de_teste();
+            let mut bytes = std::fs::read(assinado).expect("ler");
             // Um byte trocado no meio do programa: a assinatura continua lá, mas não é mais deste conteúdo.
             let meio = bytes.len() / 2;
             bytes[meio] ^= 0xFF;
             let alterado = copia("alterado", &bytes);
-            let recusa = conferir(&alterado, &regra("Microsoft Corporation", "Microsoft"));
+            let recusa = conferir(&alterado, &da_microsoft, versao);
             let _ = std::fs::remove_file(&alterado);
             assert!(matches!(recusa, Err(Recusa::AssinaturaInvalida(_))), "{recusa:?}");
         }
@@ -279,9 +512,9 @@ mod testes {
         #[test]
         fn arquivo_sem_assinatura_e_recusado() {
             let este = std::env::current_exe().expect("o executável do teste");
-            assert_eq!(conferir(&este, &regra("Microsoft Corporation", "Microsoft")), Err(Recusa::SemAssinatura));
+            assert_eq!(conferir(&este, &regra("Microsoft Corporation", "Microsoft"), V), Err(Recusa::SemAssinatura));
             let texto = copia("texto", b"isto nem e um programa");
-            let recusa = conferir(&texto, &regra("Microsoft Corporation", "Microsoft"));
+            let recusa = conferir(&texto, &regra("Microsoft Corporation", "Microsoft"), V);
             let _ = std::fs::remove_file(&texto);
             assert!(matches!(recusa, Err(Recusa::SemAssinatura | Recusa::AssinaturaInvalida(_))), "{recusa:?}");
         }
@@ -289,7 +522,7 @@ mod testes {
         #[test]
         fn arquivo_que_nao_existe_e_recusado() {
             let ausente = std::env::temp_dir().join("awikabot-teste-confianca-nao-existe.exe");
-            assert!(conferir(&ausente, &regra("Microsoft Corporation", "Microsoft")).is_err());
+            assert!(conferir(&ausente, &regra("Microsoft Corporation", "Microsoft"), V).is_err());
         }
     }
 }

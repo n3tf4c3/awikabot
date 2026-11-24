@@ -12,7 +12,7 @@ As etapas 3, 4 e 5 gravam cada uma um arquivo na pasta de evidências do commit,
 
 - A versão está em `[workspace.package]`, em `apps/desktop/Cargo.toml`. Subir a versão é um commit na `main`, por PR, antes de tudo. O atualizador só oferece versão maior que a instalada.
 - A pasta não tem mudança sem commit e está na `main` atualizada.
-- O Inno Setup 6, o Node e o `signtool` do Windows SDK estão instalados, e o Windows Sandbox está habilitado.
+- O Inno Setup, na versão fixada em `apps/desktop/distribuicao/windows/comum.ps1` (`$script:VersaoDoInnoSetup`), o Node e o `signtool` do Windows SDK estão instalados, e o Windows Sandbox está habilitado. Com outra versão do Inno Setup, o `empacotar.ps1` monta o instalador e para antes de assiná-lo.
 
 ## 1. Conferências do candidato
 
@@ -46,7 +46,7 @@ Se a sessão do certificado cair no meio, a assinatura falha com "certificado n�
 powershell -ExecutionPolicy Bypass -File apps/desktop/distribuicao/windows/conferir-artefatos.ps1
 ```
 
-Só passa um pacote publicável: de um commit sem mudança pendente, assinado, com carimbo de tempo, com hashes e versões batendo entre si, e aceito pelo próprio app com a regra do atualizador (`awikabot.exe --conferir-pacote`). Lista todos os problemas que achar. Aprovado, grava `artefatos.json`, com o SHA-256 dos três arquivos que vão para o release.
+Só passa um pacote publicável: de um commit sem mudança pendente, assinado, com carimbo de tempo, com hashes e versões batendo entre si, montado com o Inno Setup da versão fixada em `comum.ps1`, e aceito pelo próprio app com a regra do atualizador (`awikabot.exe --conferir-pacote <arquivo> <versão>`), que confere a assinatura e que o arquivo é o pacote daquela versão. Lista todos os problemas que achar. Aprovado, grava `artefatos.json`, com o SHA-256 dos três arquivos que vão para o release.
 
 Esta etapa é a que garante que quem já instalou vai aceitar a versão nova. Trocar de certificado, de titular ou de autoridade faz o app instalado recusar o pacote: antes disso, publicar uma versão que aceite os dois.
 

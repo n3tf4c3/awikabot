@@ -23,6 +23,11 @@
   #error Informe a pasta de saida: /DSaida=...
 #endif
 
+; A versao do Inno Setup que montou este instalador vai para um arquivo ao lado dele. Os arquivos
+; do compilador nao trazem a propria versao; quem a sabe e o pre-processador. O empacotar.ps1 le
+; o arquivo, grava a versao no build-info.json e o apaga.
+#expr SaveStringToFile(AddBackslash(Saida) + "inno-setup.txt", DecodeVer(Ver), 0, 0)
+
 ; A identidade do app para o Windows, a mesma de IDENTIDADE em crates/app/src/janela.rs.
 #define Identidade "awikabot.desktop"
 

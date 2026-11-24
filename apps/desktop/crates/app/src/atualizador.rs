@@ -3,8 +3,8 @@
 //!
 //! Cada passo só acontece a pedido: consultar não baixa, baixar não instala. A consulta é no
 //! máximo uma por dia e pode ser desligada. O pacote só fica "pronto" depois de conferidos o
-//! tamanho, o hash (`awikabot_cliente::atualizacao`) e a assinatura (`confianca`), e a assinatura
-//! é conferida de novo na hora de instalar.
+//! tamanho, o hash (`awikabot_cliente::atualizacao`), a assinatura e que ele é o pacote da versão
+//! oferecida (`confianca`), e essa última conferência é refeita na hora de instalar.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -22,7 +22,7 @@ use crate::tema;
 /// Como o instalador é chamado: em silêncio, só com a barra de progresso, fechando o app aberto
 /// e reabrindo-o no fim.
 const OPCOES_DO_INSTALADOR: [&str; 5] = ["/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS", "/REABRIR=1"];
-const AVISO_DE_ASSINATURA: &str = "O pacote baixado não tem a assinatura esperada e foi apagado.";
+const AVISO_DE_ASSINATURA: &str = "O pacote baixado não é o que o app esperava (assinatura, produto ou versão) e foi apagado.";
 
 type Instalador = Arc<dyn Fn(&Path) -> std::io::Result<()> + Send + Sync>;
 
@@ -106,12 +106,12 @@ pub struct PainelDeAtualizacao {
     estado: Estado,
 }
 
-/// Baixa o pacote e confere de quem ele é. O que não passa na assinatura não fica no disco.
+/// Baixa o pacote e confere de quem ele é e que é o da versão oferecida. O que não passa não fica no disco.
 fn baixar_e_conferir(configuracao: &Configuracao, oferta: &Oferta, cancelar: &AtomicBool) -> Result<PathBuf, ErroNoDownload> {
     let arquivo = Atualizador::new(configuracao.origem.clone(), &configuracao.plataforma)
         .baixar(oferta, &configuracao.pacotes(), cancelar, &mut |_| {})
         .map_err(ErroNoDownload::Download)?;
-    if confianca::conferir(&arquivo, &configuracao.politica).is_err() {
+    if confianca::conferir(&arquivo, &configuracao.politica, oferta.versao).is_err() {
         let _ = std::fs::remove_file(&arquivo);
         return Err(ErroNoDownload::Assinatura);
     }
@@ -222,6 +222,7 @@ impl PainelDeAtualizacao {
     fn instalar(&mut self, cx: &mut Context<Self>) {
         let Estado::Pronta { oferta, arquivo } = &self.estado else { return };
         let (oferta, arquivo) = (oferta.clone(), arquivo.clone());
+        let versao = oferta.versao;
         self.estado = Estado::Instalando { oferta: oferta.clone() };
         cx.notify();
         let configuracao = self.configuracao.clone();
@@ -229,8 +230,8 @@ impl PainelDeAtualizacao {
             let chamado = cx
                 .background_executor()
                 .spawn(async move {
-                    // O arquivo ficou no disco desde o download: a assinatura é conferida de novo antes de ele rodar.
-                    if confianca::conferir(&arquivo, &configuracao.politica).is_err() {
+                    // O arquivo ficou no disco desde o download: tudo é conferido de novo antes de ele rodar.
+                    if confianca::conferir(&arquivo, &configuracao.politica, versao).is_err() {
                         let _ = std::fs::remove_file(&arquivo);
                         return Err(SharedString::from(AVISO_DE_ASSINATURA));
                     }
@@ -330,7 +331,6 @@ mod testes {
     use super::*;
 
     const PLATAFORMA: &str = "windows-x64";
-    const MANIFESTO: &str = "/dono/repositorio/releases/download/desktop-v0.2.0/awikabot-desktop-windows-x64.json";
     const PACOTE: &str = "/dono/repositorio/releases/download/desktop-v0.2.0/awikabot-0.2.0-windows-x64.exe";
 
     fn caminho(pedido: &PedidoRecebido) -> String {
@@ -339,17 +339,24 @@ mod testes {
 
     /// Publica a versão 0.2.0 com o pacote dado.
     fn publicar(pacote: RespostaFalsa, conteudo: &[u8]) -> ServidorFalso {
+        publicar_a_versao("0.2.0", pacote, conteudo)
+    }
+
+    /// Publica uma versão com o pacote dado: o release, o manifesto e o arquivo, com os nomes que o app procura.
+    fn publicar_a_versao(versao: &str, pacote: RespostaFalsa, conteudo: &[u8]) -> ServidorFalso {
         let hash: String = Sha256::digest(conteudo).iter().map(|byte| format!("{byte:02x}")).collect();
         let manifesto = format!(
-            r#"{{"versao":"0.2.0","plataforma":"{PLATAFORMA}","arquivo":"awikabot-0.2.0-{PLATAFORMA}.exe","tamanho":{},"sha256":"{hash}"}}"#,
+            r#"{{"versao":"{versao}","plataforma":"{PLATAFORMA}","arquivo":"awikabot-{versao}-{PLATAFORMA}.exe","tamanho":{},"sha256":"{hash}"}}"#,
             conteudo.len()
         );
-        ServidorFalso::subir(move |_, pedido| match caminho(pedido).as_str() {
-            "/repos/dono/repositorio/releases?per_page=30" => {
-                RespostaFalsa::json(200, r#"[{"tag_name":"desktop-v0.2.0","assets":[{"name":"awikabot-desktop-windows-x64.json"}]}]"#)
-            }
-            MANIFESTO => RespostaFalsa::json(200, &manifesto),
-            PACOTE => pacote.clone(),
+        let lista = format!(r#"[{{"tag_name":"desktop-v{versao}","assets":[{{"name":"awikabot-desktop-windows-x64.json"}}]}}]"#);
+        let do_release = format!("/dono/repositorio/releases/download/desktop-v{versao}");
+        let (do_manifesto, do_pacote) =
+            (format!("{do_release}/awikabot-desktop-{PLATAFORMA}.json"), format!("{do_release}/awikabot-{versao}-{PLATAFORMA}.exe"));
+        ServidorFalso::subir(move |_, pedido| match caminho(pedido) {
+            pedido if pedido == "/repos/dono/repositorio/releases?per_page=30" => RespostaFalsa::json(200, &lista),
+            pedido if pedido == do_manifesto => RespostaFalsa::json(200, &manifesto),
+            pedido if pedido == do_pacote => pacote.clone(),
             _ => RespostaFalsa::html(404),
         })
     }
@@ -403,7 +410,12 @@ mod testes {
     }
 
     fn de_ninguem() -> Politica {
-        Politica { publicador: "Publicador de Teste".into(), emissor_contem: "Autoridade de Teste".into(), conferir_revogacao: false }
+        Politica {
+            publicador: "Publicador de Teste".into(),
+            emissor_contem: "Autoridade de Teste".into(),
+            conferir_revogacao: false,
+            produto: "Produto de Teste".into(),
+        }
     }
 
     fn abrir(configuracao: Configuracao, cx: &mut TestAppContext) -> (Entity<PainelDeAtualizacao>, VisualTestContext) {
@@ -585,47 +597,79 @@ mod testes {
         assert!(chamadas.lock().expect("trava").is_empty());
     }
 
+    /// O pacote assinado dos testes, publicado como a versão que ele mesmo traz gravada: um
+    /// executável pequeno com assinatura de verdade, e a regra que espera quem o assinou.
+    #[cfg(windows)]
+    fn publicar_o_pacote_assinado() -> (ServidorFalso, Vec<u8>, Politica, String) {
+        let (arquivo, da_microsoft, versao) = confianca::pacote_de_teste();
+        let conteudo = std::fs::read(arquivo).expect("ler o arquivo assinado");
+        let servidor = publicar_a_versao(&versao.to_string(), RespostaFalsa::bytes(200, &conteudo), &conteudo);
+        (servidor, conteudo, da_microsoft, format!("awikabot-{versao}-windows-x64.exe"))
+    }
+
     #[cfg(windows)]
     #[gpui::test]
     fn pacote_assinado_por_quem_a_regra_espera_fica_pronto_e_instalar_chama_o_instalador(cx: &mut TestAppContext) {
-        // Faz o papel do pacote um executável pequeno com assinatura de verdade, e a regra do teste espera quem o assinou.
-        let conteudo = std::fs::read(confianca::arquivo_assinado_de_teste()).expect("ler o arquivo assinado");
-        let servidor = publicar(RespostaFalsa::bytes(200, &conteudo), &conteudo);
+        let (servidor, conteudo, da_microsoft, nome) = publicar_o_pacote_assinado();
         let pasta = Pasta::nova();
-        let da_microsoft =
-            Politica { publicador: "Microsoft Corporation".into(), emissor_contem: "Microsoft".into(), conferir_revogacao: false };
         let (configuracao, chamadas) = configurar(&servidor, &pasta, da_microsoft);
         let (painel, mut cx) = abrir(configuracao, cx);
-        esperar(&mut cx, &painel, "aviso da versão 0.2.0", disponivel);
+        esperar(&mut cx, &painel, "aviso da versão nova", |painel| matches!(painel.estado, Estado::Disponivel(_)));
 
         clicar(&mut cx, "baixar-atualizacao");
         esperar(&mut cx, &painel, "pacote pronto", |painel| matches!(painel.estado, Estado::Pronta { .. }));
-        assert_eq!(pasta.pacotes(), vec!["awikabot-0.2.0-windows-x64.exe"]);
+        assert_eq!(pasta.pacotes(), vec![nome.clone()]);
         assert!(chamadas.lock().expect("trava").is_empty(), "baixar não instala");
 
         clicar(&mut cx, "instalar-atualizacao");
         esperar(&mut cx, &painel, "o instalador é chamado", |_| !chamadas.lock().expect("trava").is_empty());
         let chamado = chamadas.lock().expect("trava").clone();
-        assert_eq!(chamado, vec![pasta.0.join("atualizacoes").join("awikabot-0.2.0-windows-x64.exe")]);
+        assert_eq!(chamado, vec![pasta.0.join("atualizacoes").join(&nome)]);
         assert_eq!(std::fs::read(&chamado[0]).expect("ler"), conteudo, "o que roda é o que foi conferido");
     }
 
     #[cfg(windows)]
     #[gpui::test]
-    fn pacote_alterado_no_disco_depois_de_conferido_nao_e_instalado(cx: &mut TestAppContext) {
-        let conteudo = std::fs::read(confianca::arquivo_assinado_de_teste()).expect("ler o arquivo assinado");
+    fn pacote_assinado_pelo_publicador_certo_mas_de_outra_versao_e_apagado_e_nao_ha_como_instalar(cx: &mut TestAppContext) {
+        // Quem tomou a conta de onde as versões saem publica, como 0.2.0, um arquivo que o
+        // publicador assinou de verdade, só que de outra versão: um instalador antigo, por exemplo.
+        // O manifesto é coerente, o tamanho e o hash batem, e a assinatura vale.
+        let (arquivo, da_microsoft, versao) = confianca::pacote_de_teste();
+        assert_ne!(versao.to_string(), "0.2.0");
+        let conteudo = std::fs::read(arquivo).expect("ler o arquivo assinado");
         let servidor = publicar(RespostaFalsa::bytes(200, &conteudo), &conteudo);
         let pasta = Pasta::nova();
-        let da_microsoft =
-            Politica { publicador: "Microsoft Corporation".into(), emissor_contem: "Microsoft".into(), conferir_revogacao: false };
         let (configuracao, chamadas) = configurar(&servidor, &pasta, da_microsoft);
         let (painel, mut cx) = abrir(configuracao, cx);
         esperar(&mut cx, &painel, "aviso da versão 0.2.0", disponivel);
+
+        clicar(&mut cx, "baixar-atualizacao");
+        esperar(&mut cx, &painel, "o download termina", |painel| !matches!(painel.estado, Estado::Baixando { .. }));
+        painel.read_with(&cx, |painel, _| {
+            assert!(
+                matches!(&painel.estado, Estado::Falhou { motivo, .. } if motivo.as_ref() == AVISO_DE_ASSINATURA),
+                "{:?}",
+                painel.estado
+            );
+        });
+        assert_eq!(pasta.pacotes(), Vec::<String>::new(), "o pacote recusado não fica no disco");
+        assert!(!na_tela(&mut cx, "instalar-atualizacao"));
+        assert!(chamadas.lock().expect("trava").is_empty(), "o instalador não foi chamado");
+    }
+
+    #[cfg(windows)]
+    #[gpui::test]
+    fn pacote_alterado_no_disco_depois_de_conferido_nao_e_instalado(cx: &mut TestAppContext) {
+        let (servidor, conteudo, da_microsoft, nome) = publicar_o_pacote_assinado();
+        let pasta = Pasta::nova();
+        let (configuracao, chamadas) = configurar(&servidor, &pasta, da_microsoft);
+        let (painel, mut cx) = abrir(configuracao, cx);
+        esperar(&mut cx, &painel, "aviso da versão nova", |painel| matches!(painel.estado, Estado::Disponivel(_)));
         clicar(&mut cx, "baixar-atualizacao");
         esperar(&mut cx, &painel, "pacote pronto", |painel| matches!(painel.estado, Estado::Pronta { .. }));
 
         // Entre o download e o clique, outro programa troca o arquivo que está no disco.
-        let arquivo = pasta.0.join("atualizacoes").join("awikabot-0.2.0-windows-x64.exe");
+        let arquivo = pasta.0.join("atualizacoes").join(&nome);
         let mut alterado = conteudo.clone();
         let meio = alterado.len() / 2;
         alterado[meio] ^= 0xFF;
