@@ -7,9 +7,11 @@
 pub mod contrato;
 
 pub mod api;
+pub mod aprovacoes;
 pub mod conversa;
 pub mod endereco;
 pub mod fluxo;
+pub mod formulario_bot;
 pub(crate) mod opcional_nulo;
 #[cfg(feature = "teste-suporte")]
 pub mod servidor_de_teste;

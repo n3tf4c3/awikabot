@@ -249,7 +249,7 @@ Não coberto:
 
 ## Etapa 6: plano do app de desktop (2026-11-23)
 
-Pedido do titular: versão para Windows e Mac, em Rust, com o design do termIAX. Nada foi implementado.
+Pedido do titular: versão para Windows e Mac, em Rust, com o design do termIAX. Os passos 1 a 3 estão feitos; o resultado de cada um vem depois do plano.
 
 ### Premissas
 
@@ -333,6 +333,38 @@ Não coberto:
 - o cofre de verdade no macOS: o teste fica desligado lá, e ninguém conferiu num Mac;
 - silêncio do fluxo: uma conexão que morre em silêncio só é percebida no teto de um minuto, não em três sinais de vida como no celular;
 - pausar o fluxo com a janela minimizada, que o celular faz com o app em segundo plano.
+
+### Passo 3: resultado das telas (2026-11-24)
+
+O desktop passa a fazer o que o celular faz: cria e edita bot por formulário, mostra o pedido de aprovação num cartão, para uma resposta, e avisa pelo sistema quando um bot espera a pessoa e a janela não está na frente.
+
+- **Cartão de aprovação**: fica na conversa, logo depois da resposta em que o pedido surgiu, com o pedido inteiro, "Aprovar" e "Negar". Resolvido, vira uma linha. A lista de bots diz "aguardando aprovação". A regra é a do celular, portada para `aprovacoes.rs`: desfecho conhecido não volta a pendente, e lista possivelmente velha só acrescenta.
+- **Aviso do sistema**: pela GPUI, que já traz isso para Windows e macOS. Só sai com a janela fora da frente, diz qual bot espera e qual ferramenta, não leva o conteúdo do pedido nem botões, e o clique abre a conversa do pedido. É recolhido quando o pedido se resolve ou a pessoa volta ao app.
+- **Formulário de bot**: nome, modelo e instruções, no lugar da conversa. A validação segue a do celular e as duas são testadas contra uma tabela única de 133 casos, em `packages/core/casos/bot-entrada.json`. Editar manda só o que mudou.
+- **Parar**: enquanto o bot responde, "Enviar" dá lugar a "Parar".
+- **Campo de texto**: seleção com teclado e mouse, copiar, recortar, colar, desfazer e refazer, andar por palavra. O campo de mensagem e o de instruções têm várias linhas, quebram o texto na largura e rolam; o de uma linha rola para o cursor ficar à vista. O limite conta caracteres, como o esquema do contrato.
+- **Tema claro**: acompanha a aparência do sistema. Os valores são daqui, porque o termIAX não tem tema claro próprio.
+- **Teclado depois do clique**: clicar num botão deixava o teclado sem campo nenhum, e a pessoa tinha de clicar no campo para seguir digitando. Achado pelo primeiro teste que clicou num botão; corrigido.
+
+| Verificação | Resultado |
+|---|---|
+| Regras do cliente | Aprovações e formulário com os mesmos casos do celular. O levantamento achou que o esquema conta o tamanho em caracteres, não em unidades UTF-16, e que o aparo de espaços do JavaScript não é o do Rust; a tabela cobre os dois. |
+| Cliente contra o servidor de verdade | Edita bot, inclusive devolvendo o modelo ao padrão; para um turno; nega um pedido; decidir de novo dá `ja_resolvida`; a lista de pendentes acompanha. |
+| Janela sem tela, com teclado e cliques nos botões de verdade | Cria e edita bot pelo formulário; aprova e nega no cartão; mostra o pedido que já esperava, mesmo sem o fluxo de eventos; acompanha a decisão de outro aparelho; avisa quando outro aparelho resolveu antes; para a resposta. |
+| Aviso do sistema, pela plataforma de teste da GPUI | Nenhum com a janela na frente; um, sem o conteúdo, com a janela em segundo plano; o clique abre a conversa; é recolhido quando o pedido se resolve. |
+| Campo de texto | Teclas, área de transferência, mouse, quebra de linha, altura que cresce até o teto e rolagem, sem tela; a lógica do texto em teste de unidade. |
+| Testes | 90 do cliente, 4 de contrato, 12 do fluxo e 48 do app; 693 no app de celular, com a tabela do bot. Quatro rodadas seguidas do app, sem falha. |
+| Falsificação | No app, 17 quebras de propósito, uma por vez, todas acusadas; uma só foi acusada depois de um teste novo, o do pedido pendente sem fluxo de eventos. No cliente, 13, rodadas pelo subagente que portou as regras, num espelho descartável do crate, todas acusadas; três delas foram repetidas na árvore de verdade, com o mesmo resultado. |
+| App de verdade no Windows | Pareia, cria bot pelo formulário, aprova no cartão, escreve uma mensagem de seis linhas, para a resposta, recebe um aviso de verdade com a janela minimizada (lido na central de notificações: um aviso, sem o conteúdo, recolhido ao voltar), nega, reabre no tema claro e despareia. Na primeira rodada dois cliques do script erraram o alvo; corrigidas as coordenadas, a segunda passou inteira. |
+
+Não coberto:
+
+- macOS: nada do passo 3 foi compilado nem testado lá ainda; a CI roda no PR. O aviso do sistema só é entregue a app empacotado, que não existe;
+- o aviso do sistema com o app fechado: fechar a janela encerra o app, e não há ícone na bandeja;
+- o clique num aviso de verdade do Windows: só o clique simulado pela plataforma de teste;
+- o texto em composição de teclado de outro idioma e a tecla morta do ABNT2 no campo novo, fora de digitar acentos pelo script;
+- Home e End por linha da tela, cursor piscando e rolar ao arrastar o mouse para fora do campo;
+- pacote, assinatura e atualizador, que são o passo 4.
 
 ### Decisões que são do titular
 

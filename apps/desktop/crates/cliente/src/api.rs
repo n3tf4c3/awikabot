@@ -8,8 +8,8 @@ use ureq::tls::{RootCerts, TlsConfig};
 use ureq::{Agent, Body, http};
 
 use crate::contrato::{
-    Aprovacao, Bot, BotEntrada, DecisaoAprovacao, Erro, ListaAprovacoes, ListaBots, ListaMensagens, PedidoPareamento, PedidoTurno,
-    RespostaPareamento, RespostaTurno, Saude,
+    Aprovacao, Bot, BotEdicao, BotEntrada, DecisaoAprovacao, Erro, ListaAprovacoes, ListaBots, ListaMensagens, PedidoPareamento,
+    PedidoTurno, RespostaPareamento, RespostaTurno, Saude,
 };
 
 /// Código que o servidor manda quando recusa o token do aparelho.
@@ -171,6 +171,16 @@ impl Api {
         self.enviar(&credencial.servidor, Some(&credencial.token), "/v1/bots", entrada)
     }
 
+    /// `PATCH /v1/bots/:id`: só os campos presentes mudam. Modelo `Some(None)` vai como `null` e
+    /// quer dizer "voltar ao padrão do motor".
+    pub fn editar_bot(&self, credencial: &Credencial, bot_id: &str, edicao: &BotEdicao) -> Result<Bot, ErroApi> {
+        if !id_valido(bot_id) {
+            return Err(ErroApi::IdInvalido);
+        }
+        let url = format!("{}/v1/bots/{bot_id}", credencial.servidor);
+        ler(self.agente.patch(url).header("accept", "application/json").header("authorization", portador(credencial)).send_json(edicao))
+    }
+
     /// A página mais recente da conversa, em ordem crescente.
     pub fn listar_mensagens(&self, credencial: &Credencial, bot_id: &str) -> Result<ListaMensagens, ErroApi> {
         if !id_valido(bot_id) {
@@ -184,6 +194,16 @@ impl Api {
             return Err(ErroApi::IdInvalido);
         }
         self.enviar(&credencial.servidor, Some(&credencial.token), &format!("/v1/bots/{bot_id}/turnos"), pedido)
+    }
+
+    /// `POST /v1/bots/:id/turnos/atual/parar`: responde 204 sem corpo; sem turno ativo, 409
+    /// `sem_turno_ativo`. A resposta parada chega pelo fluxo, em `turno_terminado`.
+    pub fn parar_turno(&self, credencial: &Credencial, bot_id: &str) -> Result<(), ErroApi> {
+        if !id_valido(bot_id) {
+            return Err(ErroApi::IdInvalido);
+        }
+        let url = format!("{}/v1/bots/{bot_id}/turnos/atual/parar", credencial.servidor);
+        ler_sem_corpo(self.agente.post(url).header("accept", "application/json").header("authorization", portador(credencial)).send_empty())
     }
 
     /// Os pedidos de aprovação pendentes, de todos os bots, do mais antigo para o mais novo.

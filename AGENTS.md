@@ -1,6 +1,6 @@
 # awikabot
 
-Gerenciador de bots: um servidor mantém agentes de IA rodando e apps de iOS e Android servem para conversar com eles e aprovar ações. Um app de desktop para Windows e Mac está em prova. O plano, as premissas e o resultado de cada etapa estão em `PLANO.md`. Licença MIT.
+Gerenciador de bots: um servidor mantém agentes de IA rodando e apps de iOS e Android servem para conversar com eles e aprovar ações. Um app de desktop para Windows e Mac faz o mesmo, ainda sem instalador. O plano, as premissas e o resultado de cada etapa estão em `PLANO.md`. Licença MIT.
 
 ## Estrutura
 
@@ -57,11 +57,14 @@ Todo workspace declara `lint`, `typecheck` e `test`: `pnpm -r` pula em silêncio
 
 - **Contrato no core**: toda mensagem entre servidor e app tem esquema em `packages/core`, usado dos dois lados. Limites, regex e enums nunca são redeclarados fora dele. O servidor tem teste que confere a resposta contra o esquema.
 - **Contrato em Rust é gerado**: `apps/desktop/crates/cliente/src/contrato.rs` sai de `packages/core/src/contrato-rust.ts` e não se edita à mão. O teste do `core` falha enquanto o arquivo estiver para trás; esquema novo entra na lista desse gerador.
-- **Do termIAX, só o visual**: o tema do desktop repete os valores do termIAX (`apps/desktop/crates/app/src/tema.rs`). Nenhum arquivo nem trecho de código dele entra neste repositório, que é público.
-- **Cliente do desktop sem interface**: endereço do servidor, pedidos, fluxo de eventos e a regra da conversa ficam em `apps/desktop/crates/cliente`, sem GPUI, com teste. `tests/contrato.rs` roda esse cliente contra o servidor de verdade; rota ou evento novo que o desktop consome ganha um caso ali.
+- **Do termIAX, só o visual**: o tema escuro do desktop repete os valores do termIAX (`apps/desktop/crates/app/src/tema.rs`). Nenhum arquivo nem trecho de código dele entra neste repositório, que é público. O tema claro tem valores daqui. `tema.rs` é o único módulo com cor literal, e o teste dele confere o contraste do texto sobre cada fundo nos dois temas.
+- **Cliente do desktop sem interface**: endereço do servidor, pedidos, fluxo de eventos e as regras da conversa, dos pedidos de aprovação e do formulário de bot ficam em `apps/desktop/crates/cliente`, sem GPUI, com teste. `tests/contrato.rs` roda esse cliente contra o servidor de verdade; rota ou evento novo que o desktop consome ganha um caso ali.
 - **Sessão do desktop no cofre do sistema**: o token do computador fica no Gerenciador de Credenciais do Windows ou nas Chaves do macOS (`cofre_do_sistema.rs`), nunca num arquivo. A sessão só vale depois de guardada; se o cofre recusar, o token é revogado no servidor. Ao sair, o cofre é esvaziado antes de qualquer outra coisa. O que volta do cofre passa de novo pela regra do endereço.
 - **Mesma regra do 401 no desktop**: todo pedido volta com a credencial que o fez; o resultado só vale se ela ainda for a da sessão atual, e só a recusa do token pelo servidor desfaz o pareamento. Resposta de proxy e servidor fora do ar mantêm a sessão.
-- **Janela testada pelo teclado**: os testes de `janela.rs` digitam e apertam teclas pelo apoio de testes da GPUI, contra o servidor de verdade. O que só a tela mostra, como quebra de linha e encaixe, é conferido com `scripts/desktop-prova-visual.ps1`.
+- **Janela testada pelo teclado e pelo mouse**: os testes de `janela.rs` digitam, apertam teclas e clicam nos botões de verdade pelo apoio de testes da GPUI, contra o servidor de verdade. Botão novo ganha um nome de teste (`debug_selector`) e um teste que clica nele. O que só a tela mostra, como quebra de linha e encaixe, é conferido com `scripts/desktop-prova-visual.ps1`.
+- **Texto do campo sem interface**: o que cada tecla faz com o texto (cursor, seleção, limite, desfazer) fica em `apps/desktop/crates/app/src/edicao.rs`, sem GPUI, com teste. `campo.rs` só liga teclas, mouse e área de transferência a isso e desenha. O limite conta caracteres, como o esquema do contrato.
+- **Validação do bot em dois lugares**: a regra do formulário existe no celular (`formulario-bot.ts`, pelo esquema do contrato) e no desktop (`formulario_bot.rs`, à mão), e os dois testam contra a mesma tabela, `packages/core/casos/bot-entrada.json`. Mudar a regra é mudar o esquema, a tabela e o lado em Rust.
+- **No desktop, a decisão é no cartão**: o cartão mostra o pedido inteiro, e só os botões dele aprovam ou negam. O aviso do sistema não leva o conteúdo do pedido nem botões: só diz qual bot espera, e o clique abre a conversa. Ele só sai com a janela fora da frente, e é recolhido quando o pedido se resolve ou a pessoa volta ao app.
 - **Ambiente validado na partida**: só `apps/server/src/env.ts` interpreta variáveis de ambiente; o `main.ts` entrega `process.env` a ele e mais ninguém o lê. Configuração inválida derruba o processo antes de atender pedidos, e a mensagem cita só o nome da variável, nunca o valor.
 - **O motor não herda o ambiente do servidor**: `ambienteDoMotor`, em `env.ts`, passa só uma lista de nomes (sistema, idioma, proxy, `ANTHROPIC_*`, `CLAUDE_*`). Segredo novo no ambiente do servidor não chega aos bots sem entrar nessa lista, com teste em `env.test.ts`.
 - **Loopback por padrão**: o servidor ouve em `127.0.0.1` se nada for dito. Só a imagem abre para a rede do contêiner, e o compose publica a porta só em loopback. Acesso de fora entra por túnel.
@@ -120,7 +123,8 @@ A memória do projeto fica no ai-memory, no escopo do `.ai-memory.toml`. Ao conc
 - Em build de release do Android, `http://` para a rede local é bloqueado pelo sistema; fora de desenvolvimento, o servidor precisa de HTTPS.
 - Os códigos de erro (`nao_autenticado`, `codigo_invalido` e os demais) são texto solto no servidor e no app, ainda não constantes do `core`.
 - O app não guarda conversas no aparelho: cada abertura busca do servidor.
-- O app de desktop ainda não mostra os cartões de aprovação, só cria bot com nome automático, não para um turno, e o campo de texto não tem seleção, copiar nem desfazer. Só há tema escuro. Não há instalador, assinatura nem atualizador.
+- O app de desktop não tem instalador, assinatura nem atualizador. Fechar a janela encerra o app: não há ícone na bandeja, e com o app fechado não há aviso de pedido de aprovação. No macOS o aviso do sistema só é entregue a app empacotado, o que ainda não existe.
+- No campo de texto do desktop, Home e End vão ao começo e ao fim do parágrafo, não da linha da tela, o cursor não pisca, e arrastar o mouse para fora do campo não rola o texto.
 - O desktop nunca foi aberto num Mac. Lá ele compila e passa nos testes pela CI, mas a tela não foi vista por ninguém, e o teste do cofre de verdade fica desligado: o chaveiro da CI pode pedir senha.
 - No desktop, a sessão que volta do cofre não confere o tamanho do token contra o contrato: um token estranho só é recusado pelo servidor.
 - No desktop, cada conexão do fluxo de eventos dura no máximo um minuto e é refeita do ponto em que parou: o cliente HTTP usado não tem prazo por leitura.

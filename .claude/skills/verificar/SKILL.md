@@ -82,7 +82,7 @@ cargo build -p awikabot-desktop
 powershell -ExecutionPolicy Bypass -File ../../scripts/desktop-prova-visual.ps1
 ```
 
-O script leva o app do pareamento a uma conversa, fecha, reabre para ver a sessão voltar do cofre do sistema e despareia. Ele grava capturas numa pasta temporária, cujo caminho imprime, e diz se a sessão estava no cofre depois de parear e depois de desparear. A sessão de quem desenvolve não é tocada: a prova usa um item só dela no cofre. Olhar as imagens é parte da verificação, e apagar a pasta depois também. No macOS não há prova visual: relatar como não verificado.
+O script pareia, cria um bot pelo formulário, aprova um pedido no cartão, para uma resposta, minimiza a janela e manda um pedido por outro aparelho para ver o aviso do sistema, nega esse pedido, fecha, reabre no tema claro com a sessão que estava no cofre do sistema e despareia. Ele grava capturas numa pasta temporária, cujo caminho imprime, e diz: quantos avisos o sistema recebeu com a janela minimizada, se algum mostra o conteúdo do pedido, quantos sobraram depois de voltar ao app, quantos pedidos ficaram pendentes no servidor, e se a sessão estava no cofre depois de parear e depois de desparear. Os cliques são por coordenada: depois de mudar o desenho da tela, conferir as coordenadas no começo do script. A sessão de quem desenvolve não é tocada: a prova usa um item só dela no cofre, e apaga no fim os avisos e o registro da identidade do build de desenvolvimento, se foi ela que criou. Durante a prova aparece um aviso de verdade na tela. Olhar as imagens é parte da verificação, e apagar a pasta depois também. No macOS não há prova visual: relatar como não verificado.
 
 ## App no aparelho
 
