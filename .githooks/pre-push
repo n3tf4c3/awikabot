@@ -1,26 +1,42 @@
 #!/bin/sh
-# Hook pre-push: cobra o carimbo "Verificado-por:" de cada commit que o push envia.
-# Confere a declaração, não refaz a verificação: quem prova é a suíte, a CI e o runbook.
+# Hook pre-push: procura segredos nos commits enviados e cobra o carimbo "Verificado-por:".
 #
 # Instalação no projeto: copiar para .githooks/pre-push (fim de linha LF) e ativar com
 #   git config core.hooksPath .githooks
 # Modo, em `git config verificacao.gate`:
 #   observar  (padrão) avisa e deixa o push passar
 #   impor     recusa o push enquanto houver commit sem carimbo
-#   off       não confere nada
+#   off       não confere o carimbo
 # Commits de merge ficam de fora. Em `impor`, o commit sem verificação sai com
 # "Verificado-por: nenhum (motivo)", nunca com --no-verify.
 
 modo=$(git config --get verificacao.gate 2>/dev/null)
 [ -n "$modo" ] || modo=observar
 case "$modo" in
-  off) exit 0 ;;
-  observar | impor) ;;
+  off | observar | impor) ;;
   *)
     echo "pre-push: verificacao.gate='$modo' é inválido (use observar, impor ou off)." >&2
     exit 1
     ;;
 esac
+
+gitleaks=$(git config --path --get verificacao.gitleaksPath 2>/dev/null)
+[ -n "$gitleaks" ] || gitleaks=gitleaks
+
+verificar_segredos() {
+  if "$gitleaks" --no-banner --no-color --redact=100 --verbose --log-level=warn --exit-code=10 "$@"; then
+    return 0
+  else
+    resultado=$?
+  fi
+
+  if [ "$resultado" -eq 10 ]; then
+    echo "pre-push: Gitleaks detectou um possível segredo. Revise os commits antes de publicar." >&2
+  else
+    echo "pre-push: não foi possível concluir a varredura de segredos (Gitleaks: $resultado)." >&2
+  fi
+  return 1
+}
 
 # Id nulo no tamanho do hash do repositório (SHA-1 ou SHA-256).
 zero=$(git hash-object --stdin </dev/null | tr '[0-9a-f]' '0')
@@ -40,18 +56,43 @@ while read -r _ref_local sha_local _ref_remoto sha_remoto; do
   # Exclusão de branch: nada é enviado.
   [ "$sha_local" = "$zero" ] && continue
 
+  if ! command -v "$gitleaks" >/dev/null 2>&1; then
+    echo "pre-push: instale o Gitleaks ou configure verificacao.gitleaksPath com o caminho do executável." >&2
+    exit 1
+  fi
+  if ! commit_local=$(git rev-parse -q --verify "$sha_local^{commit}"); then
+    echo "pre-push: a referência enviada não aponta para um commit que possa ser verificado." >&2
+    exit 1
+  fi
+
+  # Usa a ponta anunciada pelo remoto. Sem essa base, confere todo o histórico
+  # alcançável pela referência, inclusive commits removidos do diff final.
+  if commit_remoto=$(git rev-parse -q --verify "$sha_remoto^{commit}"); then
+    intervalo="$commit_remoto..$commit_local"
+  else
+    intervalo=$commit_local
+  fi
+  # Inclui alterações feitas na resolução de merges, que o diff comum omite.
+  verificar_segredos git --log-opts="--diff-merges=first-parent $intervalo --" . || exit 1
+  mensagens=$(git log --format='commit %H%n%B' "$intervalo" --) || exit 1
+  if [ -n "$mensagens" ]; then
+    printf '%s\n' "$mensagens" | verificar_segredos stdin || exit 1
+  fi
+
+  [ "$modo" = off ] && continue
+
   # Branch nova, ou ponta remota que este clone não conhece: cobra o que o remoto
   # destinatário não tem pelas referências locais dele. Destino sem referências
   # locais (push para URL, remoto nunca buscado): cobra todo o histórico enviado.
   # Caso contrário, só os commits acima da ponta remota.
-  if [ "$sha_remoto" = "$zero" ] || ! git cat-file -e "$sha_remoto^{commit}" 2>/dev/null; then
+  if [ -z "$commit_remoto" ]; then
     if [ "$conhecido" = sim ]; then
-      lista=$(git rev-list --no-merges "$sha_local" --not --remotes="$destino") || exit 1
+      lista=$(git rev-list --no-merges "$commit_local" --not --remotes="$destino") || exit 1
     else
-      lista=$(git rev-list --no-merges "$sha_local") || exit 1
+      lista=$(git rev-list --no-merges "$commit_local") || exit 1
     fi
   else
-    lista=$(git rev-list --no-merges "$sha_remoto..$sha_local") || exit 1
+    lista=$(git rev-list --no-merges "$intervalo") || exit 1
   fi
 
   for c in $lista; do
