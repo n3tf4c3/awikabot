@@ -7,6 +7,7 @@ import {
   EsquemaEvento,
   EsquemaPedidoPareamento,
   EsquemaPedidoTurno,
+  EsquemaInfoDoServidor,
   EsquemaSaude,
   LIMITES,
   VERSAO_PROTOCOLO,
@@ -14,19 +15,34 @@ import {
 } from './index';
 
 describe('EsquemaSaude', () => {
-  it('aceita a resposta de saúde na versão atual do protocolo', () => {
-    const saude = { status: 'ok', versao: '0.0.0', protocolo: VERSAO_PROTOCOLO };
-    expect(EsquemaSaude.parse(saude)).toEqual(saude);
+  it('aceita só o estado', () => {
+    expect(EsquemaSaude.parse({ status: 'ok' })).toEqual({ status: 'ok' });
   });
 
   it.each([
-    ['status diferente de ok', { status: 'degradado', versao: '0.0.0', protocolo: 1 }],
-    ['versão vazia', { status: 'ok', versao: '', protocolo: 1 }],
-    ['protocolo zero', { status: 'ok', versao: '0.0.0', protocolo: 0 }],
-    ['protocolo fracionário', { status: 'ok', versao: '0.0.0', protocolo: 1.5 }],
-    ['campo faltando', { status: 'ok', versao: '0.0.0' }],
+    ['status diferente de ok', { status: 'degradado' }],
+    ['sem status', {}],
+    // A rota não pede token: nada que identifique o servidor cabe na resposta.
+    ['resposta com a versão do servidor', { status: 'ok', versao: '0.0.0' }],
+    ['resposta com o protocolo', { status: 'ok', protocolo: 1 }],
   ])('recusa %s', (_caso, entrada) => {
     expect(EsquemaSaude.safeParse(entrada).success).toBe(false);
+  });
+});
+
+describe('EsquemaInfoDoServidor', () => {
+  it('aceita a versão e o protocolo atual', () => {
+    const info = { versao: '0.0.0', protocolo: VERSAO_PROTOCOLO };
+    expect(EsquemaInfoDoServidor.parse(info)).toEqual(info);
+  });
+
+  it.each([
+    ['versão vazia', { versao: '', protocolo: 1 }],
+    ['protocolo zero', { versao: '0.0.0', protocolo: 0 }],
+    ['protocolo fracionário', { versao: '0.0.0', protocolo: 1.5 }],
+    ['campo faltando', { versao: '0.0.0' }],
+  ])('recusa %s', (_caso, entrada) => {
+    expect(EsquemaInfoDoServidor.safeParse(entrada).success).toBe(false);
   });
 });
 

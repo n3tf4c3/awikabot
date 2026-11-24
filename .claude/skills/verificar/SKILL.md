@@ -18,7 +18,7 @@ pnpm verificar
 O comando faz os cinco passos e sai com código diferente de zero se algo falhar:
 
 1. **Subir**: empacota o servidor (`apps/server/build.mjs`) e inicia `dist/server.mjs` em `127.0.0.1:8795`, com o motor simulado e um banco descartável numa pasta temporária. Outra porta: `AWIKA_VERIFICAR_PORTA`. Recusa começar se a porta já responde.
-2. **Dirigir**: os fluxos F0 a F5 e O1 e O2 do mapa, pelo lado do servidor: saúde, pareamento com código gerado pelo comando `parear`, criar e editar um bot, um turno com resposta aos poucos, a parada de um turno, e a aprovação: ação aprovada, ação negada, leitura fora da pasta do bot e o gancho sem servidor. Depois mata o servidor no meio de um turno, sobe de novo com os mesmos dados e confere o histórico. Por fim, faz o backup com o servidor no ar e o restaura numa pasta nova, com um segundo servidor nas duas portas seguintes.
+2. **Dirigir**: os fluxos F0 a F5 e O1 e O2 do mapa, pelo lado do servidor: saúde, pareamento com código gerado pelo comando `parear`, criar e editar um bot, um turno com resposta aos poucos, a parada de um turno, e a aprovação: ação aprovada, ação negada, leitura fora da pasta do bot, gravação fora da pasta e na configuração do motor, e o gancho sem servidor. Depois mata o servidor no meio de um turno, sobe de novo com os mesmos dados e confere o histórico. Por fim, faz o backup com o servidor no ar e o restaura numa pasta nova, com um segundo servidor nas duas portas seguintes.
 3. **Observar**: status e corpo de cada resposta, e os eventos do fluxo `/v1/eventos`, contra o resultado esperado do mapa.
 4. **Encerrar**: fecha o fluxo, derruba o processo, apaga o banco temporário e confere que a porta ficou livre.
 5. **Relatar**: uma linha por verificação e a lista do que não foi verificado.
@@ -36,7 +36,9 @@ $C exec -T -e AWIKA_VERIFICAR_BASE=http://127.0.0.1:8790 -e AWIKA_VERIFICAR_CODI
   server node --input-type=module - < scripts/verificar.mjs
 ```
 
-Nesse modo o comando também confere que o bot lembra do turno anterior e prova a aprovação pelo disco: o arquivo do comando aprovado existe na pasta do bot, e o do comando negado não. Por isso ele precisa rodar dentro do contêiner do servidor, como acima.
+Nesse modo o comando também confere que o bot lembra do turno anterior e prova a aprovação pelo disco: o arquivo do comando aprovado existe na pasta do bot, e o do comando negado não; a gravação fora da pasta e em `.claude/settings.json` não deixa arquivo, mesmo com todo cartão aprovado. Por isso ele precisa rodar dentro do contêiner do servidor, como acima.
+
+Depois de mexer na chamada do motor, na política ou na configuração gerenciada, conferir também que uma configuração plantada na pasta do bot não tem efeito: gravar, pelo host, um `.claude/settings.json` com um gancho de início de sessão que cria um arquivo, rodar um turno e conferir que o arquivo não apareceu.
 
 ## Ensaio no host: queda, vigia, backup e restauração
 

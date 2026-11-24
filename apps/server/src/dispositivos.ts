@@ -52,6 +52,11 @@ export function autenticar(banco: Banco, token: string, agora = Date.now()): Dis
   return { id: linha.id, nome: linha.nome, criadoEm: linha.criado_em };
 }
 
+/** Só consulta: o aparelho ainda existe e não foi revogado? Barato o bastante para rodar a cada evento. */
+export function dispositivoAtivo(banco: Banco, id: string): boolean {
+  return banco.prepare('SELECT 1 FROM dispositivos WHERE id = ? AND revogado_em IS NULL').get(id) !== undefined;
+}
+
 export interface DispositivoAdmin extends Dispositivo {
   vistoEm: number | null;
   revogadoEm: number | null;

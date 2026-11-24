@@ -1,39 +1,55 @@
 import { spawn } from 'node:child_process';
-import { ESPERA_APROVACAO_MS } from '@awikabot/core';
-import type { Motor, ResultadoMotor } from './motor';
+import { configuracaoPorOpcao } from './configuracao-motor';
+import type { Motor, PedidoMotor, ResultadoMotor } from './motor';
 
-/** Prazo do gancho, em segundos: a espera da aprovação mais uma folga. */
-const PRAZO_DO_GANCHO_S = Math.ceil(ESPERA_APROVACAO_MS / 1000) + 60;
+/** Reduz a saída do motor a uma classe conhecida de falha, que é o que cabe num log. */
+export function classificarFalha(saida: string): string {
+  if (/no conversation found/i.test(saida)) return 'sessão do motor não encontrada';
+  if (/\/login|not logged in|authentication|unauthorized|invalid api key|oauth/i.test(saida)) return 'motor sem login válido';
+  if (/usage limit|rate limit|overloaded|quota/i.test(saida)) return 'limite de uso do motor';
+  return saida.trim() === '' ? 'sem saída de erro' : 'não classificado';
+}
+
+/**
+ * A linha de comando e o ambiente de um turno. Toda opção vai na forma `--nome=valor`, e o texto
+ * da pessoa vai pela entrada padrão: nenhum valor vindo do app é lido como opção.
+ */
+export function prepararChamada(
+  pedido: Pick<PedidoMotor, 'instrucoes' | 'modelo' | 'sessao' | 'gancho'>,
+  opcoes: { ambiente: Record<string, string>; ganchoGerenciado: boolean },
+): { args: string[]; ambiente: Record<string, string> } {
+  const args = ['-p', '--output-format=stream-json', '--verbose', '--include-partial-messages', '--permission-mode=default'];
+  // A pasta de trabalho é do bot: o que ele deixar em `.claude/` ou em `.mcp.json` não é lido como
+  // configuração. Sem isto, um gancho gravado ali rodaria comandos no turno seguinte, sem aprovação.
+  args.push('--setting-sources=user');
+  if (pedido.instrucoes) args.push(`--append-system-prompt=${pedido.instrucoes}`);
+  if (pedido.modelo) args.push(`--model=${pedido.modelo}`);
+  if (pedido.sessao) args.push(`--resume=${pedido.sessao}`);
+
+  // Só o que `ambienteDoMotor` deixou passar: a configuração do servidor não chega ao bot.
+  const ambiente = { ...opcoes.ambiente };
+  if (pedido.gancho) {
+    // O gancho roda antes de toda ferramenta. Quem decide é o servidor: leitura dentro da
+    // pasta do bot passa, o resto espera a pessoa. O prazo cobre a espera inteira da aprovação.
+    if (!opcoes.ganchoGerenciado) args.push(`--settings=${JSON.stringify(configuracaoPorOpcao(pedido.gancho.comando))}`);
+    ambiente.AWIKA_PORTA_GANCHO = String(pedido.gancho.porta);
+    ambiente.AWIKA_TURNO_TOKEN = pedido.gancho.token;
+  }
+  return { args, ambiente };
+}
 
 /**
  * Dirige o binário do Claude Code sem modificação, em modo não interativo.
  * O login é o da pessoa dona do servidor, feito pelo próprio Claude Code; este código nunca o lê.
  */
-export function criarMotorClaudeCode(opcoes: { binario: string }): Motor {
+export function criarMotorClaudeCode(opcoes: {
+  binario: string;
+  ambiente: Record<string, string>;
+  /** Na imagem, o gancho já está na configuração gerenciada do motor e não vai na linha de comando. */
+  ganchoGerenciado: boolean;
+}): Motor {
   return (pedido) => {
-    // Toda opção vai na forma `--nome=valor`, e o texto da pessoa vai pela entrada padrão:
-    // assim nenhum valor vindo do app é lido como opção de linha de comando.
-    const args = ['-p', '--output-format=stream-json', '--verbose', '--include-partial-messages', '--permission-mode=default'];
-    if (pedido.instrucoes) args.push(`--append-system-prompt=${pedido.instrucoes}`);
-    if (pedido.modelo) args.push(`--model=${pedido.modelo}`);
-    if (pedido.sessao) args.push(`--resume=${pedido.sessao}`);
-
-    const ambiente = { ...process.env };
-    if (pedido.gancho) {
-      // O gancho roda antes de toda ferramenta. Quem decide é o servidor: leitura dentro da
-      // pasta do bot passa, o resto espera a pessoa. O prazo cobre a espera inteira da aprovação.
-      const configuracao = {
-        hooks: {
-          PreToolUse: [
-            { matcher: '*', hooks: [{ type: 'command', command: pedido.gancho.comando, timeout: PRAZO_DO_GANCHO_S }] },
-          ],
-        },
-      };
-      args.push(`--settings=${JSON.stringify(configuracao)}`);
-      ambiente.AWIKA_PORTA_GANCHO = String(pedido.gancho.porta);
-      ambiente.AWIKA_TURNO_TOKEN = pedido.gancho.token;
-    }
-
+    const { args, ambiente } = prepararChamada(pedido, opcoes);
     const filho = spawn(opcoes.binario, args, { cwd: pedido.pasta, env: ambiente, stdio: ['pipe', 'pipe', 'pipe'] });
 
     let texto = '';
@@ -99,7 +115,8 @@ export function criarMotorClaudeCode(opcoes: { binario: string }): Motor {
           texto = textoDoResultado;
           pedido.aoTexto(textoDoResultado);
         }
-        if (falhou) console.error(`motor: saiu com código ${codigo}. ${stderr.trim().slice(-400)}`);
+        // O texto da saída de erro não vai para o log: pode trazer trecho de conversa ou a conta.
+        if (falhou) console.error(`motor: saiu com código ${codigo}; motivo: ${classificarFalha(stderr + (textoDoResultado ?? ''))}`);
         ok({ estado: falhou ? 'falhou' : 'completa', texto, sessao });
       });
     });

@@ -24,10 +24,10 @@ spike/          provas descartáveis; não é código do produto
 - **ESLint 9**: o `eslint-config-expo` 58 não roda no 10.
 - **Dependências do app**: instalar com `pnpm exec expo install <pacote> --pnpm`, de dentro de `apps/mobile`, para pegar a versão do SDK.
 - **Motor dos bots**: o binário do Claude Code sem modificação. Cada pessoa entra com a própria conta pelo fluxo do próprio Claude Code. O awikabot nunca recebe, guarda nem repassa esse login.
-- **Chamada do motor** (`apps/server/src/motor-claude-code.ts`): o texto da pessoa vai pela entrada padrão e toda opção vai na forma `--nome=valor`. Nunca passar valor vindo do app como argumento solto.
+- **Chamada do motor** (`apps/server/src/motor-claude-code.ts`): o texto da pessoa vai pela entrada padrão e toda opção vai na forma `--nome=valor`. Nunca passar valor vindo do app como argumento solto. O motor sempre roda com `--setting-sources=user`: o que estiver em `.claude/` ou `.mcp.json` na pasta do bot não é lido como configuração.
 - **Banco**: `node:sqlite`, síncrono, num arquivo em `AWIKA_DADOS`. Migrações em `apps/server/src/banco.ts`, numeradas pela posição na lista; nunca editar uma já publicada.
 - **Motor simulado** (`AWIKA_MOTOR=simulado`): só para teste e para o `pnpm verificar`. Em produção ele derruba a partida.
-- **Comandos do servidor**: `node dist/server.mjs servir | parear | dispositivos | revogar <id> | backup <arquivo> | saude`. O `parear` imprime um código de uso único. O `backup` copia o banco com o servidor no ar. O `saude` é o que o health check da imagem executa.
+- **Comandos do servidor**: `node dist/server.mjs servir | parear | dispositivos | revogar <id> | backup <arquivo> | saude | configuracao-do-motor`. O `parear` imprime um código de uso único. O `backup` copia o banco com o servidor no ar. O `saude` é o que o health check da imagem executa. O `configuracao-do-motor` imprime a configuração gerenciada que o build da imagem instala.
 
 ## Comandos (da raiz)
 
@@ -45,7 +45,8 @@ Todo workspace declara `lint`, `typecheck` e `test`: `pnpm -r` pula em silêncio
 ## Convenções e invariantes
 
 - **Contrato no core**: toda mensagem entre servidor e app tem esquema em `packages/core`, usado dos dois lados. Limites, regex e enums nunca são redeclarados fora dele. O servidor tem teste que confere a resposta contra o esquema.
-- **Ambiente validado na partida**: `apps/server/src/env.ts` é o único lugar que lê `process.env`. Configuração inválida derruba o processo antes de atender pedidos, e a mensagem cita só o nome da variável, nunca o valor.
+- **Ambiente validado na partida**: só `apps/server/src/env.ts` interpreta variáveis de ambiente; o `main.ts` entrega `process.env` a ele e mais ninguém o lê. Configuração inválida derruba o processo antes de atender pedidos, e a mensagem cita só o nome da variável, nunca o valor.
+- **O motor não herda o ambiente do servidor**: `ambienteDoMotor`, em `env.ts`, passa só uma lista de nomes (sistema, idioma, proxy, `ANTHROPIC_*`, `CLAUDE_*`). Segredo novo no ambiente do servidor não chega aos bots sem entrar nessa lista, com teste em `env.test.ts`.
 - **Loopback por padrão**: o servidor ouve em `127.0.0.1` se nada for dito. Só a imagem abre para a rede do contêiner, e o compose publica a porta só em loopback. Acesso de fora entra por túnel.
 - **Contêiner sem privilégios**: usuário sem root, `cap_drop: ALL`, `no-new-privileges`, sistema de arquivos somente leitura fora do volume, rede própria com sub-rede declarada.
 - **Token só na resposta do pareamento**: o banco guarda o hash do token e do código. Nenhuma rota devolve token, e nada o escreve em log.
@@ -54,13 +55,17 @@ Todo workspace declara `lint`, `typecheck` e `test`: `pnpm -r` pula em silêncio
 - **O motor pede, a pessoa aprova**: a decisão de uma aprovação só entra por `POST /v1/aprovacoes/:id`, com token de aparelho. O token do turno, que o gancho usa, nunca aprova nada.
 - **Porta do gancho só em loopback** (`AWIKA_PORTA_GANCHO`): nunca publicar no compose nem passar pelo túnel.
 - **Política de ferramentas num lugar só**: `apps/server/src/politica.ts`. Ferramenta nova ou desconhecida vai para a pessoa; só entra na lista de leitura com teste em `politica.test.ts`.
-- **Gancho que falha nega**: sem servidor, sem configuração ou com resposta ilegível, a ação não roda.
+- **Gravação presa à pasta do bot**: `Write`, `Edit`, `MultiEdit` e `NotebookEdit` fora da pasta de trabalho são negadas sem cartão, e também dentro dela em `.claude/` e `.mcp.json`, que o motor leria como configuração. O cartão de gravação mostra o conteúdo, não só o nome do arquivo.
+- **Gancho fora do alcance do bot**: na imagem (`AWIKA_GANCHO=gerenciado`), o gancho mora em `/etc/claude-code/managed-settings.json`, gerado no build, com `allowManagedHooksOnly`. O servidor recusa subir se o arquivo não for exatamente o esperado. Fora da imagem, o gancho vai pela opção `--settings`.
+- **Gancho que falha nega**: sem servidor, sem configuração, com resposta ilegível ou sem resposta dentro do prazo do próprio gancho, a ação não roda. O prazo do gancho (`PRAZO_DO_PEDIDO_MS`) fica abaixo do que o motor dá a ele: um gancho cortado pelo motor não bloqueia a ferramenta.
+- **Revogação corta o fluxo na hora**: o fluxo de eventos confere o aparelho antes de cada evento, direto no banco, então vale também para o comando `revogar`.
+- **`/healthz` só diz o estado**: sem token, a resposta é `{ "status": "ok" }`. Versão e protocolo saem só na resposta do pareamento.
 - **Queda não apaga o que já chegou**: o texto de uma resposta em andamento vai para o banco a cada segundo (`apps/server/src/turnos.ts`). Na partida, todo turno que ficou pela metade vira `falhou` e todo pedido de aprovação pendente expira; nada volta a rodar sozinho.
 - **Parada espera os turnos**: no `SIGTERM`, o servidor para os turnos e espera até 5 segundos cada resposta ser gravada como `parada`, antes de fechar o banco.
 - **Saúde passa pelo banco**: `/healthz` só responde `ok` se o banco responde; senão, `503`.
 - **Vigia só na imagem**: `saude --reiniciar` mata o servidor na terceira conferência seguida sem resposta, e a política de reinício do contêiner o levanta. A opção só aparece no `HEALTHCHECK` do `Dockerfile`; sem ela, o comando só observa.
 - **Backup nunca escreve por cima e nunca leva o login**: o comando `backup` recusa um destino que já existe. O `deploy/backup.sh` junta o banco, as pastas dos bots e as conversas do motor; `claude/.credentials.json` fica de fora.
-- **Restauração só em volume sem dados**: o `deploy/restaurar.sh` recusa com o servidor no ar, e recusa um volume que já tem o banco, ou qualquer pasta de bot ou conversa do motor que venha no arquivo.
+- **Restauração só em volume sem dados**: o `deploy/restaurar.sh` recusa com o servidor no ar, e recusa um volume que já tem o banco, ou qualquer pasta de bot ou conversa do motor que venha no arquivo. Um arquivo com qualquer entrada além do banco, de `trabalho/` e de `claude/projects/` é recusado inteiro.
 - **401 só derruba a sessão que fez o pedido**: o app captura a sessão no início do pedido e só a apaga se ela ainda for a atual, e só quando o corpo do 401 traz o código `nao_autenticado` do servidor. Um 401 de proxy ou túnel e um erro de rede nunca deslogam.
 - **Cliente do app testado contra o servidor**: `apps/server/src/contrato-app.test.ts` usa a lógica de `apps/mobile/src/lib` pela rede. Rota ou evento novo que o app consome ganha um caso ali.
 - **Endereço do servidor no app**: `https://` sempre, menos `localhost` e endereços de rede privada, que aceitam `http://`.
@@ -88,7 +93,7 @@ A memória do projeto fica no ai-memory, no escopo do `.ai-memory.toml`. Ao conc
 ## Limitações conhecidas
 
 - Não há aviso push: com o app fechado, um pedido de aprovação expira em 15 minutos e a ação não roda.
-- Um comando aprovado roda com os direitos do contêiner: lê tudo o que está no volume, inclusive o login do motor. O cartão mostra o comando inteiro, e é ele que a pessoa aprova.
+- Um comando de terminal aprovado roda com os direitos do contêiner: lê e grava tudo o que está no volume, inclusive o login do motor, o banco e a configuração do usuário do motor. O cartão mostra o comando inteiro, e é ele que a pessoa aprova. As travas de gravação valem para as ferramentas de arquivo, não para o terminal.
 - Um bot cuja sessão do motor se perdeu não tem como começar uma conversa nova pelo app.
 - Numa queda, perde-se até um segundo do texto que estava chegando, e a ação que rodava no momento pode ter ficado pela metade. A resposta aparece como falha; o bot não a refaz sozinho.
 - O backup fica no host e sai sem cifra: tirar o arquivo do Pi, cifrar e agendar a rotina ainda é manual.

@@ -26,6 +26,11 @@ O padrão é o da skill `bootstrap-monorepo`. Aqui fica só o que desvia dele, c
 | O backup leva as conversas do motor e não leva o login | — | Sem as conversas, o bot restaurado não lembraria de nada. O login é da pessoa: o awikabot não o guarda, e depois de restaurar num volume novo ela entra de novo. |
 | Restauração só em volume sem dados | — | O script nunca escolhe entre o que está no volume e o que está no arquivo. Restaurar por cima exigiria apagar, e isso fica para uma decisão humana. |
 | Sub-rede e porta do compose por variável | Valores fixos | Um ensaio de restauração sobe ao lado do servidor de verdade, em outro projeto, sem disputar rede nem porta. |
+| Gancho na configuração gerenciada do motor, dentro da imagem | Gancho só pela opção `--settings` | O Claude Code lê configuração da pasta de trabalho e do usuário, e as duas são graváveis pelo bot. A gerenciada fica na parte somente leitura da imagem, não é sobreposta e bloqueia ganchos de outras origens. Conferido com o motor real: um gancho plantado na pasta do bot rodava antes e não roda mais. |
+| Motor sem ler a configuração da pasta do bot (`--setting-sources=user`) | — | Um arquivo em `.claude/` na pasta de trabalho faz o motor executar comandos no começo do turno, sem passar por aprovação. |
+| Gravação negada fora da pasta do bot e na configuração do motor | Toda gravação vai para a pessoa | O cartão antigo mostrava só o nome do arquivo. Negar sem perguntar tira da pessoa uma decisão que ela não tinha como tomar bem. |
+| `/healthz` sem versão | Versão e protocolo na saúde | A rota não pede token. O app recebe a versão na resposta do pareamento. |
+| Ambiente do motor por lista de nomes | Herdar o ambiente do servidor | Um segredo posto no ambiente do servidor chegaria a todo comando aprovado. |
 | `packages/core` exporta o TypeScript de origem | — | O servidor é empacotado pelo esbuild e o app pelo Metro; os dois leem a origem, e não há passo de build do core para esquecer. |
 | ESLint 9, não o 10 | — | O `eslint-plugin-react` que vem com o `eslint-config-expo` 58 falha no ESLint 10. |
 | Motor na imagem do servidor, em versão fixa | — | O Claude Code é instalado como a Anthropic publica, com a atualização automática desligada. Trocar de versão é mudar o `CLAUDE_CODE_VERSION` e testar. |
