@@ -10,7 +10,8 @@
 ; firewall nem servicos.
 ;
 ; O que a desinstalacao faz: confere se o app esta aberto e pede para fecha-lo; chama o app para
-; esvaziar o cofre de credenciais; tira os arquivos, o atalho e o registro da identidade.
+; esvaziar o cofre de credenciais; tira os arquivos, o atalho, o registro da identidade e a
+; pasta de dados do app.
 
 #ifndef Versao
   #error Informe a versao: /DVersao=x.y.z
@@ -72,6 +73,10 @@ Name: "{autoprograms}\awikabot"; Filename: "{app}\awikabot.exe"; AppUserModelID:
 [Registry]
 ; O app grava esta chave ao mostrar o primeiro aviso do sistema; ela sai com a desinstalacao.
 Root: HKCU; Subkey: "Software\Classes\AppUserModelId\{#Identidade}"; Flags: dontcreatekey uninsdeletekey
+
+[UninstallDelete]
+; A pasta de dados do app: as preferencias e os pacotes que o atualizador baixou.
+Type: filesandordirs; Name: "{localappdata}\awikabot"
 
 [Run]
 ; Na instalacao comum, a pessoa escolhe abrir o app no fim.

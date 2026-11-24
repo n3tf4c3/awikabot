@@ -467,12 +467,31 @@ Em seguida, com o Inno Setup instalado neste PC por autorização do titular, vi
 | Quebra de propósito no pacote | Um instalador sem a identidade no atalho e sem esvaziar o cofre: o roteiro acusou os dois e passou nos outros 15 passos. |
 | Testes | 96 do cliente, 10 do atualizador, 4 de contrato, 12 do fluxo e 53 do app. `clippy` e `rustfmt` sem avisos. |
 
+Depois, com a primeira parte na `main` (PR 11), veio o resto do subpasso 5:
+
+- **De quem é o pacote** (`crates/app/src/confianca.rs`). O Windows confere a assinatura do pacote baixado, com revogação, e o app exige o publicador e a autoridade do certificado dele. O nome do publicador foi lido do próprio certificado. Fora do Windows, tudo é recusado.
+- **Painel de atualização** (`crates/app/src/atualizador.rs`). Aparece no pareamento e na lateral da conversa: avisa da versão nova, baixa a pedido, confere tamanho, hash e assinatura, e só então oferece instalar. Na hora de instalar confere a assinatura de novo, chama o instalador em silêncio e sai; o instalador fecha o que restar do app, troca o executável e o reabre. O pacote que não passa é apagado. O download roda numa thread própria e pode ser cancelado.
+- **Preferências** (`crates/cliente/src/preferencias.rs`). Avisar de versão nova, ligado até a pessoa desligar na tela, e a data da última consulta, num arquivo comum na pasta de dados. A desinstalação passa a apagar essa pasta.
+- **O app de desenvolvimento não se atualiza** nem consulta versão: o painel só existe no build de release do Windows.
+
+| Verificação | Resultado |
+|---|---|
+| Assinatura, com arquivos de verdade | Lê quem assinou um executável assinado pela Microsoft e o aceita com a regra certa; recusa o mesmo arquivo com a regra do app, e com outra autoridade; recusa a cópia com um byte trocado; recusa arquivo sem assinatura e arquivo que não existe. |
+| Painel, sem tela, com cliques nos botões | Ao abrir, avisa e registra a consulta, sem baixar; no mesmo dia não consulta de novo; versão igual não avisa; erro na consulta não registra nada; com o aviso desligado nada sai, e ligar consulta na hora. |
+| Download pelo painel | Pacote sem a assinatura esperada é apagado e não há como instalar; pacote trocado no caminho não fica pronto; cancelar volta ao aviso sem deixar arquivo. |
+| Instalação pelo painel | Pacote assinado por quem a regra do teste espera fica pronto, e instalar chama o instalador com o arquivo conferido; se o arquivo é trocado no disco depois de conferido, a instalação é recusada e ele é apagado. |
+| Testes | 99 do cliente, 10 do atualizador, 4 de contrato, 12 do fluxo e 71 do app. `clippy` e `rustfmt` sem avisos. |
+| Falsificação | Treze quebras de propósito no painel e na assinatura, uma por vez, todas acusadas. |
+| Sandbox, pacote novo, sem assinatura | O roteiro ganhou um passo, a pasta de dados depois de desinstalar, e na primeira rodada reprovou o pacote nele: o caminho da pasta no instalador tinha saído sem a barra. Corrigido, 18 de 18 passos. |
+
+O caminho feliz com o certificado do app ainda não foi exercitado: não existe pacote assinado por ele. Os testes provam o mecanismo com um arquivo assinado por outro publicador e uma regra de teste.
+
 Depende do titular para seguir:
 
 - aprovar o ícone, ou pedir outro;
 - abrir a sessão do certificado em nuvem e informar a impressão digital dele, para assinar (subpasso 3) e repetir o QA com o pacote assinado e o Smart App Control ligado.
 
-Não coberto ainda: a assinatura de verdade; o QA com pacote assinado, com rede e com a marca de arquivo baixado; a conferência da assinatura do pacote baixado, a tela do atualizador e a instalação pedida pelo app; o roteiro de release. No Sandbox a conta é administradora, e a instalação sem privilégios é conferida pelo lugar dos arquivos e do registro, não com um usuário comum. Os scripts de distribuição só rodaram neste PC; a CI passa a montar o pacote sem assinatura no Windows, e esse passo ainda não rodou lá.
+Não coberto ainda: a assinatura de verdade; o QA com pacote assinado, com rede e com a marca de arquivo baixado; a atualização de um app instalado para uma versão publicada; a tela do atualizador vista no app de verdade; o roteiro de release. No Sandbox a conta é administradora, e a instalação sem privilégios é conferida pelo lugar dos arquivos e do registro, não com um usuário comum. Os scripts de distribuição só rodaram neste PC; a CI passa a montar o pacote sem assinatura no Windows, e esse passo ainda não rodou lá.
 
 ### Decisões que são do titular
 

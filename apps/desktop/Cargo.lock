@@ -499,6 +499,7 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "keyring",
+ "sha2",
  "unicode-segmentation",
  "windows-sys 0.61.2",
  "winresource",

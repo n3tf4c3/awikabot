@@ -27,6 +27,7 @@ use gpui::{
     SystemNotification, SystemNotificationResponse, Task, Window, WindowHandle, actions, div, prelude::*, px,
 };
 
+use crate::atualizador::{Configuracao, PainelDeAtualizacao};
 use crate::campo::{CampoDeTexto, Confirmado};
 use crate::tema;
 
@@ -153,6 +154,8 @@ pub struct Janela {
     na_frente: bool,
     /// Pedidos de aprovação com aviso do sistema ainda à mostra.
     avisados: HashSet<String>,
+    /// O aviso de versão nova. Não existe onde não há pacote para baixar.
+    atualizacao: Option<Entity<PainelDeAtualizacao>>,
     _observadores: [Subscription; 2],
 }
 
@@ -188,7 +191,7 @@ fn tema_para(window: &Window) -> tema::Tema {
 }
 
 impl Janela {
-    pub fn new(cofre: Arc<dyn Cofre>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(cofre: Arc<dyn Cofre>, atualizacao: Option<Configuracao>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         tema::usar(tema_para(window));
         let observadores = [
             // O tema acompanha o do sistema, inclusive quando a pessoa o troca com o app aberto.
@@ -210,6 +213,7 @@ impl Janela {
             desta_janela: window.window_handle(),
             na_frente: window.is_window_active(),
             avisados: HashSet::new(),
+            atualizacao: atualizacao.map(|configuracao| cx.new(|cx| PainelDeAtualizacao::new(configuracao, cx))),
             _observadores: observadores,
         };
         // Quem já pareou este computador abre direto na conversa. Se o token não valer mais, o
@@ -879,7 +883,7 @@ fn respondendo(bot: &Bot, conversa: &Conversa) -> bool {
 
 // --- Desenho ------------------------------------------------------------------
 
-fn botao(id: impl Into<ElementId>, rotulo: impl Into<SharedString>, principal: bool) -> gpui::Stateful<gpui::Div> {
+pub(crate) fn botao(id: impl Into<ElementId>, rotulo: impl Into<SharedString>, principal: bool) -> gpui::Stateful<gpui::Div> {
     let base = div().id(id).h(px(30.)).px_3().flex().items_center().justify_center().rounded_md().cursor_pointer().child(rotulo.into());
     if principal {
         base.bg(tema::destaque()).text_color(tema::texto_no_destaque()).font_weight(gpui::FontWeight::SEMIBOLD)
@@ -892,7 +896,7 @@ fn rotulo_do_campo(texto: &'static str) -> gpui::Div {
     div().text_size(px(tema::TAMANHO_PEQUENO)).text_color(tema::texto_secundario()).child(texto)
 }
 
-fn texto_pequeno(texto: impl Into<SharedString>, cor: gpui::Rgba) -> gpui::Div {
+pub(crate) fn texto_pequeno(texto: impl Into<SharedString>, cor: gpui::Rgba) -> gpui::Div {
     div().text_size(px(tema::TAMANHO_PEQUENO)).text_color(cor).child(texto.into())
 }
 
@@ -953,7 +957,8 @@ impl Janela {
                     botao("parear", if tela.ocupado { "Pareando…" } else { "Parear" }, true)
                         .on_click(cx.listener(|janela, _, _, cx| janela.parear(cx))),
                 )
-                .child(texto_pequeno(format!("Protocolo {VERSAO_PROTOCOLO}"), tema::texto_apagado())),
+                .child(texto_pequeno(format!("Protocolo {VERSAO_PROTOCOLO}"), tema::texto_apagado()))
+                .children(self.atualizacao.clone()),
         )
     }
 
@@ -1023,6 +1028,7 @@ impl Janela {
                     .gap_2()
                     .border_t_1()
                     .border_color(tema::divisoria())
+                    .children(self.atualizacao.clone())
                     .child(texto_pequeno(estado, cor))
                     .child(botao("desparear", "Desparear", false).on_click(cx.listener(|janela, _, _, cx| janela.desparear(cx)))),
             )
@@ -1339,7 +1345,7 @@ mod testes {
             identificar_o_app(cx);
         });
         let do_app: Arc<dyn Cofre> = cofre.clone();
-        let janela = cx.add_window(|window, cx| Janela::new(do_app, window, cx));
+        let janela = cx.add_window(|window, cx| Janela::new(do_app, None, window, cx));
         cx.update(|cx| ligar_avisos(janela, cx));
         let mut cx = VisualTestContext::from_window(janela.into(), cx);
         // Como no app, que abre a janela na frente.
@@ -1676,6 +1682,46 @@ mod testes {
                 aberta(janela).expect("sessão").conversa.mensagens.iter().map(|mensagem| mensagem.texto.as_str()).collect();
             assert_eq!(textos, vec!["primeira", "Você disse: primeira", "segunda", "Você disse: segunda"]);
         });
+    }
+
+    #[gpui::test]
+    fn o_aviso_de_versao_nova_aparece_no_pareamento_e_na_conversa(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        // De onde as versões sairiam não responde nada de útil: o painel fica só com a opção de avisar.
+        let sem_versoes = ServidorFalso::subir(|_, _| RespostaFalsa::html(404));
+        let pasta = std::env::temp_dir().join(format!("awikabot-teste-janela-atualizacao-{}", std::process::id()));
+        let configuracao = Configuracao {
+            origem: awikabot_cliente::atualizacao::Origem::de_teste(&sem_versoes.base),
+            plataforma: "windows-x64".into(),
+            atual: awikabot_cliente::atualizacao::Versao::deste_app(),
+            pasta: pasta.clone(),
+            politica: crate::confianca::Politica::do_app(),
+            espera: Duration::ZERO,
+            instalar: Arc::new(|_| Ok(())),
+        };
+        let servidor = ServidorDeTeste::subir();
+        let guardada = parear_pela_api(&servidor, "Computador de teste");
+        criar_bot_pela_api(&guardada, "Scout");
+
+        // Sem sessão: a tela é a de pareamento.
+        cx.update(|cx| {
+            campo::registrar_teclas(cx);
+            registrar_teclas(cx);
+            identificar_o_app(cx);
+        });
+        let sem_sessao: Arc<dyn Cofre> = Arc::new(CofreEmMemoria::default());
+        let de_pareamento = cx.add_window(|window, cx| Janela::new(sem_sessao, Some(configuracao.clone()), window, cx));
+        let mut no_pareamento = VisualTestContext::from_window(de_pareamento.into(), cx);
+        assert!(na_tela(&mut no_pareamento, "alternar-aviso-de-versao"));
+
+        // Com sessão: a tela é a da conversa, e o aviso fica na lateral.
+        let com_sessao: Arc<dyn Cofre> = cofre_com(&guardada);
+        let de_conversa = no_pareamento.add_window(|window, cx| Janela::new(com_sessao, Some(configuracao), window, cx));
+        let mut na_conversa = VisualTestContext::from_window(de_conversa.into(), &no_pareamento);
+        let raiz = de_conversa.root(&mut na_conversa).expect("raiz da janela");
+        esperar(&mut na_conversa, &raiz, "sessão conectada, com o bot selecionado", pronta_com_bot);
+        assert!(na_tela(&mut na_conversa, "alternar-aviso-de-versao"));
+        let _ = std::fs::remove_dir_all(pasta);
     }
 
     // --- Formulário de bot --------------------------------------------------------
