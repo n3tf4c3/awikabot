@@ -1,0 +1,36 @@
+# O que o cargo-deny confere no app de desktop antes de um pacote sair: avisos de segurança
+# conhecidos nas dependências e de onde elas vêm.
+#
+#   cargo deny check advisories sources      (de dentro de apps/desktop)
+#
+# As licenças não entram aqui: quem as confere é distribuicao/licencas-de-terceiros.mjs, que olha
+# só o que vai no executável e mantém a lista das aceitas num lugar só.
+
+[graph]
+# Os sistemas para os quais o app é compilado.
+targets = ["x86_64-pc-windows-msvc", "aarch64-apple-darwin", "x86_64-apple-darwin"]
+
+[advisories]
+version = 2
+# Versão retirada do registro pelo autor também para o pacote.
+yanked = "deny"
+# Dependência sem manutenção só para o pacote quando é escolha deste projeto. As que vêm por
+# dentro da GPUI não estão nas mãos dele: em 24/11/2026 eram quatro (chrono, paste, rustybuzz e
+# ttf-parser), nenhuma com vulnerabilidade conhecida. Vulnerabilidade para o pacote sempre,
+# venha de onde vier.
+unmaintained = "workspace"
+# Aviso aceito entra aqui com o motivo e a data, nunca em silêncio.
+ignore = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# A GPUI vem do repositório do Zed, fixada por commit, e traz estes junto. Repositório novo
+# nesta lista é decisão: o código dele entra no executável sem passar pelo registro.
+allow-git = [
+    "https://github.com/zed-industries/zed",
+    "https://github.com/zed-industries/font-kit",
+    "https://github.com/smol-rs/async-task.git",
+    "https://github.com/proptest-rs/proptest",
+]
