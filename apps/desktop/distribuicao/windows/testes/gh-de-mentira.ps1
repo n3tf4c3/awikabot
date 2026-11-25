@@ -78,8 +78,12 @@ if ($linha[0] -eq 'release' -and $linha[1] -eq 'create') {
 if ($linha[0] -eq 'release' -and $linha[1] -eq 'download') {
     $guardados = Join-Path $estado "arquivos\$($linha[2])"
     $destino = Opcao $linha '--dir'
-    if (-not (Test-Path $guardados) -or -not $destino) { [Console]::Error.WriteLine('gh de mentira: nada para baixar'); exit 1 }
-    Get-ChildItem $guardados -File | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $destino }
+    # Com --pattern, só o arquivo com aquele nome; sem nenhum que sirva, o gh de verdade também falha.
+    $padrao = Opcao $linha '--pattern'
+    $pedidos = @()
+    if ((Test-Path $guardados) -and $destino) { $pedidos = @(Get-ChildItem $guardados -File | Where-Object { -not $padrao -or $_.Name -eq $padrao }) }
+    if ($pedidos.Count -eq 0) { [Console]::Error.WriteLine('gh de mentira: nada para baixar'); exit 1 }
+    $pedidos | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $destino }
     exit 0
 }
 [Console]::Error.WriteLine("gh de mentira: pedido que os scripts nao deveriam fazer: $($linha -join ' ')")

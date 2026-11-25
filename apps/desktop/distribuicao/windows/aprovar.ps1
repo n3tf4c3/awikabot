@@ -10,9 +10,9 @@
 #
 # Antes de publicar, o script confere de novo, contra o GitHub de agora: o rascunho é o mesmo
 # que a etapa 5 criou, aponta para o commit conferido, que está na `main`, e os arquivos dele,
-# baixados de volta, são os que passaram pela conferência dos artefatos e pelo QA. Depois de
-# publicar, confere que o release ficou público e que a etiqueta aponta para o commit, e grava
-# `publicado.json` na pasta de evidências.
+# baixados de volta, são os que passaram pela conferência dos artefatos e pelo QA, e o QA partiu
+# da versão que é a última pública agora. Depois de publicar, confere que o release ficou público
+# e que a etiqueta aponta para o commit, e grava `publicado.json` na pasta de evidências.
 #
 # Com -Ensaio, confere tudo e não publica.
 param(
@@ -86,6 +86,8 @@ if ($comEstaEtiqueta.Count -ne 1) {
 if (Get-CommitDaEtiqueta $Gh $destino.Repositorio $etiqueta) { Anotar "a etiqueta $etiqueta ja existe no repositorio" }
 $maior = Get-MaiorVersaoPublica $releases $destino.Prefixo
 if ($maior -and ([version]$Versao) -le $maior) { Anotar "a versao $Versao nao e maior que a ultima publica, ${maior}: o atualizador nao a ofereceria" }
+# A última versão pública de agora, que pode não ser a do dia do rascunho: o QA partiu dela?
+elseif ($maior) { Anotar (Get-ProblemasDaPartidaDoQa $Evidencias $Gh $destino $maior) }
 
 "versao $Versao, commit $($commit.Substring(0, 7)), etiqueta $etiqueta, repositorio $($destino.Repositorio)"
 if ($problemas.Count -gt 0) { Parar 'o rascunho nao pode ser publicado' }
@@ -125,4 +127,4 @@ $evidencia = [ordered]@{
 Write-TextoSemBom (Join-Path $Evidencias 'publicado.json') ((($evidencia | ConvertTo-Json) -replace "`r`n", "`n") + "`n")
 "evidencia: $(Join-Path $Evidencias 'publicado.json')"
 "release publico: $($publicado.html_url)"
-'falta conferir num app instalado: o aviso da versao nova aparece, o download passa na conferencia e a instalacao reabre o app na versao nova'
+'falta conferir num app instalado, com o ver-atualizacao.ps1 -Anterior <pasta da versao anterior>: o aviso da versao nova aparece, o download passa na conferencia e a instalacao reabre o app na versao nova'

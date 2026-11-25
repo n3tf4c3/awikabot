@@ -10,7 +10,8 @@
 # pacote assinado, de um commit que está na `main`, com as conferências do candidato, a
 # conferência dos artefatos e as duas rodadas de QA aprovadas para aquele commit e aquele
 # instalador, e com os arquivos ainda iguais aos que foram conferidos. A versão tem de ser maior
-# que a última pública, e a etiqueta não pode existir.
+# que a última pública, e a etiqueta não pode existir. Havendo versão pública, as duas rodadas de
+# QA têm de ter partido dela (`qa-sandbox.ps1 -Anterior`), com o instalador que está publicado.
 #
 # Com -Ensaio, confere tudo, consulta o GitHub e não envia nada. O script lista todos os
 # problemas que achar. Depois de criar o rascunho, baixa os arquivos de volta e os confere; só
@@ -79,6 +80,8 @@ foreach ($release in $comEstaEtiqueta) {
 if (Get-CommitDaEtiqueta $Gh $destino.Repositorio $etiqueta) { Anotar "a etiqueta $etiqueta ja existe no repositorio" }
 $maior = Get-MaiorVersaoPublica $releases $destino.Prefixo
 if ($maior -and ([version]$versao) -le $maior) { Anotar "a versao $versao nao e maior que a ultima publica, ${maior}: o atualizador nao a ofereceria" }
+# Havendo versão pública, é dela que parte quem já tem o app: o QA tem de ter partido dela.
+elseif ($maior) { Anotar (Get-ProblemasDaPartidaDoQa $Evidencias $Gh $destino $maior) }
 
 "versao $versao, commit $($commit.Substring(0, 7)), etiqueta $etiqueta, repositorio $($destino.Repositorio)"
 "evidencias: $Evidencias"

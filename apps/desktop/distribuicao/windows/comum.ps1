@@ -328,6 +328,137 @@ function Get-ProblemasDasEvidencias {
     }
 }
 
+# O manifesto que um release público traz, baixado do GitHub: descreve o instalador que as
+# pessoas têm instalado. Devolve nada se não der para baixar ou ler.
+function Get-ManifestoPublicado {
+    param([string]$Gh, [string]$Repositorio, [string]$Etiqueta)
+    $nome = 'awikabot-desktop-windows-x64.json'
+    $pasta = New-PastaTemporaria 'manifesto-publicado'
+    try {
+        Invoke-Programa $Gh @('release', 'download', $Etiqueta, '--repo', $Repositorio, '--pattern', $nome, '--dir', $pasta) $script:RaizDoRepositorio | Out-Null
+        return Read-Evidencia (Join-Path $pasta $nome)
+    } catch {
+        return $null
+    } finally {
+        Remove-Item -LiteralPath $pasta -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
+    }
+}
+
+# Quem já tem o app parte da última versão pública: as duas rodadas de QA têm de ter partido
+# dela, e do instalador que está publicado, não de outro pacote com o mesmo número. O manifesto
+# dessa versão é lido do GitHub. Devolve um problema por linha; nada, se as duas partiram dela.
+function Get-ProblemasDaPartidaDoQa {
+    param([string]$Pasta, [string]$Gh, $Destino, [version]$UltimaPublica)
+    $publicado = Get-ManifestoPublicado $Gh $Destino.Repositorio "$($Destino.Prefixo)$UltimaPublica"
+    if (-not $publicado -or [string]$publicado.versao -ne "$UltimaPublica" -or [string]$publicado.sha256 -notmatch '^[0-9a-f]{64}$') {
+        "nao deu para ler o manifesto da ultima versao publica, $UltimaPublica"
+        return
+    }
+    foreach ($rodada in @(@{ Nome = 'sem rede'; Arquivo = 'qa-sandbox-sem-rede.json' }, @{ Nome = 'com rede'; Arquivo = 'qa-sandbox-com-rede.json' })) {
+        $qa = Read-Evidencia (Join-Path $Pasta $rodada.Arquivo)
+        # A falta da rodada já é acusada por Get-ProblemasDasEvidencias.
+        if (-not $qa) { continue }
+        $partida = $qa.anterior
+        if (-not $partida) { "o QA no Sandbox $($rodada.Nome) nao partiu da ultima versao publica, $UltimaPublica" }
+        elseif ([string]$partida.versao -ne "$UltimaPublica") { "o QA no Sandbox $($rodada.Nome) partiu da versao $($partida.versao), e a ultima publica e a $UltimaPublica" }
+        elseif ([string]$partida.sha256 -ne [string]$publicado.sha256) { "o QA no Sandbox $($rodada.Nome) partiu de um instalador da $UltimaPublica que nao e o publicado" }
+    }
+}
+
+# A versão anterior, de uma pasta com o instalador e o manifesto dela: a pasta do pacote, ou os
+# dois arquivos baixados do release. O que o manifesto diz vira nome de arquivo, então só passa
+# no formato esperado, e o instalador tem de ser o do manifesto. `$MenorQue` é a versão para a
+# qual o app vai ser atualizado, e `$Qual` diz qual é ela na mensagem. Com `$ExigirAssinatura`,
+# o instalador tem de ter assinatura válida: com o Smart App Control ligado, o Sandbox o bloquearia.
+function Resolve-VersaoAnterior {
+    param([string]$Pasta, [string]$MenorQue, [bool]$ExigirAssinatura, [string]$Qual = 'a do pacote')
+    $resolvida = (Resolve-Path -LiteralPath $Pasta).Path
+    $arquivoDoManifesto = Join-Path $resolvida 'awikabot-desktop-windows-x64.json'
+    if (-not (Test-Path -LiteralPath $arquivoDoManifesto)) { throw "falta o manifesto da versao anterior: $arquivoDoManifesto" }
+    $manifesto = Get-Content -Raw -LiteralPath $arquivoDoManifesto | ConvertFrom-Json
+    if ([string]$manifesto.versao -notmatch '^\d+\.\d+\.\d+$') { throw 'a versao no manifesto da versao anterior esta fora do formato x.y.z' }
+    if ([string]$manifesto.arquivo -ne "awikabot-$($manifesto.versao)-windows-x64.exe") { throw 'o manifesto da versao anterior aponta para um arquivo com outro nome' }
+    if ([version]$manifesto.versao -ge [version]$MenorQue) { throw "a versao anterior ($($manifesto.versao)) tem de ser menor que $Qual ($MenorQue)" }
+    $instalador = Join-Path $resolvida $manifesto.arquivo
+    if (-not (Test-Path -LiteralPath $instalador)) { throw "falta o instalador da versao anterior: $instalador" }
+    if ((Get-Sha256 $instalador) -ne $manifesto.sha256) { throw 'o instalador da versao anterior nao e o do manifesto dela' }
+    if ($ExigirAssinatura -and (Get-AuthenticodeSignature -LiteralPath $instalador).Status -ne 'Valid') {
+        throw 'o instalador da versao anterior nao tem assinatura valida: com o Smart App Control ligado, o Sandbox o bloquearia'
+    }
+    return [pscustomobject]@{
+        Instalador = $instalador
+        Manifesto  = $arquivoDoManifesto
+        Partida    = [ordered]@{ versao = [string]$manifesto.versao; instalador = [string]$manifesto.arquivo; sha256 = [string]$manifesto.sha256 }
+    }
+}
+
+# O que o histórico de uma atualização vista num app instalado mostra, passo a passo. `$Partida`
+# é o que o Sandbox anotou ao instalar a versão anterior e abrir o app; `$Estados`, os estados do
+# disco e do registro que ele anotou depois, na ordem; `$De` e `$Para`, a versão instalada e a
+# versão nova; `$Publicado`, o manifesto público da versão nova. Cada passo só vale a partir do
+# estado em que o anterior foi visto. Devolve os passos, cada um com `ok` e o que faltou.
+function Get-PassosDaAtualizacao {
+    param($Partida, $Estados, [string]$De, [string]$Para, $Publicado, [bool]$SoAteAConsulta)
+    $lista = @($Estados | Where-Object { $_ })
+    # O primeiro estado, de `$desde` em diante, que atende à condição; -1 se nenhum atende.
+    function Achar([int]$desde, [scriptblock]$condicao) {
+        if ($desde -lt 0) { return -1 }
+        for ($i = $desde; $i -lt $lista.Count; $i++) { if (& $condicao $lista[$i]) { return $i } }
+        return -1
+    }
+    function Passo([string]$nome, [bool]$ok, [string]$detalhe) {
+        return [ordered]@{ passo = $nome; ok = $ok; detalhe = $(if ($ok) { '' } else { $detalhe }) }
+    }
+    function PacoteNovo($estado) { @($estado.pacotes | Where-Object { $_.nome -eq $Publicado.arquivo }) | Select-Object -First 1 }
+
+    $falta = ''
+    if (-not $Partida) { $falta = 'o Sandbox nao disse como foi a instalacao' }
+    elseif ($Partida.erro) { $falta = [string]$Partida.erro }
+    elseif (-not $Partida.instalador_conferido) { $falta = 'o instalador que chegou ao Sandbox nao e o do manifesto' }
+    elseif ($Partida.codigo_do_instalador -ne 0) { $falta = "o instalador saiu com o codigo $($Partida.codigo_do_instalador)" }
+    elseif ([string]$Partida.versao_instalada -ne $De) { $falta = "versao instalada: $($Partida.versao_instalada)" }
+    elseif (-not $Partida.janela) { $falta = 'a janela do app nao apareceu' }
+    Passo "a versao $De foi instalada e o app abriu" (-not $falta) $falta
+
+    $consulta = Achar 0 { param($e) $e.versao_do_executavel -eq $De -and $e.preferencias -and [double]$e.preferencias.ultima_consulta_s -gt 0 }
+    Passo "o app da $De consultou as versoes publicadas" ($consulta -ge 0) 'as preferencias nao registraram a consulta'
+    if ($SoAteAConsulta) { return }
+
+    $semOAnterior = 'so vale depois do passo anterior, que nao foi visto'
+
+    $baixado = Achar $consulta { param($e) $p = PacoteNovo $e; $p -and $p.tamanho -eq $Publicado.tamanho -and $p.sha256 -eq $Publicado.sha256 }
+    $falta = 'o pacote nao apareceu na pasta de atualizacoes'
+    if ($consulta -lt 0) { $falta = $semOAnterior }
+    else {
+        # Um pacote com o nome certo e outro conteúdo: diz o que foi visto por último.
+        for ($i = $consulta; $i -lt $lista.Count; $i++) {
+            $p = PacoteNovo $lista[$i]
+            if ($p) { $falta = "o pacote baixado tem $($p.tamanho) bytes e hash $($p.sha256)" }
+        }
+    }
+    Passo "o pacote da $Para foi baixado, com o tamanho e o hash do manifesto publico" ($baixado -ge 0) $falta
+
+    $trocado = Achar $baixado { param($e) $e.versao_do_executavel -eq $Para -and $e.versao_no_registro -eq $Para }
+    $falta = $semOAnterior
+    if ($baixado -ge 0) { $fim = $lista[$lista.Count - 1]; $falta = "no fim, executavel na $($fim.versao_do_executavel) e registro na $($fim.versao_no_registro)" }
+    Passo "o executavel e o registro passaram a $Para" ($trocado -ge 0) $falta
+
+    # O processo do app antes da troca: o último visto aberto, ou o que a partida anotou.
+    $antes = $Partida.processo
+    for ($i = 0; $i -lt $trocado; $i++) { if ($lista[$i].app_aberto -and $lista[$i].processo) { $antes = $lista[$i].processo } }
+    $reaberto = Achar $trocado { param($e) $e.app_aberto -and $e.processo -and $e.processo -ne $antes -and $e.versao_do_executavel -eq $Para }
+    $falta = $semOAnterior
+    if ($trocado -ge 0) {
+        $falta = 'o app nao foi visto aberto depois da troca'
+        if ((Achar $trocado { param($e) $e.app_aberto -and $e.processo -eq $antes }) -ge 0) { $falta = 'o processo e o mesmo de antes: o app nao foi fechado' }
+    }
+    Passo "o app reabriu na $Para, em outro processo" ($reaberto -ge 0) $falta
+
+    $limpo = Achar $reaberto { param($e) @($e.pacotes | Where-Object { $_ }).Count -eq 0 }
+    $falta = if ($reaberto -ge 0) { 'o pacote continuou na pasta de atualizacoes' } else { $semOAnterior }
+    Passo 'o app novo apagou o pacote baixado' ($limpo -ge 0) $falta
+}
+
 # Os hashes dos arquivos de uma pasta batem com os que a conferência dos artefatos registrou?
 # Devolve um problema por arquivo que falta ou difere.
 function Get-ProblemasDosArquivos {
