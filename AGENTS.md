@@ -11,7 +11,7 @@ apps/desktop    app de desktop em Rust com GPUI; workspace Cargo, fora do pnpm
 packages/core   contratos e validação compartilhados (zod), sem framework
 deploy/         compose do servidor e scripts de backup e restauração
 docs/           mapa de fluxos e decisões que fogem do padrão
-scripts/        runbook de verificação em forma de comando
+scripts/        runbook de verificação em forma de comando, e o desenho do ícone
 spike/          provas descartáveis; não é código do produto
 ```
 
@@ -75,6 +75,7 @@ Todo workspace declara `lint`, `typecheck` e `test`: `pnpm -r` pula em silêncio
 - **Mesma regra do 401 no desktop**: todo pedido volta com a credencial que o fez; o resultado só vale se ela ainda for a da sessão atual, e só a recusa do token pelo servidor desfaz o pareamento. Resposta de proxy e servidor fora do ar mantêm a sessão.
 - **Janela testada pelo teclado e pelo mouse**: os testes de `janela.rs` digitam, apertam teclas e clicam nos botões de verdade pelo apoio de testes da GPUI, contra o servidor de verdade. Botão novo ganha um nome de teste (`debug_selector`) e um teste que clica nele. O que só a tela mostra, como quebra de linha e encaixe, é conferido com `scripts/desktop-prova-visual.ps1`.
 - **Uma versão do desktop, num lugar só**: `[workspace.package]` em `apps/desktop/Cargo.toml`. O `build.rs` do app a grava no executável do Windows, junto com o ícone e a descrição, e o build de distribuição para se a do executável divergir. O ícone é gerado por `apps/desktop/crates/app/recursos/gerar-icone.mjs` e versionado ao lado dele.
+- **Um desenho de ícone, dois geradores**: o desenho está em `scripts/icone.mjs`, descrito por formas, e só ele sabe as medidas e as cores. O gerador do desktop grava o `.ico`; o do celular, `apps/mobile/assets/gerar-icones.mjs`, grava os PNG do iOS, as camadas do Android e a imagem de abertura. Mudou o desenho, rodam-se os dois e versiona-se o que saiu; os arquivos gerados nunca são editados à mão. A cor de fundo do ícone do Android está no `app.json` e é a mesma `FUNDO` do desenho.
 - **Executável público sem rastro da máquina**: o executável que vai ser distribuído sai de `apps/desktop/distribuicao/windows/compilar.ps1`, nunca de um `cargo build` comum, que grava nele o nome de usuário de quem compilou. O script troca os caminhos da máquina por nomes neutros e confere o resultado antes de entregar. O runtime do C++ vai embutido em todo build (`apps/desktop/.cargo/config.toml`).
 - **Instalador do desktop só para o usuário**: `apps/desktop/distribuicao/windows/instalador.iss` (Inno Setup) instala sem administrador, em `%LOCALAPPDATA%\Programs\awikabot`, e o atalho carrega a identidade do app. Não mexe em PATH, inicialização do Windows, firewall nem serviços. A identidade está em dois lugares, `IDENTIDADE` em `janela.rs` e no roteiro do instalador, e o QA confere que batem.
 - **Inno Setup em versão fixa para o pacote publicável**: `$script:VersaoDoInnoSetup`, em `apps/desktop/distribuicao/windows/comum.ps1`. O roteiro do instalador informa a versão do compilador que o montou, o `empacotar.ps1` a grava no `build-info.json` e não assina com outra, e o `conferir-artefatos.ps1` só passa a fixada. Pacote sem assinatura, como o da CI, pode sair de outra versão. Trocar de versão é mudar esse valor.
@@ -153,7 +154,7 @@ A memória do projeto fica no ai-memory, no escopo do `.ai-memory.toml`. Ao conc
 - O backup fica no host e sai sem cifra: tirar o arquivo do Pi, cifrar e agendar a rotina ainda é manual.
 - Ninguém é avisado se o Pi inteiro sair do ar: a vigia mora dentro do contêiner. Um monitor de fora depende do túnel.
 - O app não tem identificador de pacote nem projeto no EAS; não gera build de loja ainda. Ver `docs/decisoes.md`.
-- O app não foi aberto em aparelho: telas, teclado, cofre do sistema e o fluxo de eventos no Hermes estão sem verificação. A leitura de QR no pareamento ainda não existe.
+- O app não foi aberto em aparelho: telas, teclado, cofre do sistema e o fluxo de eventos no Hermes estão sem verificação. O ícone e a abertura também não: os arquivos foram vistos, mas nenhum build os pôs num aparelho. A abertura só tem versão clara, porque o app só tem tema claro. A leitura de QR no pareamento ainda não existe.
 - Em build de release do Android, `http://` para a rede local é bloqueado pelo sistema; fora de desenvolvimento, o servidor precisa de HTTPS.
 - Os códigos de erro (`nao_autenticado`, `codigo_invalido` e os demais) são texto solto no servidor e no app, ainda não constantes do `core`.
 - O app não guarda conversas no aparelho: cada abertura busca do servidor.

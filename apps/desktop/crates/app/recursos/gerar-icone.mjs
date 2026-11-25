@@ -1,6 +1,5 @@
-// Gera o ícone do app de desktop: um balão de conversa com dois olhos, sobre um quadrado azul de
-// cantos arredondados. O desenho é descrito por formas, não por imagem, para sair nítido em cada
-// tamanho, e o arquivo gerado fica versionado ao lado deste script.
+// Gera o ícone do app de desktop, o `awikabot.ico` versionado ao lado deste script. O desenho
+// está em `scripts/icone.mjs`, que o gerador do app de celular também usa.
 //
 //   node apps/desktop/crates/app/recursos/gerar-icone.mjs            regrava awikabot.ico
 //   node apps/desktop/crates/app/recursos/gerar-icone.mjs amostra.png  grava também uma amostra
@@ -9,95 +8,10 @@
 import { writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { crc32, deflateSync } from 'node:zlib';
+
+import { desenhar, png } from '../../../../../scripts/icone.mjs';
 
 const TAMANHOS = [16, 20, 24, 32, 40, 48, 64, 128, 256];
-const AZUL_DO_ALTO = [0x5a, 0xa0, 0xf2];
-const AZUL_DO_PE = [0x3c, 0x7f, 0xd9];
-const BRANCO = [0xff, 0xff, 0xff];
-const AZUL_DOS_OLHOS = [0x2a, 0x63, 0xb8];
-
-/** Distância com sinal até um retângulo de cantos arredondados: negativa por dentro. */
-function retanguloArredondado(x, y, cx, cy, meiaLargura, meiaAltura, raio) {
-  const dx = Math.abs(x - cx) - (meiaLargura - raio);
-  const dy = Math.abs(y - cy) - (meiaAltura - raio);
-  return Math.hypot(Math.max(dx, 0), Math.max(dy, 0)) + Math.min(Math.max(dx, dy), 0) - raio;
-}
-
-function dentroDoTriangulo(x, y, [ax, ay], [bx, by], [cx, cy]) {
-  const lado = (px, py, qx, qy) => (x - qx) * (py - qy) - (px - qx) * (y - qy);
-  const [d1, d2, d3] = [lado(ax, ay, bx, by), lado(bx, by, cx, cy), lado(cx, cy, ax, ay)];
-  return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0));
-}
-
-/** A cor de um ponto do desenho, em coordenadas de 0 a 1: [r, g, b, a], ou `null` se é vazio. */
-function corDoPonto(x, y, tamanho) {
-  if (retanguloArredondado(x, y, 0.5, 0.5, 0.47, 0.47, 0.22) > 0) return null;
-  // Nos tamanhos pequenos os olhos crescem um pouco, para não sumirem.
-  const raioDoOlho = Math.max(0.055, 1.1 / tamanho);
-  const noBalao =
-    retanguloArredondado(x, y, 0.5, 0.445, 0.31, 0.215, 0.13) <= 0 ||
-    dentroDoTriangulo(x, y, [0.29, 0.6], [0.47, 0.64], [0.25, 0.83]);
-  if (noBalao) {
-    const noOlho = Math.hypot(x - 0.39, y - 0.445) <= raioDoOlho || Math.hypot(x - 0.61, y - 0.445) <= raioDoOlho;
-    return noOlho ? AZUL_DOS_OLHOS : BRANCO;
-  }
-  return AZUL_DO_ALTO.map((doAlto, canal) => doAlto + (AZUL_DO_PE[canal] - doAlto) * y);
-}
-
-/** Desenha num quadrado de `tamanho` pixels: RGBA, de cima para baixo, com as bordas suavizadas. */
-function desenhar(tamanho) {
-  const amostras = tamanho >= 128 ? 4 : 8;
-  const pixels = Buffer.alloc(tamanho * tamanho * 4);
-  for (let linha = 0; linha < tamanho; linha++) {
-    for (let coluna = 0; coluna < tamanho; coluna++) {
-      let [r, g, b, cobertos] = [0, 0, 0, 0];
-      for (let sy = 0; sy < amostras; sy++) {
-        for (let sx = 0; sx < amostras; sx++) {
-          const cor = corDoPonto((coluna + (sx + 0.5) / amostras) / tamanho, (linha + (sy + 0.5) / amostras) / tamanho, tamanho);
-          if (cor === null) continue;
-          r += cor[0];
-          g += cor[1];
-          b += cor[2];
-          cobertos += 1;
-        }
-      }
-      const onde = (linha * tamanho + coluna) * 4;
-      if (cobertos > 0) {
-        pixels[onde] = Math.round(r / cobertos);
-        pixels[onde + 1] = Math.round(g / cobertos);
-        pixels[onde + 2] = Math.round(b / cobertos);
-        pixels[onde + 3] = Math.round((255 * cobertos) / (amostras * amostras));
-      }
-    }
-  }
-  return pixels;
-}
-
-function png(largura, altura, pixels) {
-  const pedaco = (tipo, dados) => {
-    const corpo = Buffer.concat([Buffer.from(tipo, 'ascii'), dados]);
-    const saida = Buffer.alloc(corpo.length + 8);
-    saida.writeUInt32BE(dados.length, 0);
-    corpo.copy(saida, 4);
-    saida.writeUInt32BE(crc32(corpo), corpo.length + 4);
-    return saida;
-  };
-  const cabecalho = Buffer.alloc(13);
-  cabecalho.writeUInt32BE(largura, 0);
-  cabecalho.writeUInt32BE(altura, 4);
-  cabecalho.set([8, 6, 0, 0, 0], 8); // 8 bits por canal, RGBA
-  const linhas = Buffer.alloc((largura * 4 + 1) * altura);
-  for (let linha = 0; linha < altura; linha++) {
-    pixels.copy(linhas, linha * (largura * 4 + 1) + 1, linha * largura * 4, (linha + 1) * largura * 4);
-  }
-  return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    pedaco('IHDR', cabecalho),
-    pedaco('IDAT', deflateSync(linhas, { level: 9 })),
-    pedaco('IEND', Buffer.alloc(0)),
-  ]);
-}
 
 /** Uma imagem do .ico no formato clássico: BGRA de baixo para cima, mais a máscara de um bit. */
 function bitmapDoIco(tamanho, pixels) {
