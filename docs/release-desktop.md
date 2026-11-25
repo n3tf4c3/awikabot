@@ -4,7 +4,7 @@ Como sai uma versão do app de desktop para Windows. Cada etapa só começa com 
 
 Tudo roda no computador de quem tem o certificado de assinatura. A chave fica em nuvem e pede sessão aberta nesse computador; ela não vai para a CI nem para o repositório. A CI monta o pacote sem assinatura a cada PR, só para o empacotamento não quebrar em silêncio.
 
-Os comandos partem da raiz do repositório. Estado em 24/11/2026: o roteiro rodou inteiro uma vez, com a versão 0.1.0, saída do commit `206b67f`. As seis etapas passaram com assinatura de verdade: o QA teve as duas rodadas com o Smart App Control ligado, e o rascunho foi criado, baixado de volta e publicado no GitHub. O que ainda não foi visto é a atualização de um app instalado: a 0.1.0 é a primeira versão, e não havia app anterior para avisar.
+Os comandos partem da raiz do repositório. Estado em 25/11/2026: o roteiro rodou inteiro duas vezes, com a 0.1.0, saída do commit `206b67f`, e com a 0.1.1, saída de `b410db0`. Na segunda, as rodadas de QA partiram também da 0.1.0 publicada. Depois de publicar, a atualização foi vista num app instalado: num Sandbox com rede, a 0.1.0 avisou da versão nova, baixou, conferiu e instalou a 0.1.1.
 
 As etapas 3, 4 e 5 gravam cada uma um arquivo na pasta de evidências do commit, `relatorios/release/<versão>-<commit>`, e cada etapa lê os das anteriores. A pasta fica fora do Git.
 
@@ -100,7 +100,7 @@ Decisão do titular, à parte: a versão é escrita à mão, e quem roda sem `-E
 
 Antes de publicar, o script confere de novo, contra o GitHub de agora: o rascunho é o que a etapa 5 criou, pelo número; aponta para o commit conferido; tem só os três arquivos, e eles, baixados de volta, são os que passaram pela etapa 3 e pelo QA. Publica pelo número do rascunho, não pela etiqueta. Depois confere que o release ficou público e que a etiqueta aponta para o commit, e grava `publicado.json`.
 
-Depois de publicar, conferir num app instalado que o aviso aparece, que o download passa na conferência e que a instalação reabre o app na versão nova.
+Depois de publicar, conferir num app instalado que o aviso aparece, que o download passa na conferência e que a instalação reabre o app na versão nova. O lugar para isso é um Windows Sandbox com rede e a versão anterior instalada, nunca o computador de trabalho. Os cliques no painel são de uma pessoa: o QA não os faz. Ainda não há script para montar esse Sandbox.
 
 Não há como recolher uma versão publicada de quem já a instalou: o conserto é publicar outra, maior.
 
