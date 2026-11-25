@@ -27,10 +27,16 @@ function Mudar-Json([string]$arquivo, [scriptblock]$mudanca) {
     Gravar-Json $arquivo $valor
 }
 
-# Um candidato inteiro e sem defeito: pacote, evidências e um GitHub de mentira vazio.
+# Uma versão pública de mentira, menor que a do candidato, e o hash do instalador dela.
+$versaoPublica = '0.0.1'
+$hashDaPublica = 'a' * 64
+if ([version]$versao -le [version]'0.0.2') { throw "o teste precisa de uma versao maior que 0.0.2, e o commit declara $versao" }
+
+# Um candidato inteiro e sem defeito: pacote, evidências e um GitHub de mentira vazio. Com
+# -ComVersaoPublica, o GitHub de mentira já tem uma versão pública, e o QA partiu dela.
 $area = New-PastaTemporaria 'teste-publicacao'
 $numero = 0
-function Montar {
+function Montar([switch]$ComVersaoPublica) {
     $script:numero++
     $base = Join-Path $area "caso-$script:numero"
     $caso = [pscustomobject]@{ Pacote = (Join-Path $base 'pacote'); Evidencias = (Join-Path $base 'evidencias'); Estado = (Join-Path $base 'gh') }
@@ -47,12 +53,14 @@ function Montar {
     $manifesto = Get-Content -Raw (Join-Path $caso.Pacote $nomes[1]) | ConvertFrom-Json
     $informacoes = Get-Content -Raw (Join-Path $caso.Pacote 'build-info.json') | ConvertFrom-Json
     $resultado = [pscustomobject]@{ aprovado = $true; passos = @() }
+    $partida = if ($ComVersaoPublica) { [ordered]@{ versao = $versaoPublica; instalador = "awikabot-$versaoPublica-windows-x64.exe"; sha256 = $hashDaPublica } } else { $null }
     foreach ($comRede in @($false, $true)) {
-        $evidencia = New-EvidenciaDoQa $manifesto $informacoes $resultado $comRede $comRede $false
+        $evidencia = New-EvidenciaDoQa $manifesto $informacoes $resultado $comRede $comRede $false $partida
         Write-TextoSemBom (Join-Path $caso.Evidencias $evidencia.Nome) $evidencia.Texto
     }
     Write-TextoSemBom (Join-Path $caso.Estado 'releases.json') '[]'
     Write-TextoSemBom (Join-Path $caso.Estado 'etiquetas.json') '[]'
+    if ($ComVersaoPublica) { Tornar-Publica $caso $versaoPublica $hashDaPublica }
     return $caso
 }
 
@@ -89,14 +97,14 @@ function Esperar([string]$nome, $resultado, [bool]$aprova, [string]$trecho, [str
     }
 }
 # Um defeito plantado num candidato bom: o publicar tem de recusar por ele, sem criar rascunho.
-function Recusa-Ao-Publicar([string]$nome, [string]$trecho, [scriptblock]$defeito) {
-    $caso = Montar
+function Recusa-Ao-Publicar([string]$nome, [string]$trecho, [scriptblock]$defeito, [switch]$ComVersaoPublica) {
+    $caso = Montar -ComVersaoPublica:$ComVersaoPublica
     & $defeito $caso
     Esperar "publicar recusa: $nome" (Publicar $caso) $false $trecho 'release create' ''
 }
 # Um defeito plantado depois de um rascunho bom: o aprovar tem de recusar por ele, sem publicar.
-function Recusa-Ao-Aprovar([string]$nome, [string]$trecho, [scriptblock]$defeito) {
-    $caso = Montar
+function Recusa-Ao-Aprovar([string]$nome, [string]$trecho, [scriptblock]$defeito, [switch]$ComVersaoPublica) {
+    $caso = Montar -ComVersaoPublica:$ComVersaoPublica
     $criado = Publicar $caso
     if ($criado.Codigo -ne 0) { Esperar "aprovar recusa: $nome (preparo)" $criado $true '' '' ''; return }
     & $defeito $caso
@@ -110,6 +118,14 @@ function Mudar-Releases($caso, [scriptblock]$mudanca) {
 }
 function Um-Release([string]$tag, [bool]$rascunho) {
     return [pscustomobject]@{ id = 7; tag_name = $tag; draft = $rascunho; prerelease = $false; target_commitish = $commit; html_url = 'https://github.invalid/x'; assets = @() }
+}
+# Uma versão já pública no GitHub de mentira, com o manifesto do instalador dela entre os arquivos.
+function Tornar-Publica($caso, [string]$qual, [string]$hash) {
+    $tag = "$($destino.Prefixo)$qual"
+    Mudar-Releases $caso { param($l) $l + (Um-Release $tag $false) }
+    $guardados = Join-Path $caso.Estado "arquivos\$tag"
+    New-Item -ItemType Directory -Force $guardados | Out-Null
+    Gravar-Json (Join-Path $guardados $nomes[1]) ([ordered]@{ versao = $qual; plataforma = 'windows-x64'; arquivo = "awikabot-$qual-windows-x64.exe"; tamanho = 1; sha256 = $hash })
 }
 
 try {
@@ -155,6 +171,27 @@ try {
     Recusa-Ao-Publicar 'versao menor que a ultima publica' 'nao e maior que a ultima publica' { param($c) Mudar-Releases $c { param($l) $l + (Um-Release "$($destino.Prefixo)99.0.0" $false) } }
     Recusa-Ao-Publicar 'etiqueta ja existe' "a etiqueta $etiqueta ja existe" { param($c) Write-TextoSemBom (Join-Path $c.Estado 'etiquetas.json') "[{`"ref`":`"refs/tags/$etiqueta`",`"object`":{`"sha`":`"$commit`"}}]" }
 
+    # Com uma versão já pública: as duas rodadas de QA têm de ter partido dela, do instalador publicado.
+    $etiquetaDaPublica = "$($destino.Prefixo)$versaoPublica"
+    $manifestoDaPublica = "arquivos\$etiquetaDaPublica\$($nomes[1])"
+    $baixaDoManifesto = "release download $etiquetaDaPublica --repo $($destino.Repositorio) --pattern $($nomes[1])"
+    $qaSemRede = 'qa-sandbox-sem-rede.json'
+    $qaComRede = 'qa-sandbox-com-rede.json'
+    $caso = Montar -ComVersaoPublica
+    Esperar 'publicar, com versao publica, ensaio: confere de onde o QA partiu' (Publicar $caso @('-Ensaio')) $true 'ENSAIO: tudo conferido' 'release create' $baixaDoManifesto
+    Esperar 'publicar, com versao publica: cria o rascunho' (Publicar $caso) $true 'rascunho conferido' '' "release create $etiqueta"
+    Recusa-Ao-Publicar 'QA sem rede que nao partiu de versao nenhuma' "o QA no Sandbox sem rede nao partiu da ultima versao publica, $versaoPublica" { param($c) Mudar-Json (Join-Path $c.Evidencias $qaSemRede) { param($v) $v.anterior = $null } } -ComVersaoPublica
+    Recusa-Ao-Publicar 'QA com rede que nao partiu de versao nenhuma' "o QA no Sandbox com rede nao partiu da ultima versao publica, $versaoPublica" { param($c) Mudar-Json (Join-Path $c.Evidencias $qaComRede) { param($v) $v.anterior = $null } } -ComVersaoPublica
+    Recusa-Ao-Publicar 'evidencia de QA de antes de existir o campo' 'o QA no Sandbox sem rede nao partiu da ultima versao publica' { param($c) Mudar-Json (Join-Path $c.Evidencias $qaSemRede) { param($v) $v.PSObject.Properties.Remove('anterior') } } -ComVersaoPublica
+    Recusa-Ao-Publicar 'QA sem rede que partiu de outra versao' "o QA no Sandbox sem rede partiu da versao 0.0.0, e a ultima publica e a $versaoPublica" { param($c) Mudar-Json (Join-Path $c.Evidencias $qaSemRede) { param($v) $v.anterior.versao = '0.0.0' } } -ComVersaoPublica
+    Recusa-Ao-Publicar 'QA com rede que partiu de outra versao' "o QA no Sandbox com rede partiu da versao 0.0.0, e a ultima publica e a $versaoPublica" { param($c) Mudar-Json (Join-Path $c.Evidencias $qaComRede) { param($v) $v.anterior.versao = '0.0.0' } } -ComVersaoPublica
+    Recusa-Ao-Publicar 'QA que partiu de outro instalador da mesma versao' "o QA no Sandbox com rede partiu de um instalador da $versaoPublica que nao e o publicado" { param($c) Mudar-Json (Join-Path $c.Evidencias $qaComRede) { param($v) $v.anterior.sha256 = '0' * 64 } } -ComVersaoPublica
+    Recusa-Ao-Publicar 'versao publica sem manifesto que se leia' "nao deu para ler o manifesto da ultima versao publica, $versaoPublica" { param($c) Remove-Item -LiteralPath (Join-Path $c.Estado $manifestoDaPublica) } -ComVersaoPublica
+    # Sem versão pública, nada muda: o QA que partiu de uma versão passa como o que não partiu.
+    $caso = Montar -ComVersaoPublica
+    Write-TextoSemBom (Join-Path $caso.Estado 'releases.json') '[]'
+    Esperar 'publicar, sem versao publica: de onde o QA partiu nao e cobrado' (Publicar $caso @('-Ensaio')) $true 'ENSAIO: tudo conferido' 'release download' ''
+
     $caso = Montar
     New-Item -ItemType File (Join-Path $caso.Estado 'corromper-ao-subir') | Out-Null
     $resultado = Publicar $caso
@@ -187,6 +224,15 @@ try {
     Recusa-Ao-Aprovar 'QA reprovado depois do rascunho' 'o QA no Sandbox com rede reprovou' { param($c) Mudar-Json (Join-Path $c.Evidencias 'qa-sandbox-com-rede.json') { param($v) $v.aprovado = $false } }
     Recusa-Ao-Aprovar 'outra versao maior ja publica' 'nao e maior que a ultima publica' { param($c) Mudar-Releases $c { param($l) $l + (Um-Release "$($destino.Prefixo)99.0.0" $false) } }
     Recusa-Ao-Aprovar 'etiqueta criada por fora' "a etiqueta $etiqueta ja existe" { param($c) Write-TextoSemBom (Join-Path $c.Estado 'etiquetas.json') "[{`"ref`":`"refs/tags/$etiqueta`",`"object`":{`"sha`":`"$commit`"}}]" }
+
+    # Com uma versão já pública: a aprovação confere de novo de onde o QA partiu, contra o GitHub de agora.
+    $caso = Montar -ComVersaoPublica
+    Publicar $caso | Out-Null
+    Remove-Item -LiteralPath (Join-Path $caso.Estado 'chamadas.log')
+    Esperar 'aprovar, com versao publica: confere de onde o QA partiu e publica' (Aprovar $caso) $true 'release publico' '' $baixaDoManifesto
+    Recusa-Ao-Aprovar 'QA que deixou de dizer de onde partiu' "o QA no Sandbox com rede nao partiu da ultima versao publica, $versaoPublica" { param($c) Mudar-Json (Join-Path $c.Evidencias $qaComRede) { param($v) $v.anterior = $null } } -ComVersaoPublica
+    Recusa-Ao-Aprovar 'outra versao, menor, publicada depois do rascunho' "o QA no Sandbox sem rede partiu da versao $versaoPublica, e a ultima publica e a 0.0.2" { param($c) Tornar-Publica $c '0.0.2' ('b' * 64) } -ComVersaoPublica
+    Recusa-Ao-Aprovar 'instalador da versao publica trocado depois do rascunho' "partiu de um instalador da $versaoPublica que nao e o publicado" { param($c) Mudar-Json (Join-Path $c.Estado $manifestoDaPublica) { param($v) $v.sha256 = 'c' * 64 } } -ComVersaoPublica
 
     $caso = Montar
     Publicar $caso | Out-Null

@@ -6,8 +6,8 @@
 # Roda, nesta ordem: a suíte TypeScript, o runbook `pnpm verificar`, a auditoria das dependências
 # do pnpm; rustfmt, clippy e os testes do workspace Cargo; o `cargo deny` (avisos de segurança e
 # origem das dependências); a consulta à OSV; a coleta das licenças de terceiros, que para se
-# aparecer licença fora da lista das aceitas; e o teste dos scripts de publicação, com um `gh` de
-# mentira. Para na primeira que falhar.
+# aparecer licença fora da lista das aceitas; o teste dos scripts de publicação, com um `gh` de
+# mentira; e o teste do julgamento da conferência depois de publicar. Para na primeira que falhar.
 #
 # No fim grava a evidência, com o commit, em relatorios/release/<versão>-<commit>/candidato.json.
 # A pasta relatorios/ fica fora do Git e fora de target/: uma limpeza de build não a apaga.
@@ -49,6 +49,7 @@ New-Item -ItemType Directory -Force $script:PastaDeBuild | Out-Null
 Passo 'licencas de terceiros' 'node' @((Join-Path $desktop 'distribuicao\licencas-de-terceiros.mjs'), $licencas) $raiz
 Remove-Item -LiteralPath $licencas -ErrorAction SilentlyContinue
 Passo 'scripts de publicacao' 'powershell.exe' @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot 'testes\testar-publicacao.ps1')) $raiz
+Passo 'conferencia da atualizacao' 'powershell.exe' @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot 'testes\testar-ver-atualizacao.ps1')) $raiz
 
 $evidencias = Get-PastaDeEvidencias $versao $origem
 $evidencia = [ordered]@{

@@ -37,22 +37,11 @@ if (-not $informacoes.assinado -and -not $DesligarSmartAppControl) {
 }
 if ($MarcaDeDownload -and -not $informacoes.assinado) { throw '-MarcaDeDownload e para pacote assinado: sem assinatura, o Windows para o instalador numa pergunta' }
 
-# A versão anterior: o que o manifesto dela diz vira nome de arquivo, então só passa no formato
-# esperado, e o instalador tem de ser o do manifesto.
+# A versão anterior, conferida contra o manifesto dela, e menor que a do pacote.
 $partida = $null
 if ($Anterior) {
-    $pastaAnterior = (Resolve-Path -LiteralPath $Anterior).Path
-    $manifestoAnterior = Get-Content -Raw (Join-Path $pastaAnterior 'awikabot-desktop-windows-x64.json') | ConvertFrom-Json
-    if ([string]$manifestoAnterior.versao -notmatch '^\d+\.\d+\.\d+$') { throw 'a versao no manifesto da versao anterior esta fora do formato x.y.z' }
-    if ([string]$manifestoAnterior.arquivo -ne "awikabot-$($manifestoAnterior.versao)-windows-x64.exe") { throw 'o manifesto da versao anterior aponta para um arquivo com outro nome' }
-    if ([version]$manifestoAnterior.versao -ge [version]$manifesto.versao) { throw "a versao anterior ($($manifestoAnterior.versao)) tem de ser menor que a do pacote ($($manifesto.versao))" }
-    $instaladorAnterior = Join-Path $pastaAnterior $manifestoAnterior.arquivo
-    if (-not (Test-Path -LiteralPath $instaladorAnterior)) { throw "falta o instalador da versao anterior: $instaladorAnterior" }
-    if ((Get-Sha256 $instaladorAnterior) -ne $manifestoAnterior.sha256) { throw 'o instalador da versao anterior nao e o do manifesto dela' }
-    if (-not $DesligarSmartAppControl -and (Get-AuthenticodeSignature -LiteralPath $instaladorAnterior).Status -ne 'Valid') {
-        throw 'o instalador da versao anterior nao tem assinatura valida: com o Smart App Control ligado, o Sandbox o bloquearia'
-    }
-    $partida = [ordered]@{ versao = [string]$manifestoAnterior.versao; instalador = [string]$manifestoAnterior.arquivo; sha256 = [string]$manifestoAnterior.sha256 }
+    $versaoDePartida = Resolve-VersaoAnterior $Anterior ([string]$manifesto.versao) (-not $DesligarSmartAppControl)
+    $partida = $versaoDePartida.Partida
 }
 
 $rodada = Join-Path $script:PastaDeBuild ("qa-sandbox\" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
@@ -62,7 +51,7 @@ New-Item -ItemType Directory -Force $entrada, $saida | Out-Null
 Copy-Item -LiteralPath $instalador, (Join-Path $Pacote 'awikabot-desktop-windows-x64.json'), (Join-Path $PSScriptRoot 'qa-sandbox-dentro.ps1') -Destination $entrada
 if ($partida) {
     New-Item -ItemType Directory -Force (Join-Path $entrada 'anterior') | Out-Null
-    Copy-Item -LiteralPath $instaladorAnterior, (Join-Path $pastaAnterior 'awikabot-desktop-windows-x64.json') -Destination (Join-Path $entrada 'anterior')
+    Copy-Item -LiteralPath $versaoDePartida.Instalador, $versaoDePartida.Manifesto -Destination (Join-Path $entrada 'anterior')
 }
 
 $opcoes = @()
