@@ -439,7 +439,7 @@ macOS, que é o passo 5; loja da Microsoft; canal de versões de teste; e o que 
 
 O titular aceitou as recomendações da tabela acima em 24/11: Inno Setup, o certificado dele, ícone proposto aqui, atualizações pelos releases do GitHub; bandeja e versão portátil ficam para depois. Feito até agora o subpasso 1 e a parte sem janela do subpasso 5.
 
-- **Identidade do executável (subpasso 1).** Ícone gerado por `apps/desktop/crates/app/recursos/gerar-icone.mjs` e versionado ao lado; à espera da aprovação do desenho pelo titular. Versão `0.1.0`. O `build.rs` grava ícone, versão e descrição no `.exe`. O runtime do C++ vai embutido em todo build (`apps/desktop/.cargo/config.toml`). O build de distribuição é o `apps/desktop/distribuicao/windows/compilar.ps1`, que troca os caminhos da máquina por nomes neutros e só entrega o executável depois de conferi-lo.
+- **Identidade do executável (subpasso 1).** Ícone gerado por `apps/desktop/crates/app/recursos/gerar-icone.mjs` e versionado ao lado. O primeiro desenho, um balão branco sobre azul, saiu nas versões 0.1.0 e 0.1.1; em 25/11 o titular o recusou e aprovou outro, a letra a com dois olhos sobre um quadrado escuro, que entra no executável a partir da próxima versão. Versão `0.1.0`. O `build.rs` grava ícone, versão e descrição no `.exe`. O runtime do C++ vai embutido em todo build (`apps/desktop/.cargo/config.toml`). O build de distribuição é o `apps/desktop/distribuicao/windows/compilar.ps1`, que troca os caminhos da máquina por nomes neutros e só entrega o executável depois de conferi-lo.
 - **Atualizador, parte sem janela (subpasso 5).** `apps/desktop/crates/cliente/src/atualizacao.rs`: lê a versão, consulta os releases de etiqueta `desktop-v`, lê o manifesto da plataforma e baixa o pacote para um arquivo provisório, que só ganha o nome final depois de conferidos o tamanho e o SHA-256. A etiqueta e os nomes dos arquivos são montados a partir da versão: nada do que a rede respondeu vira parte de um endereço. Falta a conferência da assinatura, a tela e a instalação.
 
 | Verificação | Resultado |
@@ -589,9 +589,7 @@ Os botões do app não têm foco de teclado: de fora, só se chega a eles pelo m
 | Falsificação: sem exigir o botão principal para instalar | O clique saiu assim que o pacote apareceu e caiu no "Cancelar": o pacote sumiu do disco e a rodada foi reprovada no passo da troca de versão. |
 | `testes/testar-ver-atualizacao.ps1` | 33 de 33, como antes: o julgamento do histórico não mudou. |
 
-Depende do titular para seguir:
-
-- aprovar o ícone, ou pedir outro.
+O ícone, que dependia do titular, foi decidido em 25/11: ele recusou o balão branco sobre azul e aprovou a letra a com dois olhos sobre um quadrado escuro. O `gerar-icone.mjs` e o `awikabot.ico` já são os do desenho novo; quem instalou a 0.1.0 ou a 0.1.1 só o vê depois de atualizar para uma versão nova, que ainda não foi empacotada nem passou pelo QA no Sandbox. O app de celular continua com os arquivos de ícone do modelo do Expo.
 
 Não coberto ainda: os cliques do roteiro em outra escala de tela, em outro tamanho de janela e no tema escuro, e o painel da lateral da conversa, com o app pareado; a conferência de revogação com o computador sem rede; a recusa do roteiro do instalador diante de outra versão do Inno Setup. No Sandbox a conta é administradora, e a instalação sem privilégios é conferida pelo lugar dos arquivos e do registro, não com um usuário comum. A assinatura e a publicação só rodaram neste PC; a CI monta o pacote sem assinatura no Windows a cada PR.
 

@@ -1,6 +1,7 @@
-// Gera o ícone do app de desktop: um balão de conversa com dois olhos, sobre um quadrado azul de
-// cantos arredondados. O desenho é descrito por formas, não por imagem, para sair nítido em cada
-// tamanho, e o arquivo gerado fica versionado ao lado deste script.
+// Gera o ícone do app de desktop: a letra a minúscula em azul, com dois olhos dentro, sobre um
+// quadrado escuro de cantos arredondados. A haste da letra termina numa ponta, como a de um balão
+// de conversa. O desenho é descrito por formas, não por imagem, para sair nítido em cada tamanho,
+// e o arquivo gerado fica versionado ao lado deste script.
 //
 //   node apps/desktop/crates/app/recursos/gerar-icone.mjs            regrava awikabot.ico
 //   node apps/desktop/crates/app/recursos/gerar-icone.mjs amostra.png  grava também uma amostra
@@ -12,10 +13,15 @@ import { fileURLToPath } from 'node:url';
 import { crc32, deflateSync } from 'node:zlib';
 
 const TAMANHOS = [16, 20, 24, 32, 40, 48, 64, 128, 256];
-const AZUL_DO_ALTO = [0x5a, 0xa0, 0xf2];
-const AZUL_DO_PE = [0x3c, 0x7f, 0xd9];
-const BRANCO = [0xff, 0xff, 0xff];
-const AZUL_DOS_OLHOS = [0x2a, 0x63, 0xb8];
+// As cores são as do tema escuro do app (`tema.rs`): fundo, borda de controle, destaque e texto forte.
+const FUNDO = [0x1e, 0x1e, 0x1e];
+const FIO = [0x3a, 0x3a, 0x3a];
+const AZUL_DA_LETRA = [0x5a, 0xa0, 0xf2];
+const CLARO_DOS_OLHOS = [0xf0, 0xf0, 0xf0];
+// As medidas do desenho estão numa grade de 256; `G` passa cada uma para a escala de 0 a 1.
+const G = 1 / 256;
+// Até este tamanho os olhos alargam, para não virarem um borrão, e o fio da borda some.
+const TAMANHO_PEQUENO = 24;
 
 /** Distância com sinal até um retângulo de cantos arredondados: negativa por dentro. */
 function retanguloArredondado(x, y, cx, cy, meiaLargura, meiaAltura, raio) {
@@ -32,17 +38,24 @@ function dentroDoTriangulo(x, y, [ax, ay], [bx, by], [cx, cy]) {
 
 /** A cor de um ponto do desenho, em coordenadas de 0 a 1: [r, g, b, a], ou `null` se é vazio. */
 function corDoPonto(x, y, tamanho) {
-  if (retanguloArredondado(x, y, 0.5, 0.5, 0.47, 0.47, 0.22) > 0) return null;
-  // Nos tamanhos pequenos os olhos crescem um pouco, para não sumirem.
-  const raioDoOlho = Math.max(0.055, 1.1 / tamanho);
-  const noBalao =
-    retanguloArredondado(x, y, 0.5, 0.445, 0.31, 0.215, 0.13) <= 0 ||
-    dentroDoTriangulo(x, y, [0.29, 0.6], [0.47, 0.64], [0.25, 0.83]);
-  if (noBalao) {
-    const noOlho = Math.hypot(x - 0.39, y - 0.445) <= raioDoOlho || Math.hypot(x - 0.61, y - 0.445) <= raioDoOlho;
-    return noOlho ? AZUL_DOS_OLHOS : BRANCO;
-  }
-  return AZUL_DO_ALTO.map((doAlto, canal) => doAlto + (AZUL_DO_PE[canal] - doAlto) * y);
+  const ateABorda = retanguloArredondado(x, y, 0.5, 0.5, 0.47, 0.47, 0.22);
+  if (ateABorda > 0) return null;
+  const pequeno = tamanho <= TAMANHO_PEQUENO;
+  // Os olhos: duas pílulas em pé dentro do anel, mais largas nos tamanhos pequenos.
+  const [meiaLargura, meiaAltura, afastamento] = pequeno ? [9, 16, 15] : [6, 12, 14];
+  const noOlho = [114 - afastamento, 114 + afastamento].some(
+    (centro) => retanguloArredondado(x, y, centro * G, 128 * G, meiaLargura * G, meiaAltura * G, meiaLargura * G) <= 0,
+  );
+  if (noOlho) return CLARO_DOS_OLHOS;
+  // A letra: o anel, a haste à direita com o canto de cima arredondado, e a ponta de balão embaixo.
+  const noAnel = Math.abs(Math.hypot(x - 114 * G, y - 128 * G) - 53 * G) <= 15 * G;
+  const naHaste =
+    x >= 160 * G && x <= 190 * G && y >= 60 * G && y <= 196 * G && !(x > 175 * G && y < 75 * G && Math.hypot(x - 175 * G, y - 75 * G) > 15 * G);
+  const naPonta = dentroDoTriangulo(x, y, [190 * G, 168 * G], [212 * G, 196 * G], [190 * G, 196 * G]);
+  if (noAnel || naHaste || naPonta) return AZUL_DA_LETRA;
+  // Um fio de dois pontos da grade junto à borda, para o quadrado não sumir sobre um fundo escuro.
+  if (!pequeno && ateABorda > -2 * G) return FIO;
+  return FUNDO;
 }
 
 /** Desenha num quadrado de `tamanho` pixels: RGBA, de cima para baixo, com as bordas suavizadas. */
