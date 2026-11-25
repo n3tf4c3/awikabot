@@ -459,6 +459,23 @@ function Get-PassosDaAtualizacao {
     Passo 'o app novo apagou o pacote baixado' ($limpo -ge 0) $falta
 }
 
+# De quem foram os cliques no painel de atualização, pelo que o roteiro de dentro do Sandbox
+# anotou (`roteiro.jsonl`, de `ver-atualizacao-dentro.ps1`). Só são do roteiro quando ele anotou
+# um clique em cada botão: repetir o "Baixar" não vale por "Instalar e reabrir". O que ele não
+# clicou ficou para uma pessoa; se alguém clicou, quem diz é o julgamento do histórico.
+function Get-AutoriaDosCliques {
+    param($Roteiro, [bool]$Clicar, [bool]$SoAteAConsulta)
+    if ($SoAteAConsulta) { return 'nenhum: a rodada parou na consulta' }
+    if (-not $Clicar) { return 'de uma pessoa, no painel do app' }
+    $anotado = @($Roteiro | Where-Object { $_ } | ForEach-Object { [string]$_.o_que })
+    $emBaixar = @($anotado | Where-Object { $_ -like 'clique em Baixar,*' }).Count -gt 0
+    $emInstalar = @($anotado | Where-Object { $_ -like 'clique em Instalar e reabrir,*' }).Count -gt 0
+    if ($emBaixar -and $emInstalar) { return 'do roteiro de dentro do Sandbox, por coordenada' }
+    if ($emBaixar) { return 'o roteiro de dentro so clicou em Baixar; Instalar e reabrir ficou para uma pessoa' }
+    if ($emInstalar) { return 'o roteiro de dentro so clicou em Instalar e reabrir; Baixar ficou para uma pessoa' }
+    return 'o roteiro de dentro nao clicou; os cliques ficaram para uma pessoa'
+}
+
 # Os hashes dos arquivos de uma pasta batem com os que a conferência dos artefatos registrou?
 # Devolve um problema por arquivo que falta ou difere.
 function Get-ProblemasDosArquivos {

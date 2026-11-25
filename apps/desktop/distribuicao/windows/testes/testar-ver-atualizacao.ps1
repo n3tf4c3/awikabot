@@ -1,5 +1,6 @@
 # Teste do que a conferência depois de publicar (ver-atualizacao.ps1) decide sem o Sandbox: o
-# julgamento do histórico e as recusas da versão anterior, que o QA também usa.
+# julgamento do histórico, de quem a evidência diz que foram os cliques, e as recusas da versão
+# anterior, que o QA também usa.
 #
 #   powershell -ExecutionPolicy Bypass -File apps/desktop/distribuicao/windows/testes/testar-ver-atualizacao.ps1
 #
@@ -108,6 +109,36 @@ try {
     Esperar-Passos 'o processo e o mesmo de antes' (Julgar (Instalacao) (Historico @{ processo = 100 })) '111100' 'o processo e o mesmo de antes'
     Esperar-Passos 'o pacote continuou no disco' (Julgar (Instalacao) (Historico @{ sobra = $baixado })) '111110' 'o pacote continuou'
     Esperar-Passos 'passo que depende de outro nao visto diz isso' (Julgar (Instalacao) (Historico @{ consulta = $null })) '100000' 'so vale depois do passo anterior'
+
+    # --- De quem foram os cliques ---
+    # As anotações como o roteiro de dentro as escreve, lidas de volta do JSON.
+    function Roteiro([string[]]$anotacoes) {
+        return @($anotacoes | ForEach-Object { (ConvertTo-Json -InputObject ([ordered]@{ quando = '2026-01-01T00:00:00Z'; o_que = $_ }) -Compress) | ConvertFrom-Json })
+    }
+    function Esperar-Cliques([string]$nome, [string]$esperado, $visto) {
+        $motivos = @()
+        if ([string]$visto -cne $esperado) { $motivos += "saiu '$visto', e nao '$esperado'" }
+        Anotar-Caso $nome $motivos
+    }
+    $captura = 'captura 1-aviso.png (980x680)'
+    $noLugar = 'no lugar do botao, depois da consulta: comum'
+    $cliqueEmBaixar = 'clique em Baixar, em (490, 512) da janela de 980x680, escala 1'
+    $cliqueEmInstalar = 'clique em Instalar e reabrir, em (490, 512) da janela de 980x680, escala 1'
+    $outraTentativa = 'nada chegou em um minuto: outro clique em Baixar'
+    $semBotao = 'nao ha botao de baixar onde o roteiro esperava: o clique fica para uma pessoa'
+    $doRoteiro = 'do roteiro de dentro do Sandbox, por coordenada'
+    $soBaixar = 'o roteiro de dentro so clicou em Baixar; Instalar e reabrir ficou para uma pessoa'
+    $soInstalar = 'o roteiro de dentro so clicou em Instalar e reabrir; Baixar ficou para uma pessoa'
+    $nenhumDoRoteiro = 'o roteiro de dentro nao clicou; os cliques ficaram para uma pessoa'
+
+    Esperar-Cliques 'cliques: a rodada parou na consulta' 'nenhum: a rodada parou na consulta' (Get-AutoriaDosCliques (Roteiro $captura, $noLugar) $false $true)
+    Esperar-Cliques 'cliques: sem -Clicar, sao de uma pessoa' 'de uma pessoa, no painel do app' (Get-AutoriaDosCliques (Roteiro $captura, $noLugar) $false $false)
+    Esperar-Cliques 'cliques: o roteiro clicou nos dois botoes' $doRoteiro (Get-AutoriaDosCliques (Roteiro $captura, $noLugar, $cliqueEmBaixar, $cliqueEmInstalar) $true $false)
+    Esperar-Cliques 'cliques: Baixar repetido e depois Instalar e reabrir' $doRoteiro (Get-AutoriaDosCliques (Roteiro $cliqueEmBaixar, $outraTentativa, $cliqueEmBaixar, $cliqueEmInstalar) $true $false)
+    Esperar-Cliques 'cliques: Baixar repetido nao vale por Instalar e reabrir' $soBaixar (Get-AutoriaDosCliques (Roteiro $captura, $cliqueEmBaixar, $outraTentativa, $cliqueEmBaixar) $true $false)
+    Esperar-Cliques 'cliques: o roteiro so mandou instalar' $soInstalar (Get-AutoriaDosCliques (Roteiro $captura, $semBotao, $cliqueEmInstalar, $cliqueEmInstalar) $true $false)
+    Esperar-Cliques 'cliques: anotacao que so fala de clique nao e clique' $nenhumDoRoteiro (Get-AutoriaDosCliques (Roteiro $captura, $noLugar, $semBotao, $outraTentativa) $true $false)
+    Esperar-Cliques 'cliques: o roteiro nao voltou' $nenhumDoRoteiro (Get-AutoriaDosCliques @() $true $false)
 
     # --- As recusas da versão anterior ---
     $numero = 0
