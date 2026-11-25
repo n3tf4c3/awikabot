@@ -4,7 +4,7 @@ Como sai uma versão do app de desktop para Windows. Cada etapa só começa com 
 
 Tudo roda no computador de quem tem o certificado de assinatura. A chave fica em nuvem e pede sessão aberta nesse computador; ela não vai para a CI nem para o repositório. A CI monta o pacote sem assinatura a cada PR, só para o empacotamento não quebrar em silêncio.
 
-Os comandos partem da raiz do repositório. Estado em 25/11/2026: o roteiro rodou inteiro duas vezes, com a 0.1.0, saída do commit `206b67f`, e com a 0.1.1, saída de `b410db0`. Na segunda, as rodadas de QA partiram também da 0.1.0 publicada. Depois de publicar, a atualização foi vista num app instalado: num Sandbox com rede, a 0.1.0 avisou da versão nova, baixou, conferiu e instalou a 0.1.1. Essa conferência foi feita com um roteiro avulso; o comando dela, `ver-atualizacao.ps1`, veio depois e a repetiu com as mesmas duas versões: seis de seis passos, com os cliques de uma pessoa.
+Os comandos partem da raiz do repositório. Estado em 25/11/2026: o roteiro rodou inteiro duas vezes, com a 0.1.0, saída do commit `206b67f`, e com a 0.1.1, saída de `b410db0`. Na segunda, as rodadas de QA partiram também da 0.1.0 publicada. Depois de publicar, a atualização foi vista num app instalado: num Sandbox com rede, a 0.1.0 avisou da versão nova, baixou, conferiu e instalou a 0.1.1. Essa conferência foi feita com um roteiro avulso; o comando dela, `ver-atualizacao.ps1`, veio depois e a repetiu com as mesmas duas versões: seis de seis passos, primeiro com os cliques de uma pessoa e depois, duas vezes, com os cliques do próprio roteiro.
 
 As etapas 3, 4 e 5 gravam cada uma um arquivo na pasta de evidências do commit, `relatorios/release/<versão>-<commit>`, e cada etapa lê os das anteriores. A conferência depois de publicar grava lá também. A pasta fica fora do Git.
 
@@ -108,12 +108,16 @@ Não há como recolher uma versão publicada de quem já a instalou: o conserto 
 ### Depois de publicar: a atualização num app instalado
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File apps/desktop/distribuicao/windows/ver-atualizacao.ps1 -Anterior <pasta da versão anterior>
+powershell -ExecutionPolicy Bypass -File apps/desktop/distribuicao/windows/ver-atualizacao.ps1 -Anterior <pasta da versão anterior> -Clicar
 ```
 
 Confere num app instalado que o aviso aparece, que o download passa na conferência e que a instalação reabre o app na versão nova. O lugar para isso é um Windows Sandbox com rede, nunca o computador de trabalho. A pasta de `-Anterior` é a mesma do QA, e o instalador dela tem de ser o que está publicado com aquela versão. A versão nova é a última pública, lida do GitHub na hora.
 
-O script abre o Sandbox, instala a versão anterior e abre o app. Um roteiro lá dentro anota cada mudança: a versão do executável e a do registro, se o app está aberto e em que processo, os pacotes na pasta do atualizador, com tamanho e SHA-256, e as preferências. Ele não clica em nada. Os cliques no painel são de uma pessoa: "Baixar", quando o aviso da versão nova aparecer, e depois "Instalar e reabrir".
+O script abre o Sandbox, instala a versão anterior e abre o app. Um roteiro lá dentro anota cada mudança: a versão do executável e a do registro, se o app está aberto e em que processo, os pacotes na pasta do atualizador, com tamanho e SHA-256, e as preferências. Guarda também três capturas da janela: o aviso da versão nova, o pacote baixado e conferido, e o app reaberto.
+
+Com `-Clicar`, o roteiro de dentro clica em "Baixar" e em "Instalar e reabrir", e ninguém precisa ficar na frente. O clique é por coordenada, com mensagens à janela, no lugar onde o botão do painel fica na tela de pareamento da versão anterior. Antes de clicar ele olha a captura. Só clica se houver ali uma faixa de botão, e só manda instalar quando a faixa é a do botão principal, o único colorido da tela: enquanto o pacote é conferido, o botão dali é "Cancelar". Se não acha o botão, não clica, anota por quê e deixa o clique para uma pessoa até o fim do prazo. Sem `-Clicar`, os dois cliques são de uma pessoa.
+
+O lugar do botão está no começo do `ver-atualizacao-dentro.ps1`, medido na tela da 0.1.0 e da 0.1.1. Quando uma versão mudar o desenho da tela de pareamento, a conferência da versão seguinte parte dela: rodar com `-AteAConsulta`, medir o botão na captura `1-aviso.png` e passar `-DeslocamentoDoBotao <pontos abaixo do meio da janela>`, ou trocar o valor no roteiro.
 
 De fora, o script lê o histórico enquanto ele é escrito e diz se a sequência aconteceu:
 
@@ -124,11 +128,11 @@ De fora, o script lê o histórico enquanto ele é escrito e diz se a sequência
 5. o app reabriu na versão nova, em outro processo;
 6. o app novo apagou o pacote baixado.
 
-Vista a sequência, ou esgotado o prazo de 30 minutos (`-PrazoEmMinutos`), o script manda o Sandbox desligar. Fechar o Sandbox também encerra a rodada. A evidência fica em `apps/desktop/target/distribuicao/ver-atualizacao/<data>` e uma cópia vai para a pasta de evidências do commit da versão nova, como `atualizacao-vista.json`. Vale a rodada mais recente, aprovada ou não. Um Sandbox por vez.
+Vista a sequência, ou esgotado o prazo de 30 minutos (`-PrazoEmMinutos`), o script manda o Sandbox desligar. Fechar o Sandbox também encerra a rodada. A evidência fica em `apps/desktop/target/distribuicao/ver-atualizacao/<data>` e uma cópia vai para a pasta de evidências do commit da versão nova, como `atualizacao-vista.json`, com as capturas ao lado (`atualizacao-vista-1-aviso.png` e as outras duas). Ela diz de quem foram os cliques e traz o que o roteiro anotou de cada captura e de cada clique. Vale a rodada mais recente, aprovada ou não. Um Sandbox por vez.
 
-O que o histórico prova é o que ficou no disco e no registro. O texto do aviso e os botões continuam sendo relato de quem clicou.
+O veredito sai do disco e do registro, nunca da tela: um clique que não pega reprova a rodada, não a aprova. As capturas mostram o aviso e os botões; olhar as três é parte da conferência.
 
-`-AteAConsulta` para no passo 2 e não pede ninguém na frente: serve para ver que o app publicado ainda alcança a lista de versões. Não vale como a conferência e não grava na pasta do commit.
+`-AteAConsulta` para no passo 2 e não pede ninguém na frente: serve para ver que o app publicado ainda alcança a lista de versões, e para medir o lugar do botão. Não vale como a conferência e não grava na pasta do commit.
 
 ## Teste dos scripts de publicação
 
@@ -142,11 +146,12 @@ Roda as etapas 5 e 6 de verdade contra um `gh` de mentira, com pacote e evidênc
 powershell -ExecutionPolicy Bypass -File apps/desktop/distribuicao/windows/testes/testar-ver-atualizacao.ps1
 ```
 
-Testa, sem abrir o Sandbox, o que a conferência depois de publicar decide: o julgamento de um histórico escrito no teste, primeiro a atualização inteira e depois um defeito por vez, e as recusas da pasta de `-Anterior`, que o QA também usa. Também faz parte das conferências do candidato. Não cobre o Sandbox: mudou o roteiro que roda lá dentro, roda o `ver-atualizacao.ps1`.
+Testa, sem abrir o Sandbox, o que a conferência depois de publicar decide: o julgamento de um histórico escrito no teste, primeiro a atualização inteira e depois um defeito por vez, e as recusas da pasta de `-Anterior`, que o QA também usa. Também faz parte das conferências do candidato. Não cobre o Sandbox nem os cliques: mudou o roteiro que roda lá dentro, roda o `ver-atualizacao.ps1 -Clicar`.
 
 ## O que o roteiro não cobre
 
-- Os cliques no painel de atualização num app instalado: são de uma pessoa. Os testes do app clicam nos mesmos botões sem tela, contra um servidor de mentira.
+- O painel de atualização na lateral da conversa, com o app pareado: a conferência depois de publicar clica no painel da tela de pareamento. Os testes do app clicam nos mesmos botões sem tela, contra um servidor de mentira.
+- Outra escala de tela ou outro tamanho de janela no Sandbox: os cliques foram vistos com a janela de 980x680, na escala 1.
 - Windows 10: o Sandbox só prova o Windows 11.
 - Instalação por um usuário sem privilégios de administrador: a conta do Sandbox é administradora. O QA confere o lugar dos arquivos e do registro.
 - Queda de energia no meio de uma atualização, e atualização pedida no meio de uma resposta de bot.

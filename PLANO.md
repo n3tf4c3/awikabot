@@ -575,18 +575,25 @@ Ainda em 25/11, as duas pontas que a 0.1.1 deixou soltas no roteiro:
 
 Entre as duas rodadas, o script recusou abrir o Sandbox uma vez: o da rodada anterior ainda terminava de fechar. Chamado de novo instantes depois, abriu.
 
-Os botões do app não têm foco de teclado: de fora, só se chega a eles pelo mouse. Três caminhos para tirar os cliques, nenhum implementado:
+Os botões do app não têm foco de teclado: de fora, só se chega a eles pelo mouse. Havia três caminhos para tirar os cliques: o roteiro de dentro do Sandbox clicar por coordenada; dar papel e nome acessíveis aos botões e acioná-los pela automação de interface do Windows (a GPUI do commit fixado traz AccessKit, que o app não usa); ou uma opção de linha de comando no app que atualizasse de uma vez. O titular escolheu o primeiro, que não muda o app e vale já para a versão instalada.
 
-- o roteiro de dentro do Sandbox clica por coordenada, com mensagens à janela, como o `scripts/desktop-prova-visual.ps1` já faz no build de desenvolvimento, e guarda uma captura do painel, que troca o relato por imagem. Não muda o app e vale já para a 0.1.1 instalada. As coordenadas são as da tela da versão anterior e dependem da escala do Sandbox, o que não foi medido. Se o clique não pegar, a rodada não passa por engano: o veredito sai do disco, e a pessoa ainda pode clicar;
-- dar papel e nome acessíveis aos botões do app, e o roteiro passa a acioná-los pela automação de interface do Windows. A GPUI do commit fixado traz acessibilidade (AccessKit), que o app ainda não usa. Não é caminho de teste: é o que um leitor de tela usa. Só vale a partir da versão que levar os nomes, e falta provar que o acionamento chega ao clique do botão;
-- uma opção de linha de comando no app que consulte, baixe, confira e instale de uma vez, com a mesma origem e a mesma regra de assinatura. Não passa pelo painel, e muda a regra de que cada passo só acontece a pedido.
+- **Os cliques saíram** (`ver-atualizacao.ps1 -Clicar`). O roteiro de dentro clica em "Baixar" e em "Instalar e reabrir" com mensagens à janela, como o `scripts/desktop-prova-visual.ps1` faz no build de desenvolvimento, no lugar medido numa captura da tela de pareamento. Antes de clicar ele olha a captura: sem uma faixa de botão ali, não clica; e só manda instalar quando a faixa é colorida, a do botão principal. Sem `-Clicar`, os cliques continuam sendo de uma pessoa.
+- **Capturas no lugar do relato.** Em toda rodada, com ou sem `-Clicar`, voltam três imagens da janela: o aviso da versão nova, o pacote baixado e conferido, e o app reaberto. Vão para a pasta do commit, ao lado da evidência, que diz de quem foram os cliques.
+- O script espera até 30 segundos um Sandbox que ainda esteja fechando, antes de recusar.
+
+| Verificação | Resultado |
+|---|---|
+| Sandbox com rede, até a consulta, para medir | A captura voltou com o aviso e o botão "Baixar": janela de 980x680, escala 1, tema claro. O botão fica 172 pontos abaixo do meio da janela. |
+| Sandbox com rede, rodada inteira com `-Clicar`, duas vezes | 6 de 6 passos nas duas, sem ninguém na frente. Nas duas, o pacote apareceu no disco com o botão ainda cinza, o "Cancelar" de enquanto ele é conferido; o roteiro esperou o botão principal e clicou um a dois segundos depois. As três capturas mostram o aviso, "Versão 0.1.1 baixada e conferida" com "Instalar e reabrir", e o app reaberto sem aviso. |
+| Falsificação: lugar do botão errado, em cima do "Parear" | O roteiro viu um botão principal onde esperava o de baixar, não clicou e anotou por quê. A rodada foi reprovada no passo do download. |
+| Falsificação: sem exigir o botão principal para instalar | O clique saiu assim que o pacote apareceu e caiu no "Cancelar": o pacote sumiu do disco e a rodada foi reprovada no passo da troca de versão. |
+| `testes/testar-ver-atualizacao.ps1` | 33 de 33, como antes: o julgamento do histórico não mudou. |
 
 Depende do titular para seguir:
 
-- aprovar o ícone, ou pedir outro;
-- decidir se os cliques saem, e por qual dos três caminhos.
+- aprovar o ícone, ou pedir outro.
 
-Não coberto ainda: os cliques no painel de atualização num app instalado, que são de uma pessoa; a conferência de revogação com o computador sem rede; a recusa do roteiro do instalador diante de outra versão do Inno Setup. No Sandbox a conta é administradora, e a instalação sem privilégios é conferida pelo lugar dos arquivos e do registro, não com um usuário comum. A assinatura e a publicação só rodaram neste PC; a CI monta o pacote sem assinatura no Windows a cada PR.
+Não coberto ainda: os cliques do roteiro em outra escala de tela, em outro tamanho de janela e no tema escuro, e o painel da lateral da conversa, com o app pareado; a conferência de revogação com o computador sem rede; a recusa do roteiro do instalador diante de outra versão do Inno Setup. No Sandbox a conta é administradora, e a instalação sem privilégios é conferida pelo lugar dos arquivos e do registro, não com um usuário comum. A assinatura e a publicação só rodaram neste PC; a CI monta o pacote sem assinatura no Windows a cada PR.
 
 ### Decisões que são do titular
 
