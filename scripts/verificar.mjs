@@ -216,6 +216,8 @@ try {
 
       // F4: a ação só roda depois de aprovada.
       const desde = (marca) => (e) => fluxo.eventos.indexOf(e) >= marca;
+      // Cada decisão que o servidor aceitou, para conferir depois o que o histórico guarda dela.
+      const decisoes = [];
       const turnoCom = async (texto, decisao) => {
         const marca = fluxo.eventos.length;
         const novo = desde(marca);
@@ -226,7 +228,10 @@ try {
           for (const e of fluxo.eventos.filter((e) => novo(e) && e.tipo === 'aprovacao_pedida' && !e.respondida)) {
             e.respondida = true;
             const r = await pedir(`/v1/aprovacoes/${e.aprovacao.id}`, { token, corpo: { decisao } });
-            if (r.status === 200) decididas += 1;
+            if (r.status === 200) {
+              decididas += 1;
+              decisoes.push({ id: e.aprovacao.id, estado: decisao === 'aprovar' ? 'aprovada' : 'negada' });
+            }
           }
           return fluxo.eventos.some((e) => novo(e) && e.tipo === 'turno_terminado');
         }, LIMITE_TURNO_MS);
@@ -309,6 +314,16 @@ try {
         } catch { /* fica a marca de saída ilegível */ }
         registrar('F4', 'gancho sem servidor nega', gancho.status === 0 && decisaoDoGancho === 'deny', `saída ${gancho.status}, decisão "${decisaoDoGancho}"`);
       }
+
+      // O histórico guarda o desfecho de cada pedido: é o que a conversa mostra a quem abre o app depois.
+      const comDesfecho = await pedir(`/v1/bots/${botId}/mensagens`, { token });
+      const noHistorico = comDesfecho.corpo?.aprovacoes ?? [];
+      const respostasDaPagina = new Set((comDesfecho.corpo?.mensagens ?? []).filter((m) => m.papel === 'bot').map((m) => m.id));
+      const comODesfechoCerto = decisoes.filter((d) =>
+        noHistorico.some((a) => a.id === d.id && a.estado === d.estado && respostasDaPagina.has(a.mensagemId))).length;
+      registrar('F4', 'o histórico traz os pedidos já resolvidos',
+        decisoes.length >= 1 && comODesfechoCerto === decisoes.length && noHistorico.every((a) => a.estado !== 'pendente'),
+        `${comODesfechoCerto} de ${decisoes.length} decisões com o desfecho certo no histórico; ${noHistorico.length} pedido(s) resolvido(s) na página`);
 
       if (local) {
         // F5: o servidor cai no meio de um turno, com um pedido de aprovação esperando em outro bot.

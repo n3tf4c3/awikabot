@@ -1,6 +1,9 @@
 import type { Aprovacao, Evento, Mensagem } from '@awikabot/core';
 
-/** Os pedidos de aprovação que o app conhece: os pendentes e os resolvidos nesta execução. */
+/**
+ * Os pedidos de aprovação que o app conhece: os pendentes, os resolvidos nesta execução e os já
+ * resolvidos que vieram com as páginas da conversa.
+ */
 export interface EstadoAprovacoes {
   readonly porId: Readonly<Record<string, Aprovacao>>;
   /**
@@ -36,6 +39,19 @@ export function aplicarEventoDeAprovacao(estado: EstadoAprovacoes, evento: Event
 /** Aplica a aprovação já resolvida que o servidor devolveu a uma decisão. */
 export function aplicarDecisao(estado: EstadoAprovacoes, aprovacao: Aprovacao): EstadoAprovacoes {
   const porId = guardar(estado.porId, aprovacao);
+  return porId === estado.porId ? estado : { ...estado, porId };
+}
+
+/**
+ * Aplica os pedidos já resolvidos que vieram com uma página da conversa. O desfecho não muda
+ * mais, então a página nunca é velha demais para isto, e a revisão não sobe. Um pendente que
+ * viesse aqui não entra: quem diz o que espera a pessoa é a lista de pendentes e o fluxo.
+ */
+export function aplicarResolvidas(estado: EstadoAprovacoes, resolvidas: readonly Aprovacao[]): EstadoAprovacoes {
+  let porId = estado.porId;
+  for (const recebida of resolvidas) {
+    if (!pendente(recebida)) porId = guardar(porId, recebida);
+  }
   return porId === estado.porId ? estado : { ...estado, porId };
 }
 

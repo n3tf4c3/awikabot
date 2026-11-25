@@ -117,7 +117,8 @@ struct SessaoAberta {
     bots: Vec<Bot>,
     selecionado: Option<String>,
     conversa: Conversa,
-    /// Os pedidos de aprovação de todos os bots: os pendentes e os resolvidos nesta execução.
+    /// Os pedidos de aprovação de todos os bots: os pendentes, os resolvidos nesta execução e os
+    /// já resolvidos que vieram com a página de cada conversa.
     aprovacoes: Aprovacoes,
     /// Pedidos cuja decisão já saiu daqui e ainda não voltou do servidor.
     decidindo: HashSet<String>,
@@ -460,6 +461,9 @@ impl Janela {
             move |janela, resposta, cx| {
                 let Some(pagina) = janela.conferir(&da_resposta, resposta, cx) else { return };
                 let Some(sessao) = janela.sessao_de(&da_resposta) else { return };
+                // Os pedidos já resolvidos da página valem seja qual for a conversa aberta agora. Um
+                // servidor anterior a esse campo não o manda.
+                sessao.aprovacoes.aplicar_resolvidas(pagina.aprovacoes.unwrap_or_default());
                 // A resposta de um bot que a pessoa já deixou de olhar não entra na conversa do outro.
                 if sessao.selecionado.as_deref() == Some(do_bot.as_str()) {
                     sessao.conversa.trocar(pagina.mensagens);
@@ -1067,6 +1071,7 @@ impl Janela {
                 .flex()
                 .items_center()
                 .gap_2()
+                .debug_selector(|| "pedido-resolvido".into())
                 .child(texto_pequeno(desfecho, cor_do_desfecho(aprovacao.estado)).flex_none())
                 .child(texto_pequeno(aprovacao.ferramenta.clone(), tema::texto_secundario()).flex_none())
                 .child(texto_pequeno(aprovacao.resumo.clone(), tema::texto_apagado()).flex_1().min_w_0().truncate());
@@ -1900,6 +1905,38 @@ mod testes {
             .expect("negar");
         esperar(&mut cx, &janela, "pedido negado pelo outro aparelho", |janela| estados_dos_pedidos(janela) == [AprovacaoEstado::Negada]);
         assert!(!na_tela(&mut cx, "aprovar"));
+    }
+
+    #[gpui::test]
+    fn pedido_resolvido_antes_de_o_app_abrir_aparece_na_conversa_como_linha(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let servidor = ServidorDeTeste::subir();
+        let guardada = parear_pela_api(&servidor, "Computador de teste");
+        let outro = parear_pela_api(&servidor, "Celular");
+        let bot = criar_bot_pela_api(&guardada, "Scout");
+        let api = Api::new();
+        // O pedido nasce, é negado e o turno termina antes de o app abrir: nada disso passa pelo fluxo daqui.
+        api.enviar_turno(&outro.credencial(), &bot.id, &PedidoTurno { texto: "!comando whoami".into() }).expect("turno");
+        esperar_fora_do_app("pedido pendente no servidor", || {
+            api.listar_aprovacoes(&outro.credencial()).is_ok_and(|lista| lista.aprovacoes.len() == 1)
+        });
+        let pedido = api.listar_aprovacoes(&outro.credencial()).expect("pendentes").aprovacoes.remove(0);
+        let negada = api
+            .decidir_aprovacao(&outro.credencial(), &pedido.id, &DecisaoAprovacao { decisao: DecisaoAprovacaoDecisao::Negar })
+            .expect("negar");
+        esperar_fora_do_app("turno terminado no servidor", || {
+            api.listar_bots(&outro.credencial()).is_ok_and(|lista| !lista.bots[0].turno_ativo)
+        });
+
+        let (janela, mut cx) = abrir(&cofre_com(&guardada), cx);
+        esperar(&mut cx, &janela, "o pedido resolvido vem com a conversa", |janela| pedidos(janela) == [negada.clone()]);
+        assert!(na_tela(&mut cx, "pedido-resolvido"), "a linha do pedido está na conversa");
+        assert!(!na_tela(&mut cx, "aprovar"), "resolvido, não há o que decidir");
+        janela.read_with(&cx, |janela, _| {
+            let sessao = aberta(janela).expect("sessão");
+            assert_eq!(situacao_do_bot(&sessao.bots[0], &sessao.aprovacoes), None);
+            assert_eq!(ultima_mensagem(janela).map(|ultima| ultima.id.as_str()), Some(negada.mensagem_id.as_str()));
+        });
     }
 
     #[gpui::test]

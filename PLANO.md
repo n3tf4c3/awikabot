@@ -263,7 +263,23 @@ O app de celular abriu num aparelho pela primeira vez: um Android 14, ligado por
 
 Não coberto: o iPhone; um build próprio, e com ele o ícone, a abertura e o cofre fora do Expo Go; o motor de verdade e o servidor no Pi; HTTPS e a rede de verdade; a resposta chegando aos poucos, que o motor simulado entrega rápido demais para uma captura; o "Parar"; o fluxo F5; o texto digitado pelo teclado da tela; a tela girada e outro tamanho de tela.
 
-Uma diferença vista, sem saber se é de propósito: ao reabrir a conversa, o histórico volta sem a linha que diz a ferramenta e a decisão ("Bash · Aprovada"), que aparece logo depois de decidir.
+Uma diferença vista ali: ao reabrir o app, a conversa voltava sem a linha que diz a ferramenta e a decisão ("Bash · Aprovada"), que aparece logo depois de decidir. Era o desenho de então, não um defeito: o servidor só entregava os pedidos pendentes. Mudou no mesmo dia (ver "Pedidos resolvidos no histórico").
+
+## Pedidos resolvidos no histórico (2026-11-25)
+
+O servidor guardava o desfecho de cada pedido de aprovação, mas só entregava os pendentes. O resolvido chegava ao app pelo fluxo de eventos e ficava na memória: fechado o app, a conversa voltava sem ele, no celular e no desktop.
+
+Agora a página de mensagens traz, num campo opcional, os pedidos já resolvidos das respostas que estão nela. O celular e o desktop guardam esses pedidos com a mesma regra, e a conversa os mostra como antes, presos à resposta em que surgiram. Os pendentes continuam vindo só pela lista deles e pelo fluxo de eventos. Nenhuma tela mudou.
+
+| Verificação | Resultado |
+|---|---|
+| Suíte (lint, tipos e testes) | Passa: 38 testes no `core`, 219 no servidor e 703 no celular. O servidor confere a página aprovada, negada, expirada, paginada e de outro bot; o cliente do celular, contra o servidor, abre um app novo e acha o pedido resolvido logo depois da resposta dele. |
+| Testes novos sem a correção | Os três do servidor e o da janela do desktop falham, como devem. |
+| `pnpm verificar` | 24 de 24, com uma conferência nova em F4: as três decisões do roteiro estão no histórico com o desfecho certo. |
+| Desktop no Windows (rustfmt, clippy e testes) | Passa. O cliente, contra o servidor, recebe o pedido negado na página da conversa; a janela abre depois de o pedido ser resolvido e mostra a linha dele. |
+| Servidor que não manda o campo | A página vale sem ele, no celular e no desktop, por teste. |
+
+Não coberto: a linha vista num aparelho e no app de desktop de verdade depois de reabrir; o motor real; o desktop num Mac, que fica para a CI. O desktop publicado, 0.1.2, ignora o campo: quem o usa só vê os pedidos antigos numa versão nova.
 
 ## Etapa 6: plano do app de desktop (2026-11-23)
 

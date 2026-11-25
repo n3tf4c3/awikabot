@@ -167,6 +167,48 @@ describe('aprovação de uma ação (F4)', () => {
     expect(await a.pendentes()).toEqual([]);
   });
 
+  it('o histórico da conversa traz o pedido resolvido, na página da mensagem em que ele surgiu', async () => {
+    const a = await montar();
+    const historico = async (query = '') =>
+      EsquemaListaMensagens.parse(await (await a.pedir(`/v1/bots/${a.botId}/mensagens${query}`, { token: a.token })).json());
+    const decidir = async (id: string, decisao: 'aprovar' | 'negar') =>
+      EsquemaAprovacao.parse(await (await a.pedir(`/v1/aprovacoes/${id}`, { token: a.token, corpo: { decisao } })).json());
+    expect((await historico()).aprovacoes).toEqual([]);
+
+    const primeiro = await a.enviar('!comando echo oi');
+    await a.esperar(() => a.doTipo('aprovacao_pedida').length === 1);
+    const [pendente] = await a.pendentes();
+    // Enquanto espera a pessoa, o pedido sai na lista de pendentes, não no histórico.
+    expect((await historico()).aprovacoes).toEqual([]);
+    const aprovada = await decidir(pendente!.id, 'aprovar');
+    await a.respostaDoBot();
+
+    const segundo = await a.enviar('!comando rm -rf tudo');
+    await a.esperar(() => a.doTipo('aprovacao_pedida').length === 2);
+    const negada = await decidir((await a.pendentes())[0]!.id, 'negar');
+    await a.respostaDoBot();
+
+    const tudo = await historico();
+    expect(tudo.aprovacoes).toEqual([aprovada, negada]);
+    expect(tudo.aprovacoes?.map((aprovacao) => aprovacao.mensagemId)).toEqual([primeiro.bot.id, segundo.bot.id]);
+    // Cada página só traz os pedidos das mensagens que estão nela.
+    expect((await historico('?limite=2')).aprovacoes).toEqual([negada]);
+    expect((await historico('?antes=3&limite=2')).aprovacoes).toEqual([aprovada]);
+
+    // O pedido de outro bot não aparece na conversa deste.
+    const outroBot = EsquemaBot.parse(await (await a.pedir('/v1/bots', { token: a.token, corpo: { nome: 'Outro' } })).json()).id;
+    expect(EsquemaListaMensagens.parse(await (await a.pedir(`/v1/bots/${outroBot}/mensagens`, { token: a.token })).json()).aprovacoes).toEqual([]);
+  });
+
+  it('o pedido que expirou sozinho também fica no histórico', async () => {
+    const a = await montar({ esperaMs: 40 });
+    const turno = await a.enviar('!comando echo oi');
+    await a.esperar(() => a.doTipo('aprovacao_resolvida').length === 1);
+    await a.respostaDoBot();
+    const lista = EsquemaListaMensagens.parse(await (await a.pedir(`/v1/bots/${a.botId}/mensagens`, { token: a.token })).json());
+    expect(lista.aprovacoes).toMatchObject([{ mensagemId: turno.bot.id, ferramenta: 'Bash', resumo: 'echo oi', estado: 'expirada' }]);
+  });
+
   it('expira o pedido quando o turno é parado antes da resposta', async () => {
     const a = await montar();
     await a.enviar('!comando echo oi');
