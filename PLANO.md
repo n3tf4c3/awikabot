@@ -554,11 +554,38 @@ Em 25/11 saiu a versão 0.1.1, de `b410db0`. Ela não muda o app: existe para ve
 | Atualização pelo painel, no Sandbox com rede | A 0.1.0 consultou a versão ao abrir e baixou o pacote da 0.1.1. O app fechou, o executável e o registro passaram a 0.1.1 e o app reabriu; o pacote baixado foi apagado em seguida. O aviso e os botões são relato de quem clicou. |
 | Publicação | Feita pelo titular em 25/11. Lido no GitHub depois: o release é público, a etiqueta `desktop-v0.1.1` aponta para `b410db0`, e os três arquivos têm os hashes da conferência dos artefatos. |
 
+Ainda em 25/11, as duas pontas que a 0.1.1 deixou soltas no roteiro:
+
+- **A publicação cobra de onde o QA partiu.** Havendo versão pública, o `publicar-rascunho.ps1` lê no GitHub o manifesto da última e só passa se as duas rodadas de QA partiram dela, com o instalador que está publicado, comparado pelo SHA-256. O `aprovar.ps1` repete a conferência contra a última versão pública de agora, para o caso de outra versão sair entre o rascunho e a aprovação. Sem versão pública, nada muda.
+- **Conferência depois de publicar como comando** (`ver-atualizacao.ps1 -Anterior <pasta>`). Abre um Sandbox com rede, instala a versão anterior publicada e abre o app. Um roteiro lá dentro anota cada mudança do que está instalado; o script de fora lê o histórico e julga a sequência: consulta registrada, pacote baixado com o tamanho e o hash do manifesto público, executável e registro na versão nova, app reaberto em outro processo, pacote apagado pelo app novo. Grava `atualizacao-vista.json` na pasta do commit da versão nova. Os cliques continuam sendo de uma pessoa.
+- **Versão anterior conferida num lugar só.** As recusas da pasta de `-Anterior` saíram do `qa-sandbox.ps1` para `comum.ps1`; o QA e a conferência depois de publicar usam a mesma função. A conferência depois de publicar exige ainda que o instalador seja o do release daquela versão.
+
+| Verificação | Resultado |
+|---|---|
+| Teste dos scripts de publicação | 57 de 57 casos: os 43 de antes e 14 com uma versão pública no GitHub de mentira. O caminho bom das duas etapas; a rodada sem `anterior`, a que partiu de outra versão e a que partiu de outro instalador da mesma versão, recusadas pelo motivo certo; a versão pública sem manifesto que se leia; e, na aprovação, outra versão publicada depois do rascunho. |
+| Falsificação do teste de publicação | Seis conferências novas tiradas, uma por vez, numa cópia descartável do repositório; o teste acusou todas. |
+| Teste da conferência depois de publicar (`testes/testar-ver-atualizacao.ps1`) | 33 de 33 casos, sem Sandbox: o julgamento de históricos escritos no teste, a atualização inteira e um defeito por vez, e as recusas da versão anterior contra uma pasta temporária. Entrou nas conferências do candidato. |
+| Falsificação do julgamento | 25 conferências tiradas, uma por vez. Na primeira rodada uma passou sem ser acusada: faltava o caso das preferências gravadas sem a data da consulta. Com ele, o teste acusou as 25. |
+| Recusas do script novo, contra o GitHub de verdade, sem abrir o Sandbox | A 0.1.1 como versão anterior, por não ser menor que a última pública; o pacote assinado da 0.1.0 que não foi publicado, por não ser o do release; um pacote de desenvolvimento, por não ter assinatura. |
+| Sandbox com rede, `ver-atualizacao.ps1 -AteAConsulta` | A 0.1.0 publicada foi instalada com o Smart App Control ligado, o app abriu e registrou a consulta seis segundos depois. O histórico foi lido de fora enquanto era escrito, e o Sandbox desligou a pedido do script. |
+| Sandbox, QA depois da mudança no `qa-sandbox.ps1` | Pacote assinado da 0.1.1 partindo da 0.1.0, sem rede: 26 de 26 passos. |
+| Conferências do candidato, como ensaio | 14 de 14 passos, já com o teste da conferência depois de publicar. |
+
+A rodada inteira do `ver-atualizacao.ps1`, com os cliques, não foi feita: do download em diante, o julgamento só viu históricos escritos no teste, no formato que a rodada até a consulta produziu.
+
+Os botões do app não têm foco de teclado: de fora, só se chega a eles pelo mouse. Três caminhos para tirar os cliques, nenhum implementado:
+
+- o roteiro de dentro do Sandbox clica por coordenada, com mensagens à janela, como o `scripts/desktop-prova-visual.ps1` já faz no build de desenvolvimento, e guarda uma captura do painel, que troca o relato por imagem. Não muda o app e vale já para a 0.1.1 instalada. As coordenadas são as da tela da versão anterior e dependem da escala do Sandbox, o que não foi medido. Se o clique não pegar, a rodada não passa por engano: o veredito sai do disco, e a pessoa ainda pode clicar;
+- dar papel e nome acessíveis aos botões do app, e o roteiro passa a acioná-los pela automação de interface do Windows. A GPUI do commit fixado traz acessibilidade (AccessKit), que o app ainda não usa. Não é caminho de teste: é o que um leitor de tela usa. Só vale a partir da versão que levar os nomes, e falta provar que o acionamento chega ao clique do botão;
+- uma opção de linha de comando no app que consulte, baixe, confira e instale de uma vez, com a mesma origem e a mesma regra de assinatura. Não passa pelo painel, e muda a regra de que cada passo só acontece a pedido.
+
 Depende do titular para seguir:
 
-- aprovar o ícone, ou pedir outro.
+- aprovar o ícone, ou pedir outro;
+- fazer os dois cliques numa rodada inteira do `ver-atualizacao.ps1`;
+- decidir se os cliques saem, e por qual dos três caminhos.
 
-Não coberto ainda: os cliques no painel de atualização por um teste, que hoje são de uma pessoa; a publicação cobrar que o QA tenha partido da última versão pública; a conferência de revogação com o computador sem rede; a recusa do roteiro do instalador diante de outra versão do Inno Setup. No Sandbox a conta é administradora, e a instalação sem privilégios é conferida pelo lugar dos arquivos e do registro, não com um usuário comum. A assinatura e a publicação só rodaram neste PC; a CI monta o pacote sem assinatura no Windows a cada PR.
+Não coberto ainda: os cliques no painel de atualização num app instalado, que são de uma pessoa; a conferência de revogação com o computador sem rede; a recusa do roteiro do instalador diante de outra versão do Inno Setup. No Sandbox a conta é administradora, e a instalação sem privilégios é conferida pelo lugar dos arquivos e do registro, não com um usuário comum. A assinatura e a publicação só rodaram neste PC; a CI monta o pacote sem assinatura no Windows a cada PR.
 
 ### Decisões que são do titular
 
