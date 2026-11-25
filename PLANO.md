@@ -95,7 +95,7 @@ Um bot executa comandos, então o servidor equivale a um terminal remoto no Pi.
 4. Concluída em 23/11, no lado do servidor. Robustez no Pi: retomada depois de queda, backup do banco e health check vigiado.
    Verificar: derrubar o contêiner no meio de um turno e conferir o fluxo 5 na volta; restaurar o backup num ambiente descartável.
 5. Revisão de segurança e distribuição por TestFlight e teste interno da Play.
-6. App de desktop para Windows e Mac, em Rust com GPUI. No Windows, as versões 0.1.0 e 0.1.1 foram publicadas em 24 e 25/11; o Mac ainda não tem pacote. Ver "Etapa 6: plano do app de desktop".
+6. App de desktop para Windows e Mac, em Rust com GPUI. No Windows, as versões 0.1.0, 0.1.1 e 0.1.2 foram publicadas em 24 e 25/11; o Mac ainda não tem pacote. Ver "Etapa 6: plano do app de desktop".
    Verificar: os fluxos 1 a 5 percorridos no Windows e num Mac, com o app instalado pelo pacote assinado.
 
 ## Etapa 0: resultado (2026-11-23)
@@ -439,7 +439,7 @@ macOS, que é o passo 5; loja da Microsoft; canal de versões de teste; e o que 
 
 O titular aceitou as recomendações da tabela acima em 24/11: Inno Setup, o certificado dele, ícone proposto aqui, atualizações pelos releases do GitHub; bandeja e versão portátil ficam para depois. Feito até agora o subpasso 1 e a parte sem janela do subpasso 5.
 
-- **Identidade do executável (subpasso 1).** Ícone gerado por `apps/desktop/crates/app/recursos/gerar-icone.mjs` e versionado ao lado. O primeiro desenho, um balão branco sobre azul, saiu nas versões 0.1.0 e 0.1.1; em 25/11 o titular o recusou e aprovou outro, a letra a com dois olhos sobre um quadrado escuro, que entra no executável a partir da próxima versão. Versão `0.1.0`. O `build.rs` grava ícone, versão e descrição no `.exe`. O runtime do C++ vai embutido em todo build (`apps/desktop/.cargo/config.toml`). O build de distribuição é o `apps/desktop/distribuicao/windows/compilar.ps1`, que troca os caminhos da máquina por nomes neutros e só entrega o executável depois de conferi-lo.
+- **Identidade do executável (subpasso 1).** Ícone gerado por `apps/desktop/crates/app/recursos/gerar-icone.mjs` e versionado ao lado. O primeiro desenho, um balão branco sobre azul, saiu nas versões 0.1.0 e 0.1.1; em 25/11 o titular o recusou e aprovou outro, a letra a com dois olhos sobre um quadrado escuro, que está no executável desde a versão 0.1.2. Versão `0.1.0`. O `build.rs` grava ícone, versão e descrição no `.exe`. O runtime do C++ vai embutido em todo build (`apps/desktop/.cargo/config.toml`). O build de distribuição é o `apps/desktop/distribuicao/windows/compilar.ps1`, que troca os caminhos da máquina por nomes neutros e só entrega o executável depois de conferi-lo.
 - **Atualizador, parte sem janela (subpasso 5).** `apps/desktop/crates/cliente/src/atualizacao.rs`: lê a versão, consulta os releases de etiqueta `desktop-v`, lê o manifesto da plataforma e baixa o pacote para um arquivo provisório, que só ganha o nome final depois de conferidos o tamanho e o SHA-256. A etiqueta e os nomes dos arquivos são montados a partir da versão: nada do que a rede respondeu vira parte de um endereço. Falta a conferência da assinatura, a tela e a instalação.
 
 | Verificação | Resultado |
@@ -589,9 +589,23 @@ Os botões do app não têm foco de teclado: de fora, só se chega a eles pelo m
 | Falsificação: sem exigir o botão principal para instalar | O clique saiu assim que o pacote apareceu e caiu no "Cancelar": o pacote sumiu do disco e a rodada foi reprovada no passo da troca de versão. |
 | `testes/testar-ver-atualizacao.ps1` | 33 de 33, como antes: o julgamento do histórico não mudou. |
 
-O ícone, que dependia do titular, foi decidido em 25/11: ele recusou o balão branco sobre azul e aprovou a letra a com dois olhos sobre um quadrado escuro. O `gerar-icone.mjs` e o `awikabot.ico` já são os do desenho novo; quem instalou a 0.1.0 ou a 0.1.1 só o vê depois de atualizar para uma versão nova, que ainda não foi empacotada nem passou pelo QA no Sandbox. O app de celular recebeu o mesmo desenho em seguida: o ícone do iOS, as camadas do ícone adaptável do Android e a imagem de abertura saem de `apps/mobile/assets/gerar-icones.mjs`, e os arquivos do modelo do Expo saíram do repositório. Nenhum build os pôs num aparelho ainda.
+O ícone, que dependia do titular, foi decidido em 25/11: ele recusou o balão branco sobre azul e aprovou a letra a com dois olhos sobre um quadrado escuro. O `gerar-icone.mjs` e o `awikabot.ico` já são os do desenho novo; quem instalou a 0.1.0 ou a 0.1.1 só o vê depois de atualizar para a 0.1.2. O app de celular recebeu o mesmo desenho em seguida: o ícone do iOS, as camadas do ícone adaptável do Android e a imagem de abertura saem de `apps/mobile/assets/gerar-icones.mjs`, e os arquivos do modelo do Expo saíram do repositório. Nenhum build os pôs num aparelho ainda.
 
-Não coberto ainda: os cliques do roteiro em outra escala de tela, em outro tamanho de janela e no tema escuro, e o painel da lateral da conversa, com o app pareado; a conferência de revogação com o computador sem rede; a recusa do roteiro do instalador diante de outra versão do Inno Setup. No Sandbox a conta é administradora, e a instalação sem privilégios é conferida pelo lugar dos arquivos e do registro, não com um usuário comum. A assinatura e a publicação só rodaram neste PC; a CI monta o pacote sem assinatura no Windows a cada PR.
+Ainda em 25/11 saiu a versão 0.1.2, de `02c9d0b`. Fora o ícone, ela não muda o app: existe para levar o desenho novo a quem já instalou. Foi a primeira versão a passar pelo roteiro com as duas pontas amarradas: a publicação cobrou que o QA partisse da 0.1.1 publicada, e a conferência depois de publicar rodou pelo comando, sem ninguém na frente.
+
+| Verificação | Resultado |
+|---|---|
+| Conferências do candidato, em `02c9d0b` | 14 de 14 passos, sem mudança pendente. |
+| Verificação de segurança | Reaproveitada para `02c9d0b`, com o que mudou desde `b410db0` conferido pelo conteúdo: aprovada como gate, sem achado novo. |
+| Pacote assinado e conferência dos artefatos | Executável e instalador assinados com o mesmo certificado da 0.1.1; o app aceitou o pacote pela regra do atualizador. |
+| Sandbox, pacote assinado, partindo da 0.1.1 publicada | 26 de 26 passos nas duas rodadas, sem rede e com rede e marca de download, com o Smart App Control ligado. |
+| Rascunho no GitHub | Criado com os três arquivos, baixado de volta e comparado com os conferidos. |
+| Publicação | Feita pelo titular em 25/11. Lido no GitHub depois: o release é público, a etiqueta `desktop-v0.1.2` aponta para `02c9d0b`, e os três arquivos têm os hashes da conferência dos artefatos. |
+| Atualização vista num app instalado, com `-Clicar` | 6 de 6 passos, sem ninguém na frente. A 0.1.1 instalada registrou a consulta, o roteiro clicou em "Baixar" e em "Instalar e reabrir", o executável e o registro passaram a 0.1.2 e o app reabriu em outro processo. As três capturas mostram "Versão 0.1.2 disponível", "Versão 0.1.2 baixada e conferida" com "Instalar e reabrir", e o app reaberto sem aviso. |
+
+A segunda rodada de QA foi recusada na primeira tentativa: disparada logo depois do fim da primeira, achou o Sandbox ainda fechando. Refeita com ele fechado, passou; a tentativa recusada não grava evidência.
+
+Não coberto ainda: o ícone novo no atalho, no instalador e no aviso do sistema, que nenhuma conferência olha; os cliques do roteiro em outra escala de tela, em outro tamanho de janela e no tema escuro, e o painel da lateral da conversa, com o app pareado; a conferência de revogação com o computador sem rede; a recusa do roteiro do instalador diante de outra versão do Inno Setup. No Sandbox a conta é administradora, e a instalação sem privilégios é conferida pelo lugar dos arquivos e do registro, não com um usuário comum. A assinatura e a publicação só rodaram neste PC; a CI monta o pacote sem assinatura no Windows a cada PR.
 
 ### Decisões que são do titular
 
