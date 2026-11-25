@@ -1,6 +1,6 @@
 # awikabot — plano
 
-Situação em 2026-11-23. Repositório: `github.com/n3tf4c3/awikabot`, público. A etapa 0 passou: o Claude Code serve de primeiro motor. A etapa 1 está na `main`, com a CI aprovada. Na etapa 2, o servidor foi validado com o motor real no Pi e o cliente do app passa contra o servidor; faltam abrir o app em aparelho e o túnel. Na etapa 3, os cartões de aprovação estão validados com o motor real no Pi; falta o aviso push. As medições estão nas seções de resultado de cada etapa.
+Situação em 2026-11-23. Repositório: `github.com/n3tf4c3/awikabot`, público. A etapa 0 passou: o Claude Code serve de primeiro motor. A etapa 1 está na `main`, com a CI aprovada. Na etapa 2, o servidor foi validado com o motor real no Pi e o cliente do app passa contra o servidor; o app abriu num Android em 25/11, pelo Expo Go e com servidor local; faltam o iPhone e o túnel. Na etapa 3, os cartões de aprovação estão validados com o motor real no Pi; falta o aviso push. As medições estão nas seções de resultado de cada etapa.
 
 ## Decisão
 
@@ -134,7 +134,7 @@ Monorepo pnpm com `apps/server`, `apps/mobile` e `packages/core`, CI, imagem do 
 | Imagem do servidor | Constrói para arm64; no Pi, em 18 s. |
 | Contêiner no Pi | Respondeu ao health check e ficou saudável, sem root, com 26 MB, porta só em loopback e sistema de arquivos somente leitura. Foi removido depois do teste. |
 | App | `expo-doctor` passou nas 20 checagens, e o pacote JavaScript exporta para Android e iOS com o `core` dentro. |
-| App aberto no iPhone e no Android | Pendente: precisa de aparelho. |
+| App aberto no iPhone e no Android | Android: aberto em 25/11, pelo Expo Go (ver "App num Android"). iPhone: pendente. |
 | CI no GitHub | Pendente: roda quando a branch for enviada. |
 
 ## Etapa 2: resultado do servidor (2026-11-23)
@@ -165,12 +165,12 @@ Telas de pareamento, lista de bots, formulário de bot e conversa, com a lógica
 | Cliente do app contra o servidor | 4 cenários pela rede, em `apps/server/src/contrato-app.test.ts`: parear, criar e editar bot, conversar e parar, retomar o fluxo sem recarregar tudo, e "Desparear". |
 | Revisão de leitura | Confirmou o cuidado com o token e a regra do 401. Os defeitos que achou foram corrigidos: texto perdido ao abrir a conversa no meio de um turno, sessão apagada por qualquer 401 e reconexão sem freio. |
 | Expo | `expo-doctor` passou nas 20 checagens, e o pacote JavaScript exporta para Android e iOS. |
-| Telas em aparelho | Pendente. Nenhuma tela foi aberta em iPhone, Android ou emulador. |
+| Telas em aparelho | Vistas num Android em 25/11, pelo Expo Go (ver "App num Android"). iPhone: pendente. |
 
 Não coberto na etapa 2:
 
 - o caminho pelo túnel: o teste no Pi foi pela porta em loopback;
-- o app em aparelho, que é o critério da etapa;
+- o app em aparelho pelo túnel, que é o critério da etapa: em 25/11 ele abriu num Android, com servidor local;
 - a leitura de QR no pareamento;
 - executar ações: o motor nega tudo o que pede aprovação até a etapa 3.
 
@@ -191,7 +191,7 @@ O bot passa a executar ações. Antes de cada ferramenta, o gancho do Claude Cod
 Não coberto:
 
 - o aviso push e a espera acima de 15 minutos;
-- os cartões em aparelho: nenhuma tela foi aberta;
+- os cartões em aparelho com o motor de verdade: em 25/11 foram vistos num Android, com o motor simulado;
 - o acesso pelo túnel.
 
 ## Etapa 4: resultado (2026-11-23)
@@ -219,7 +219,7 @@ Não coberto:
 - queda de energia do Pi inteiro: o ensaio matou o processo, não desligou a placa;
 - para onde o backup vai, a cifra dele e a rotina agendada: o script grava numa pasta do host;
 - aviso para fora quando o Pi some: a vigia mora dentro do contêiner;
-- o fluxo F5 no aparelho: nenhuma tela foi aberta;
+- o fluxo F5 no aparelho: não foi percorrido;
 - um bot cuja conversa do motor se perdeu continua sem saída pelo app.
 
 ## Etapa 5: resultado da revisão de segurança (2026-11-23)
@@ -246,6 +246,24 @@ Não coberto:
 - um comando de terminal aprovado continua alcançando o volume inteiro; a proteção é a pessoa ler o comando no cartão;
 - as decisões que a revisão deixou registradas: `http://` na rede local, token de aparelho sem validade, aprovação sem biometria, assinatura das atualizações do app e saída de rede do contêiner;
 - o gate de publicação sobre o commit final, e o teste dinâmico das rotas de pareamento e aprovação.
+
+## App num Android (2026-11-25)
+
+O app de celular abriu num aparelho pela primeira vez: um Android 14, ligado por cabo, pelo Expo Go. O servidor era o pacote de produção, neste PC, em loopback, com o motor simulado; o celular o alcançou pelo cabo (`adb reverse`), com o endereço `http://localhost`. Os toques e o texto foram mandados pelo `adb`, com uma captura de tela depois de cada passo. Nenhum código mudou.
+
+| Verificação | Resultado |
+|---|---|
+| Pareamento (F1) | Teclado de endereço no campo do servidor e em maiúsculas no do código; o formulário rola com o teclado aberto até o botão. O pareamento levou à lista de bots. |
+| Bots (F2) | Lista vazia com o texto de orientação; criar, com os contadores de caracteres e o botão acima do teclado; bot na lista; editar o nome, refletido no título da conversa. |
+| Conversa (F3) | O campo cresce com três linhas de texto e fica acima do teclado. A resposta chegou pelo fluxo de eventos, no Hermes. |
+| Aprovação (F4) | O cartão chegou sozinho, com o comando inteiro; o da gravação mostrou o arquivo e o conteúdo. "Aprovar" e "Negar" funcionaram, e o botão do campo virou "Parar" durante a resposta. |
+| Sessão | Fechado à força e reaberto, o app voltou pareado, direto na lista. |
+| "Desparear" | Pede confirmação com o endereço e volta à tela de pareamento; no servidor, o aparelho ficou revogado. |
+| Metro e log do app | Sem aviso nem erro. |
+
+Não coberto: o iPhone; um build próprio, e com ele o ícone, a abertura e o cofre fora do Expo Go; o motor de verdade e o servidor no Pi; HTTPS e a rede de verdade; a resposta chegando aos poucos, que o motor simulado entrega rápido demais para uma captura; o "Parar"; o fluxo F5; o texto digitado pelo teclado da tela; a tela girada e outro tamanho de tela.
+
+Uma diferença vista, sem saber se é de propósito: ao reabrir a conversa, o histórico volta sem a linha que diz a ferramenta e a decisão ("Bash · Aprovada"), que aparece logo depois de decidir.
 
 ## Etapa 6: plano do app de desktop (2026-11-23)
 
