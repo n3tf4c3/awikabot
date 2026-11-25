@@ -1,4 +1,5 @@
-//! Os pedidos de aprovação que o app conhece: os pendentes e os resolvidos nesta execução.
+//! Os pedidos de aprovação que o app conhece: os pendentes, os resolvidos nesta execução e os já
+//! resolvidos que vieram com a página da conversa.
 //!
 //! É a mesma regra de `apps/mobile/src/lib/aprovacoes.ts`. O pedido resolvido não muda mais: uma
 //! cópia pendente que chega atrasada (lista velha, evento repetido) não desfaz o desfecho que o
@@ -52,6 +53,17 @@ impl Aprovacoes {
     /// A aprovação já resolvida que o servidor devolveu a uma decisão. Não sobe a revisão.
     pub fn aplicar_decisao(&mut self, aprovacao: Aprovacao) {
         self.guardar(aprovacao);
+    }
+
+    /// Os pedidos já resolvidos que vieram com uma página da conversa. O desfecho não muda mais,
+    /// então a página nunca é velha demais para isto, e a revisão não sobe. Um pendente que
+    /// viesse aqui não entra: quem diz o que espera a pessoa é a lista de pendentes e o fluxo.
+    pub fn aplicar_resolvidas(&mut self, resolvidas: Vec<Aprovacao>) {
+        for recebida in resolvidas {
+            if !pendente(&recebida) {
+                self.guardar(recebida);
+            }
+        }
     }
 
     /// A lista de `GET /v1/aprovacoes`. `revisao_no_pedido` é a revisão que o app tinha ao pedir a
@@ -312,6 +324,54 @@ mod testes {
         let mut estado = expirada.clone();
         estado.aplicar_decisao(resolvida(1, Aprovada));
         assert_eq!(estado, expirada);
+    }
+
+    // --- aplicar_resolvidas -----------------------------------------------------------------
+
+    #[test]
+    fn a_pagina_traz_os_pedidos_resolvidos_sem_mexer_na_revisao() {
+        let mut estado = Aprovacoes::default();
+        estado.aplicar_resolvidas(vec![resolvida(1, Aprovada), resolvida(2, Negada), resolvida(3, Expirada)]);
+        assert_eq!(estados(&estado), vec![("comando 1", Aprovada), ("comando 2", Negada), ("comando 3", Expirada)]);
+        assert_eq!(estado.revisao(), 0);
+    }
+
+    #[test]
+    fn o_resolvido_da_pagina_troca_o_pendente_local() {
+        let mut estado = com([aprovacao(1), aprovacao(2)]);
+        let revisao = estado.revisao();
+        estado.aplicar_resolvidas(vec![resolvida(1, Expirada)]);
+        assert_eq!(estados(&estado), vec![("comando 1", Expirada), ("comando 2", Pendente)]);
+        assert_eq!(estado.revisao(), revisao);
+    }
+
+    #[test]
+    fn o_resolvido_da_pagina_nao_desfaz_o_desfecho_que_o_app_ja_conhece() {
+        let negada = com([aprovacao(1), resolvida(1, Negada)]);
+        let mut estado = negada.clone();
+        estado.aplicar_resolvidas(vec![resolvida(1, Aprovada)]);
+        assert_eq!(estado, negada);
+    }
+
+    #[test]
+    fn um_pendente_na_pagina_nao_entra_nem_volta() {
+        let mut vazio = Aprovacoes::default();
+        vazio.aplicar_resolvidas(vec![aprovacao(1)]);
+        assert_eq!(vazio, Aprovacoes::default());
+
+        let negada = com([aprovacao(1), resolvida(1, Negada)]);
+        let mut estado = negada.clone();
+        estado.aplicar_resolvidas(vec![aprovacao(1)]);
+        assert_eq!(estado, negada);
+    }
+
+    #[test]
+    fn a_lista_de_pendentes_em_dia_nao_tira_o_que_veio_com_a_pagina() {
+        let mut estado = com([aprovacao(2)]);
+        estado.aplicar_resolvidas(vec![resolvida(1, Aprovada)]);
+        let revisao = estado.revisao();
+        assert!(estado.aplicar_pendentes(Vec::new(), revisao));
+        assert_eq!(estados(&estado), vec![("comando 1", Aprovada)]);
     }
 
     // --- aplicar_pendentes ------------------------------------------------------------------

@@ -413,4 +413,14 @@ fn negar_aprovacao_contra_o_servidor() {
     assert_eq!(aprovacoes.obter(&pedida.id), Some(&negada));
     assert_eq!(aprovacoes.do_bot(&bot.id), vec![&negada]);
     assert_eq!(situacao_do_bot(&bot, &aprovacoes), None);
+
+    // Quem abre o app depois não viu nada disso pelo fluxo: a página da conversa traz o pedido já
+    // resolvido, preso à resposta em que ele surgiu.
+    let pagina = api.listar_mensagens(credencial, &bot.id).expect("mensagens");
+    assert_eq!(pagina.aprovacoes, Some(vec![negada.clone()]));
+    assert_eq!(pagina.mensagens.last().map(|ultima| ultima.id.as_str()), Some(negada.mensagem_id.as_str()));
+    let mut reaberto = Aprovacoes::default();
+    reaberto.aplicar_resolvidas(pagina.aprovacoes.unwrap_or_default());
+    assert_eq!(reaberto.do_bot(&bot.id), vec![&negada]);
+    assert_eq!(situacao_do_bot(&bot, &reaberto), None);
 }

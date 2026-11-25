@@ -303,6 +303,43 @@ describe('redutorDados: aprovações', () => {
     expect(estado.aprovacoes).toBe(antes.aprovacoes);
   });
 
+  it('a página da conversa traz os pedidos já resolvidos, que o app não tinha', () => {
+    const pagina = { mensagens: [msg(BOT_A, 1), msg(BOT_A, 2)], temMais: false, aprovacoes: [apr(1, 'aprovada'), apr(2, 'negada')] };
+    const estado = aplicar(comBots, [
+      { tipo: 'conversa_aberta', botId: BOT_A },
+      { tipo: 'pagina_recente', botId: BOT_A, pagina },
+    ]);
+    expect(estadosDe(estado)).toEqual({ 'comando 1': 'aprovada', 'comando 2': 'negada' });
+    expect(estado.aprovacoes.revisao).toBe(0);
+    expect(estado.conversas[BOT_A]?.mensagens.map((mensagem) => mensagem.seq)).toEqual([1, 2]);
+  });
+
+  it('a página anterior também traz os resolvidos das mensagens antigas', () => {
+    const recente = aplicar(comBots, [
+      { tipo: 'conversa_aberta', botId: BOT_A },
+      { tipo: 'pagina_recente', botId: BOT_A, pagina: { mensagens: [msg(BOT_A, 3), msg(BOT_A, 4)], temMais: true } },
+    ]);
+    const pagina = { mensagens: [msg(BOT_A, 1), msg(BOT_A, 2)], temMais: false, aprovacoes: [apr(1, 'expirada')] };
+    const estado = aplicar(recente, [{ tipo: 'pagina_anterior', botId: BOT_A, antes: 3, pagina }]);
+    expect(estadosDe(estado)).toEqual({ 'comando 1': 'expirada' });
+  });
+
+  it('página de servidor antigo, sem o campo, não mexe nas aprovações', () => {
+    const antes = aplicar(comBots, [{ tipo: 'conversa_aberta', botId: BOT_A }, evento({ tipo: 'aprovacao_pedida', aprovacao: apr(1) })]);
+    const estado = aplicar(antes, [{ tipo: 'pagina_recente', botId: BOT_A, pagina: { mensagens: [msg(BOT_A, 1)], temMais: false } }]);
+    expect(estado.aprovacoes).toBe(antes.aprovacoes);
+  });
+
+  it('o resolvido da página não desfaz o que o app decidiu, e o pendente da página não entra', () => {
+    const antes = aplicar(comConversa, [
+      evento({ tipo: 'aprovacao_pedida', aprovacao: apr(1) }),
+      { tipo: 'aprovacao_decidida', aprovacao: apr(1, 'negada') },
+    ]);
+    const pagina = { mensagens: [msg(BOT_A, 1), msg(BOT_A, 2)], temMais: false, aprovacoes: [apr(1, 'aprovada'), apr(2)] };
+    const estado = aplicar(antes, [{ tipo: 'pagina_recente', botId: BOT_A, pagina }]);
+    expect(estadosDe(estado)).toEqual({ 'comando 1': 'negada' });
+  });
+
   it('os eventos de aprovação não mexem na conversa aberta do bot', () => {
     const estado = aplicar(comConversa, [
       evento({ tipo: 'aprovacao_pedida', aprovacao: apr(1) }),

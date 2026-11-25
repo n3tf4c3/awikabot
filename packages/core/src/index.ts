@@ -119,12 +119,6 @@ export const EsquemaMensagem = z.object({
 });
 export type Mensagem = z.infer<typeof EsquemaMensagem>;
 
-export const EsquemaListaMensagens = z.object({
-  mensagens: z.array(EsquemaMensagem),
-  temMais: z.boolean(),
-});
-export type ListaMensagens = z.infer<typeof EsquemaListaMensagens>;
-
 export const EsquemaPedidoTurno = z.object({
   texto: z.string().trim().min(1).max(LIMITES.texto),
 });
@@ -161,6 +155,19 @@ export type Aprovacao = z.infer<typeof EsquemaAprovacao>;
 /** Resposta de `GET /v1/aprovacoes`: só as pendentes, de todos os bots, da mais antiga para a mais nova. */
 export const EsquemaListaAprovacoes = z.object({ aprovacoes: z.array(EsquemaAprovacao) });
 export type ListaAprovacoes = z.infer<typeof EsquemaListaAprovacoes>;
+
+/** Resposta de `GET /v1/bots/:id/mensagens`: uma página da conversa, em ordem crescente de `seq`. */
+export const EsquemaListaMensagens = z.object({
+  mensagens: z.array(EsquemaMensagem),
+  temMais: z.boolean(),
+  /**
+   * Os pedidos de aprovação já resolvidos que surgiram nas mensagens desta página, do mais antigo
+   * para o mais novo. Os pendentes não vêm aqui: saem em `GET /v1/aprovacoes` e pelo fluxo de
+   * eventos. Um servidor anterior a este campo não o manda, e a página vale sem ele.
+   */
+  aprovacoes: z.array(EsquemaAprovacao).optional(),
+});
+export type ListaMensagens = z.infer<typeof EsquemaListaMensagens>;
 
 /** Corpo de `POST /v1/aprovacoes/:id`. */
 export const EsquemaDecisaoAprovacao = z.object({ decisao: z.enum(['aprovar', 'negar']) });

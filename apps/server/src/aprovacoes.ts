@@ -92,6 +92,20 @@ export class GestorDeAprovacoes {
     return linhas.map(deLinha);
   }
 
+  /**
+   * Os pedidos já resolvidos que surgiram nestas mensagens, do mais antigo para o mais novo. É o
+   * que o histórico da conversa mostra de cada um; o pendente fica de fora, porque já tem lista
+   * e evento próprios.
+   */
+  resolvidasDasMensagens(mensagemIds: readonly string[]): Aprovacao[] {
+    if (mensagemIds.length === 0) return [];
+    const marcas = mensagemIds.map(() => '?').join(', ');
+    const linhas = this.banco
+      .prepare(`SELECT ${COLUNAS} FROM aprovacoes WHERE mensagem_id IN (${marcas}) AND estado <> 'pendente' ORDER BY criada_em, id`)
+      .all(...mensagemIds) as unknown as LinhaAprovacao[];
+    return linhas.map(deLinha);
+  }
+
   /** Tira o pedido de `pendente` uma única vez: com dois aparelhos decidindo juntos, só o primeiro vale. */
   private encerrar(id: string, estado: Exclude<Aprovacao['estado'], 'pendente'>, dispositivoId: string | null): Aprovacao | null {
     const linha = this.banco

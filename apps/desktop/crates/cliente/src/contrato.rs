@@ -119,6 +119,8 @@ pub struct Mensagem {
 pub struct ListaMensagens {
     pub mensagens: Vec<Mensagem>,
     pub tem_mais: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aprovacoes: Option<Vec<Aprovacao>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

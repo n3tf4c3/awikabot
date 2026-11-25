@@ -162,7 +162,11 @@ export function criarApp(deps: Dependencias): Hono<Ambiente> {
         ? { ...mensagem, texto: deps.turnos.textoParcial(mensagem.id) ?? mensagem.texto }
         : mensagem,
     );
-    return c.json({ mensagens, temMais: pagina.temMais });
+    // O que já foi decidido em cada resposta vem junto: é o que a conversa mostra de um pedido antigo.
+    const aprovacoes = deps.aprovacoes.resolvidasDasMensagens(
+      mensagens.filter((mensagem) => mensagem.papel === 'bot').map((mensagem) => mensagem.id),
+    );
+    return c.json({ mensagens, temMais: pagina.temMais, aprovacoes });
   });
 
   app.post('/v1/bots/:id/turnos', async (c) => {

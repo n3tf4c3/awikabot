@@ -9,7 +9,11 @@ import { serve } from '@hono/node-server';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Evento } from '@awikabot/core';
 import { criarApi, type Api, type Buscar } from '../../mobile/src/lib/api';
+import { aprovacoesDoBot, ehAprovacao, intercalarAprovacoes, situacaoDoBot } from '../../mobile/src/lib/aprovacoes';
+import { mensagensVisiveis } from '../../mobile/src/lib/conversa';
+import { criarArmazemDados } from '../../mobile/src/lib/dados';
 import { iniciarFluxoEventos, type BuscarFluxo, type FluxoEventos } from '../../mobile/src/lib/fluxo-eventos';
+import { criarOperacoes } from '../../mobile/src/lib/operacoes';
 import type { Sessao } from '../../mobile/src/lib/sessao';
 import { criarApp } from './app';
 import { GestorDeAprovacoes } from './aprovacoes';
@@ -157,6 +161,23 @@ describe('cliente do app contra o servidor', () => {
     expect((await api.listarAprovacoes()).aprovacoes).toEqual([]);
     await expect(api.decidirAprovacao(pendente!.id, { decisao: 'negar' })).rejects.toThrow();
     await expect(api.decidirAprovacao('abcdefgh12345678', { decisao: 'aprovar' })).rejects.toThrow();
+  });
+
+  it('quem abre o app depois vê na conversa o pedido que já foi resolvido', async () => {
+    const botId = (await api.listarBots()).bots[0]!.id;
+    // Um app recém-aberto: não viu o pedido nem a decisão passarem pelo fluxo de eventos.
+    const armazem = criarArmazemDados();
+    const operacoes = criarOperacoes(api, armazem);
+    await Promise.all([operacoes.carregarAprovacoes(), operacoes.carregarConversa(botId)]);
+
+    const estado = armazem.estado();
+    const resolvidas = aprovacoesDoBot(estado.aprovacoes, botId);
+    expect(resolvidas).toMatchObject([{ botId, ferramenta: 'Bash', resumo: 'echo oi', estado: 'aprovada' }]);
+    // A linha do pedido fica logo depois da resposta em que ele surgiu (a lista vai da mais nova para a mais antiga).
+    const itens = intercalarAprovacoes(mensagensVisiveis(estado.conversas[botId]!), resolvidas);
+    const posicao = itens.findIndex((item) => ehAprovacao(item));
+    expect(itens[posicao + 1]).toMatchObject({ id: resolvidas[0]!.mensagemId, texto: 'Comando permitido: echo oi' });
+    expect(situacaoDoBot({ id: botId, turnoAtivo: false }, estado.aprovacoes)).toBeNull();
   });
 
   it('desparear revoga o token: a API e o fluxo passam a ser recusados', async () => {

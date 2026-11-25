@@ -4,6 +4,7 @@ import {
   aplicarDecisao,
   aplicarEventoDeAprovacao,
   aplicarPendentes,
+  aplicarResolvidas,
   type EstadoAprovacoes,
 } from './aprovacoes';
 import {
@@ -29,7 +30,10 @@ export interface EstadoDados {
   readonly revisaoBots: number;
   /** Conversas abertas nesta execução do app, por id do bot. */
   readonly conversas: Readonly<Record<string, EstadoConversa>>;
-  /** Pedidos de aprovação de todos os bots: os pendentes e os resolvidos nesta execução do app. */
+  /**
+   * Pedidos de aprovação de todos os bots: os pendentes, os resolvidos nesta execução do app e os
+   * já resolvidos que vieram com as páginas das conversas.
+   */
   readonly aprovacoes: EstadoAprovacoes;
   readonly conexao: Conexao;
 }
@@ -106,6 +110,16 @@ function aplicarEventoAosDados(estado: EstadoDados, evento: Evento): EstadoDados
   }
 }
 
+/**
+ * Guarda os pedidos já resolvidos que vieram com uma página da conversa. Valem mesmo que a página
+ * não tenha entrado na conversa: o desfecho de um pedido não depende de onde a pessoa está.
+ */
+function comResolvidasDaPagina(estado: EstadoDados, pagina: ListaMensagens): EstadoDados {
+  // Servidor anterior ao campo não o manda.
+  const aprovacoes = aplicarResolvidas(estado.aprovacoes, pagina.aprovacoes ?? []);
+  return aprovacoes === estado.aprovacoes ? estado : { ...estado, aprovacoes };
+}
+
 export function redutorDados(estado: EstadoDados, acao: AcaoDados): EstadoDados {
   switch (acao.tipo) {
     case 'bots_carregados':
@@ -121,9 +135,15 @@ export function redutorDados(estado: EstadoDados, acao: AcaoDados): EstadoDados 
       if (estado.conversas[acao.botId]) return estado;
       return { ...estado, conversas: { ...estado.conversas, [acao.botId]: CONVERSA_VAZIA } };
     case 'pagina_recente':
-      return naConversa(estado, acao.botId, (conversa) => aplicarPaginaRecente(conversa, acao.pagina));
+      return comResolvidasDaPagina(
+        naConversa(estado, acao.botId, (conversa) => aplicarPaginaRecente(conversa, acao.pagina)),
+        acao.pagina,
+      );
     case 'pagina_anterior':
-      return naConversa(estado, acao.botId, (conversa) => aplicarPaginaAnterior(conversa, acao.antes, acao.pagina));
+      return comResolvidasDaPagina(
+        naConversa(estado, acao.botId, (conversa) => aplicarPaginaAnterior(conversa, acao.antes, acao.pagina)),
+        acao.pagina,
+      );
     case 'turno_enviado': {
       const comConversa = naConversa(estado, acao.botId, (conversa) => aplicarTurnoEnviado(conversa, acao.resposta));
       // Se o evento do fim do turno chegou antes desta resposta, o bot já não está respondendo.

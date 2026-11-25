@@ -5,6 +5,7 @@ import {
   aplicarDecisao,
   aplicarEventoDeAprovacao,
   aplicarPendentes,
+  aplicarResolvidas,
   aprovacoesDoBot,
   chaveDoItem,
   ehAprovacao,
@@ -106,6 +107,43 @@ describe('aplicarDecisao', () => {
   it('não desfaz o desfecho que já chegou por evento', () => {
     const expirada = aplicarEventoDeAprovacao(com(aprovacao(1)), resolvidaPorEvento(resolvida(1, 'expirada')));
     expect(aplicarDecisao(expirada, resolvida(1, 'aprovada'))).toBe(expirada);
+  });
+});
+
+describe('aplicarResolvidas', () => {
+  it('guarda os pedidos resolvidos que vieram com a página, sem mexer na revisão', () => {
+    const estado = aplicarResolvidas(APROVACOES_VAZIAS, [resolvida(1, 'aprovada'), resolvida(2, 'negada'), resolvida(3, 'expirada')]);
+    expect(estados(estado)).toEqual({ 'comando 1': 'aprovada', 'comando 2': 'negada', 'comando 3': 'expirada' });
+    expect(estado.revisao).toBe(0);
+  });
+
+  it('troca o pendente local pelo desfecho que o servidor já gravou', () => {
+    const antes = com(aprovacao(1), aprovacao(2));
+    const estado = aplicarResolvidas(antes, [resolvida(1, 'expirada')]);
+    expect(estados(estado)).toEqual({ 'comando 1': 'expirada', 'comando 2': 'pendente' });
+    expect(estado.revisao).toBe(antes.revisao);
+  });
+
+  it('não desfaz o desfecho que o app já conhece', () => {
+    const negada = aplicarDecisao(com(aprovacao(1)), resolvida(1, 'negada'));
+    expect(aplicarResolvidas(negada, [resolvida(1, 'aprovada')])).toBe(negada);
+  });
+
+  it('um pendente na página não entra nem volta: quem manda nele é a lista de pendentes', () => {
+    expect(aplicarResolvidas(APROVACOES_VAZIAS, [aprovacao(1)])).toBe(APROVACOES_VAZIAS);
+    const negada = aplicarDecisao(com(aprovacao(1)), resolvida(1, 'negada'));
+    expect(aplicarResolvidas(negada, [aprovacao(1)])).toBe(negada);
+  });
+
+  it('página sem pedidos devolve o mesmo estado', () => {
+    const antes = com(aprovacao(1));
+    expect(aplicarResolvidas(antes, [])).toBe(antes);
+  });
+
+  it('a lista de pendentes em dia não tira o que veio com a página', () => {
+    const comHistorico = aplicarResolvidas(com(aprovacao(2)), [resolvida(1, 'aprovada')]);
+    const estado = aplicarPendentes(comHistorico, [], comHistorico.revisao);
+    expect(estados(estado)).toEqual({ 'comando 1': 'aprovada' });
   });
 });
 
