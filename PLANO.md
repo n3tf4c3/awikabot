@@ -95,7 +95,7 @@ Um bot executa comandos, então o servidor equivale a um terminal remoto no Pi.
 4. Concluída em 23/11, no lado do servidor. Robustez no Pi: retomada depois de queda, backup do banco e health check vigiado.
    Verificar: derrubar o contêiner no meio de um turno e conferir o fluxo 5 na volta; restaurar o backup num ambiente descartável.
 5. Revisão de segurança e distribuição por TestFlight e teste interno da Play.
-6. App de desktop para Windows e Mac, em Rust com GPUI. No Windows, a versão 0.1.0 foi publicada em 24/11; o Mac ainda não tem pacote. Ver "Etapa 6: plano do app de desktop".
+6. App de desktop para Windows e Mac, em Rust com GPUI. No Windows, as versões 0.1.0 e 0.1.1 foram publicadas em 24 e 25/11; o Mac ainda não tem pacote. Ver "Etapa 6: plano do app de desktop".
    Verificar: os fluxos 1 a 5 percorridos no Windows e num Mac, com o app instalado pelo pacote assinado.
 
 ## Etapa 0: resultado (2026-11-23)
@@ -538,11 +538,27 @@ Por último, a segunda verificação de segurança e a primeira versão:
 
 Na primeira tentativa de assinar o pacote de `206b67f`, a assinatura falhou por não achar o certificado, logo depois de a sessão dele ser aberta; refeita um minuto depois, passou. A conferência que o script faz antes de compilar não percebe a sessão fechada.
 
+Em 25/11 saiu a versão 0.1.1, de `b410db0`. Ela não muda o app: existe para ver um app instalado se atualizar, o que uma versão só não permite.
+
+- **QA a partir da versão anterior** (PR 18). Com `-Anterior`, depois do roteiro comum o Sandbox instala a versão publicada, abre o app e atualiza para o pacote como o atualizador faz. Confere a versão no executável e no registro, as preferências mantidas e a desinstalação limpa. A evidência registra de que versão a rodada partiu; a publicação ainda não cobra isso.
+- **Roteiro de release pela segunda vez**, com as duas rodadas de QA partindo da 0.1.0.
+- **Atualização vista num app instalado.** Num Sandbox com rede, com a 0.1.0 publicada instalada, o titular clicou no painel. Um roteiro avulso anotou de dentro o estado do disco e do registro.
+
+| Verificação | Resultado |
+|---|---|
+| Sandbox, pacote de desenvolvimento 0.1.1, partindo da 0.1.0 | 27 de 27 passos. Na primeira rodada a parte nova não rodou e o QA passou assim mesmo: uma variável do script tinha o nome do parâmetro, e o PowerShell não diferencia maiúsculas. Percebido pela saída, que não trazia os passos novos. |
+| Falsificação do QA novo | Com a atualização trocada pela reinstalação da 0.1.0, reprova no passo que confere a versão. As quatro recusas do script de fora foram exercitadas sem abrir o Sandbox. |
+| Conferências do candidato, `b410db0` | 13 de 13 passos, na terceira tentativa. As duas primeiras pararam no teste de contrato do cliente, por um artefato de build de um worktree já apagado; limpo o cache dos dois crates, passou. |
+| Sandbox, pacote assinado de `b410db0`, Smart App Control ligado | 26 de 26 passos em cada rodada, sem rede e com rede, as duas partindo da 0.1.0. |
+| A 0.1.0 confere o instalador publicado da 0.1.1 | O executável da 0.1.0 aceita o arquivo baixado do release. Recusa o mesmo arquivo oferecido como outra versão, o instalador antigo e uma cópia adulterada. |
+| Atualização pelo painel, no Sandbox com rede | A 0.1.0 consultou a versão ao abrir e baixou o pacote da 0.1.1. O app fechou, o executável e o registro passaram a 0.1.1 e o app reabriu; o pacote baixado foi apagado em seguida. O aviso e os botões são relato de quem clicou. |
+| Publicação | Feita pelo titular em 25/11. Lido no GitHub depois: o release é público, a etiqueta `desktop-v0.1.1` aponta para `b410db0`, e os três arquivos têm os hashes da conferência dos artefatos. |
+
 Depende do titular para seguir:
 
 - aprovar o ícone, ou pedir outro.
 
-Não coberto ainda: a atualização de um app instalado para uma versão publicada, que só pode ser vista quando houver uma segunda versão; a tela do atualizador vista no app de verdade; a conferência de revogação com o computador sem rede; a recusa do roteiro do instalador diante de outra versão do Inno Setup. No Sandbox a conta é administradora, e a instalação sem privilégios é conferida pelo lugar dos arquivos e do registro, não com um usuário comum. A assinatura e a publicação só rodaram neste PC; a CI monta o pacote sem assinatura no Windows a cada PR.
+Não coberto ainda: os cliques no painel de atualização por um teste, que hoje são de uma pessoa; a publicação cobrar que o QA tenha partido da última versão pública; a conferência de revogação com o computador sem rede; a recusa do roteiro do instalador diante de outra versão do Inno Setup. No Sandbox a conta é administradora, e a instalação sem privilégios é conferida pelo lugar dos arquivos e do registro, não com um usuário comum. A assinatura e a publicação só rodaram neste PC; a CI monta o pacote sem assinatura no Windows a cada PR.
 
 ### Decisões que são do titular
 
