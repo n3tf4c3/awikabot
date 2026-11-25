@@ -1,7 +1,5 @@
-// Gera o ícone do app de desktop: a letra a minúscula em azul, com dois olhos dentro, sobre um
-// quadrado escuro de cantos arredondados. A haste da letra termina numa ponta, como a de um balão
-// de conversa. O desenho é descrito por formas, não por imagem, para sair nítido em cada tamanho,
-// e o arquivo gerado fica versionado ao lado deste script.
+// Gera o ícone do app de desktop, o `awikabot.ico` versionado ao lado deste script. O desenho
+// está em `scripts/icone.mjs`, que o gerador do app de celular também usa.
 //
 //   node apps/desktop/crates/app/recursos/gerar-icone.mjs            regrava awikabot.ico
 //   node apps/desktop/crates/app/recursos/gerar-icone.mjs amostra.png  grava também uma amostra
@@ -10,107 +8,10 @@
 import { writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { crc32, deflateSync } from 'node:zlib';
+
+import { desenhar, png } from '../../../../../scripts/icone.mjs';
 
 const TAMANHOS = [16, 20, 24, 32, 40, 48, 64, 128, 256];
-// As cores são as do tema escuro do app (`tema.rs`): fundo, borda de controle, destaque e texto forte.
-const FUNDO = [0x1e, 0x1e, 0x1e];
-const FIO = [0x3a, 0x3a, 0x3a];
-const AZUL_DA_LETRA = [0x5a, 0xa0, 0xf2];
-const CLARO_DOS_OLHOS = [0xf0, 0xf0, 0xf0];
-// As medidas do desenho estão numa grade de 256; `G` passa cada uma para a escala de 0 a 1.
-const G = 1 / 256;
-// Até este tamanho os olhos alargam, para não virarem um borrão, e o fio da borda some.
-const TAMANHO_PEQUENO = 24;
-
-/** Distância com sinal até um retângulo de cantos arredondados: negativa por dentro. */
-function retanguloArredondado(x, y, cx, cy, meiaLargura, meiaAltura, raio) {
-  const dx = Math.abs(x - cx) - (meiaLargura - raio);
-  const dy = Math.abs(y - cy) - (meiaAltura - raio);
-  return Math.hypot(Math.max(dx, 0), Math.max(dy, 0)) + Math.min(Math.max(dx, dy), 0) - raio;
-}
-
-function dentroDoTriangulo(x, y, [ax, ay], [bx, by], [cx, cy]) {
-  const lado = (px, py, qx, qy) => (x - qx) * (py - qy) - (px - qx) * (y - qy);
-  const [d1, d2, d3] = [lado(ax, ay, bx, by), lado(bx, by, cx, cy), lado(cx, cy, ax, ay)];
-  return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0));
-}
-
-/** A cor de um ponto do desenho, em coordenadas de 0 a 1: [r, g, b, a], ou `null` se é vazio. */
-function corDoPonto(x, y, tamanho) {
-  const ateABorda = retanguloArredondado(x, y, 0.5, 0.5, 0.47, 0.47, 0.22);
-  if (ateABorda > 0) return null;
-  const pequeno = tamanho <= TAMANHO_PEQUENO;
-  // Os olhos: duas pílulas em pé dentro do anel, mais largas nos tamanhos pequenos.
-  const [meiaLargura, meiaAltura, afastamento] = pequeno ? [9, 16, 15] : [6, 12, 14];
-  const noOlho = [114 - afastamento, 114 + afastamento].some(
-    (centro) => retanguloArredondado(x, y, centro * G, 128 * G, meiaLargura * G, meiaAltura * G, meiaLargura * G) <= 0,
-  );
-  if (noOlho) return CLARO_DOS_OLHOS;
-  // A letra: o anel, a haste à direita com o canto de cima arredondado, e a ponta de balão embaixo.
-  const noAnel = Math.abs(Math.hypot(x - 114 * G, y - 128 * G) - 53 * G) <= 15 * G;
-  const naHaste =
-    x >= 160 * G && x <= 190 * G && y >= 60 * G && y <= 196 * G && !(x > 175 * G && y < 75 * G && Math.hypot(x - 175 * G, y - 75 * G) > 15 * G);
-  const naPonta = dentroDoTriangulo(x, y, [190 * G, 168 * G], [212 * G, 196 * G], [190 * G, 196 * G]);
-  if (noAnel || naHaste || naPonta) return AZUL_DA_LETRA;
-  // Um fio de dois pontos da grade junto à borda, para o quadrado não sumir sobre um fundo escuro.
-  if (!pequeno && ateABorda > -2 * G) return FIO;
-  return FUNDO;
-}
-
-/** Desenha num quadrado de `tamanho` pixels: RGBA, de cima para baixo, com as bordas suavizadas. */
-function desenhar(tamanho) {
-  const amostras = tamanho >= 128 ? 4 : 8;
-  const pixels = Buffer.alloc(tamanho * tamanho * 4);
-  for (let linha = 0; linha < tamanho; linha++) {
-    for (let coluna = 0; coluna < tamanho; coluna++) {
-      let [r, g, b, cobertos] = [0, 0, 0, 0];
-      for (let sy = 0; sy < amostras; sy++) {
-        for (let sx = 0; sx < amostras; sx++) {
-          const cor = corDoPonto((coluna + (sx + 0.5) / amostras) / tamanho, (linha + (sy + 0.5) / amostras) / tamanho, tamanho);
-          if (cor === null) continue;
-          r += cor[0];
-          g += cor[1];
-          b += cor[2];
-          cobertos += 1;
-        }
-      }
-      const onde = (linha * tamanho + coluna) * 4;
-      if (cobertos > 0) {
-        pixels[onde] = Math.round(r / cobertos);
-        pixels[onde + 1] = Math.round(g / cobertos);
-        pixels[onde + 2] = Math.round(b / cobertos);
-        pixels[onde + 3] = Math.round((255 * cobertos) / (amostras * amostras));
-      }
-    }
-  }
-  return pixels;
-}
-
-function png(largura, altura, pixels) {
-  const pedaco = (tipo, dados) => {
-    const corpo = Buffer.concat([Buffer.from(tipo, 'ascii'), dados]);
-    const saida = Buffer.alloc(corpo.length + 8);
-    saida.writeUInt32BE(dados.length, 0);
-    corpo.copy(saida, 4);
-    saida.writeUInt32BE(crc32(corpo), corpo.length + 4);
-    return saida;
-  };
-  const cabecalho = Buffer.alloc(13);
-  cabecalho.writeUInt32BE(largura, 0);
-  cabecalho.writeUInt32BE(altura, 4);
-  cabecalho.set([8, 6, 0, 0, 0], 8); // 8 bits por canal, RGBA
-  const linhas = Buffer.alloc((largura * 4 + 1) * altura);
-  for (let linha = 0; linha < altura; linha++) {
-    pixels.copy(linhas, linha * (largura * 4 + 1) + 1, linha * largura * 4, (linha + 1) * largura * 4);
-  }
-  return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    pedaco('IHDR', cabecalho),
-    pedaco('IDAT', deflateSync(linhas, { level: 9 })),
-    pedaco('IEND', Buffer.alloc(0)),
-  ]);
-}
 
 /** Uma imagem do .ico no formato clássico: BGRA de baixo para cima, mais a máscara de um bit. */
 function bitmapDoIco(tamanho, pixels) {

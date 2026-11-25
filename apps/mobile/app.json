@@ -14,7 +14,6 @@
       "pt-BR": "./locales/pt-BR.json"
     },
     "ios": {
-      "icon": "./assets/expo.icon",
       "infoPlist": {
         "CFBundleDevelopmentRegion": "pt-BR",
         "CFBundleAllowMixedLocalizations": true
@@ -22,9 +21,8 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#1E1E1E",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false
@@ -34,9 +32,9 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
+          "backgroundColor": "#FFFFFF",
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 76
+          "imageWidth": 96
         }
       ],
       [
