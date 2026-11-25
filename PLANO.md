@@ -570,8 +570,9 @@ Ainda em 25/11, as duas pontas que a 0.1.1 deixou soltas no roteiro:
 | Sandbox com rede, `ver-atualizacao.ps1 -AteAConsulta` | A 0.1.0 publicada foi instalada com o Smart App Control ligado, o app abriu e registrou a consulta seis segundos depois. O histórico foi lido de fora enquanto era escrito, e o Sandbox desligou a pedido do script. |
 | Sandbox, QA depois da mudança no `qa-sandbox.ps1` | Pacote assinado da 0.1.1 partindo da 0.1.0, sem rede: 26 de 26 passos. |
 | Conferências do candidato, como ensaio | 14 de 14 passos, já com o teste da conferência depois de publicar. |
+| Sandbox com rede, rodada inteira do `ver-atualizacao.ps1` | Aberta a pedido do titular. A 0.1.0 registrou a consulta e nada mais mudou no disco em 19 minutos; o Sandbox foi fechado, e o script reprovou a rodada no passo do download, com a evidência gravada. O histórico não diz se houve clique. |
 
-A rodada inteira do `ver-atualizacao.ps1`, com os cliques, não foi feita: do download em diante, o julgamento só viu históricos escritos no teste, no formato que a rodada até a consulta produziu.
+A rodada inteira do `ver-atualizacao.ps1` ainda não foi vista passar: do download em diante, o julgamento só viu históricos escritos no teste, no formato que as rodadas de verdade produziram.
 
 Os botões do app não têm foco de teclado: de fora, só se chega a eles pelo mouse. Três caminhos para tirar os cliques, nenhum implementado:
 
