@@ -2,8 +2,10 @@
 # versão nova, baixa, confere e instala. Nada é instalado neste computador.
 #
 #   powershell -ExecutionPolicy Bypass -File apps/desktop/distribuicao/windows/ver-atualizacao.ps1 -Anterior <pasta>
+#   ... -Clicar                 o roteiro de dentro clica em "Baixar" e em "Instalar e reabrir"; não pede ninguém na frente
 #   ... -AteAConsulta           para quando o app registra a consulta; não pede ninguém na frente e não vale como a conferência
 #   ... -PrazoEmMinutos <n>     quanto esperar pelos cliques (30)
+#   ... -DeslocamentoDoBotao <n>  outro lugar para o botão do painel, quando a tela de pareamento mudou
 #
 # A pasta de -Anterior tem o instalador e o manifesto da versão que estava publicada antes: a
 # pasta do pacote dela, em target\distribuicao\pacotes, ou os dois arquivos baixados do release.
@@ -24,14 +26,21 @@
 # Usa o `gh` com a sessão de quem roda, só para ler; nenhum token passa por aqui.
 param(
     [Parameter(Mandatory = $true)][string]$Anterior,
+    [switch]$Clicar,
     [switch]$AteAConsulta,
     [int]$PrazoEmMinutos = 30,
+    # Onde o roteiro de dentro procura o botão do painel; sem isto, vale o que está nele.
+    [int]$DeslocamentoDoBotao,
     # Só para teste: outro programa no lugar do gh.
     [string]$Gh = 'gh'
 )
 . (Join-Path $PSScriptRoot 'comum.ps1')
 
 if (-not (Test-Path "$env:SystemRoot\System32\WindowsSandbox.exe")) { throw 'o Windows Sandbox nao esta habilitado neste computador' }
+if ($Clicar -and $AteAConsulta) { throw '-Clicar e -AteAConsulta nao andam juntos: ate a consulta nao ha o que clicar' }
+# Um Sandbox que acabou de fechar ainda aparece como processo por alguns segundos.
+$fechando = (Get-Date).AddSeconds(30)
+while ((Get-Process -Name 'WindowsSandbox*' -ErrorAction SilentlyContinue) -and (Get-Date) -lt $fechando) { Start-Sleep -Seconds 2 }
 if (Get-Process -Name 'WindowsSandbox*' -ErrorAction SilentlyContinue) { throw 'ja ha um Windows Sandbox aberto; feche-o antes' }
 
 # A versão nova é a última pública: é a que o app instalado vai achar.
@@ -64,6 +73,9 @@ New-Item -ItemType Directory -Force $entrada, $saida | Out-Null
 Copy-Item -LiteralPath $versaoDePartida.Instalador, $versaoDePartida.Manifesto, (Join-Path $PSScriptRoot 'ver-atualizacao-dentro.ps1') -Destination $entrada
 
 # O roteiro de dentro tem prazo próprio, um pouco maior: se este script morrer, o Sandbox não fica aberto para sempre.
+$opcoes = @('-PrazoEmMinutos', ($PrazoEmMinutos + 5))
+if ($Clicar) { $opcoes += '-Clicar' }
+if ($PSBoundParameters.ContainsKey('DeslocamentoDoBotao')) { $opcoes += @('-DeslocamentoDoBotao', $DeslocamentoDoBotao) }
 $configuracao = @"
 <Configuration>
   <Networking>Enable</Networking>
@@ -76,7 +88,7 @@ $configuracao = @"
     <MappedFolder><HostFolder>$saida</HostFolder><SandboxFolder>C:\ver\saida</SandboxFolder><ReadOnly>false</ReadOnly></MappedFolder>
   </MappedFolders>
   <LogonCommand>
-    <Command>powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Minimized -File C:\ver\entrada\ver-atualizacao-dentro.ps1 -PrazoEmMinutos $($PrazoEmMinutos + 5)</Command>
+    <Command>powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Minimized -File C:\ver\entrada\ver-atualizacao-dentro.ps1 $($opcoes -join ' ')</Command>
   </LogonCommand>
 </Configuration>
 "@
@@ -118,6 +130,7 @@ function Julgar($instalacao, $linhas) {
 "versao anterior: $($partida.instalador) ($($partida.sha256))"
 'abrindo o Windows Sandbox, com rede...'
 if ($AteAConsulta) { 'ninguem precisa clicar: a rodada para quando o app registrar a consulta' }
+elseif ($Clicar) { "ninguem precisa clicar: o roteiro de dentro clica em Baixar e em Instalar e reabrir; se um clique nao pegar, uma pessoa ainda pode clicar, ate $PrazoEmMinutos minutos" }
 else {
     "no Sandbox, no painel do app: quando aparecer o aviso da versao $versao, clicar em Baixar e, depois, em Instalar e reabrir"
     "esperando ate $PrazoEmMinutos minutos; fechar o Sandbox encerra a rodada"
@@ -169,6 +182,15 @@ for (; $mostradas -lt $linhas.Count; $mostradas++) { Descrever $linhas[$mostrada
 $passos = Julgar $instalacao $linhas
 $aprovado = @($passos | Where-Object { -not $_.ok }).Count -eq 0
 
+# O que o roteiro de dentro anotou das capturas e dos cliques, e as capturas que voltaram.
+$roteiro = @(Get-Content -LiteralPath (Join-Path $saida 'roteiro.jsonl') -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json } catch { } } | Where-Object { $_ })
+$capturas = @(Get-ChildItem -LiteralPath $saida -Filter '*.png' -ErrorAction SilentlyContinue | Sort-Object Name | ForEach-Object { [ordered]@{ nome = $_.Name; sha256 = (Get-Sha256 $_.FullName) } })
+$cliquesDoRoteiro = @($roteiro | Where-Object { $_.o_que -like 'clique em *' }).Count
+$cliques = 'de uma pessoa, no painel do app'
+if ($AteAConsulta) { $cliques = 'nenhum: a rodada parou na consulta' }
+elseif ($Clicar -and $cliquesDoRoteiro -ge 2) { $cliques = 'do roteiro de dentro do Sandbox, por coordenada' }
+elseif ($Clicar) { $cliques = "o roteiro de dentro fez $cliquesDoRoteiro clique(s); o que faltou ficou para uma pessoa" }
+
 $evidencia = [ordered]@{
     aprovado       = $aprovado
     ate_a_consulta = [bool]$AteAConsulta
@@ -180,11 +202,13 @@ $evidencia = [ordered]@{
     tamanho        = $publicado.tamanho
     sha256         = [string]$publicado.sha256
     anterior       = $partida
-    cliques        = $(if ($AteAConsulta) { 'nenhum: a rodada parou na consulta' } else { 'de uma pessoa, no painel do app' })
+    cliques        = $cliques
+    capturas       = $capturas
     quando         = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
     encerrou_por   = $encerrouPor
     instalacao     = $instalacao
     passos         = $passos
+    roteiro        = $roteiro
     historico      = $linhas
 }
 $texto = ((ConvertTo-Json -InputObject $evidencia -Depth 8) -replace "`r`n", "`n") + "`n"
@@ -195,15 +219,22 @@ foreach ($passo in $passos) {
     $marca = if ($passo.ok) { 'PASSOU ' } else { 'FALHOU ' }
     "$marca $($passo.passo)" + $(if ($passo.detalhe) { ": $($passo.detalhe)" } else { '' })
 }
+foreach ($linha in $roteiro) { "  roteiro: $($linha.quando)  $($linha.o_que)" }
+"cliques: $cliques"
 "evidencia: $(Join-Path $rodada 'evidencia.json')"
+if ($capturas.Count -gt 0) { "capturas: $(($capturas | ForEach-Object { $_.nome }) -join ', '), em $saida" }
 if ($AteAConsulta) {
     if (-not $aprovado) { throw 'o app instalado nao chegou a registrar a consulta' }
     'ATE A CONSULTA: o app instalado consultou as versoes publicadas; o aviso, o download e a instalacao nao foram conferidos'
     return
 }
 # Uma cópia vai para a pasta de evidências do commit da versão nova: a mais recente vale, aprovada ou não.
-$copia = Join-Path (Get-PastaDeEvidencias $versao ([pscustomobject]@{ Curto = $commit.Substring(0, 7); ComMudancas = $false })) 'atualizacao-vista.json'
+$pastaDaVersao = Get-PastaDeEvidencias $versao ([pscustomobject]@{ Curto = $commit.Substring(0, 7); ComMudancas = $false })
+$copia = Join-Path $pastaDaVersao 'atualizacao-vista.json'
 Write-TextoSemBom $copia $texto
+# As capturas vão junto, com o nome da evidência na frente; as de uma rodada anterior saem antes.
+Get-ChildItem -LiteralPath $pastaDaVersao -Filter 'atualizacao-vista-*.png' -ErrorAction SilentlyContinue | Remove-Item -Confirm:$false
+foreach ($captura in $capturas) { Copy-Item -LiteralPath (Join-Path $saida $captura.nome) -Destination (Join-Path $pastaDaVersao "atualizacao-vista-$($captura.nome)") }
 "copia na pasta da versao: $copia"
 if (-not $aprovado) { throw 'a atualizacao nao foi vista inteira no app instalado' }
 'atualizacao vista no app instalado: aprovada'
