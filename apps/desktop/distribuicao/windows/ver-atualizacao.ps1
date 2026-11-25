@@ -12,9 +12,10 @@
 # Vale o que o `qa-sandbox.ps1 -Anterior` exige, e mais: o instalador tem de ser o que está
 # publicado com aquela versão. A versão nova é a última pública, lida do GitHub na hora.
 #
-# O script abre o Sandbox, instala a versão anterior e abre o app. Lá dentro, um roteiro só anota
-# o que muda no disco e no registro; os cliques no painel de atualização são de uma pessoa:
-# "Baixar" quando o aviso aparecer e, depois, "Instalar e reabrir". Daqui de fora o script lê o
+# O script abre o Sandbox, instala a versão anterior e abre o app. Lá dentro, um roteiro anota o
+# que muda no disco e no registro e guarda capturas da janela. Os cliques no painel de
+# atualização, "Baixar" quando o aviso aparecer e, depois, "Instalar e reabrir", são de uma
+# pessoa ou, com -Clicar, do próprio roteiro. Daqui de fora o script lê o
 # histórico e diz se a sequência aconteceu: consulta registrada, pacote baixado com o tamanho e o
 # hash do manifesto público, executável e registro na versão nova, app reaberto em outro processo
 # e pacote apagado pelo app novo. Fechar o Sandbox encerra a rodada.
@@ -185,11 +186,7 @@ $aprovado = @($passos | Where-Object { -not $_.ok }).Count -eq 0
 # O que o roteiro de dentro anotou das capturas e dos cliques, e as capturas que voltaram.
 $roteiro = @(Get-Content -LiteralPath (Join-Path $saida 'roteiro.jsonl') -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json } catch { } } | Where-Object { $_ })
 $capturas = @(Get-ChildItem -LiteralPath $saida -Filter '*.png' -ErrorAction SilentlyContinue | Sort-Object Name | ForEach-Object { [ordered]@{ nome = $_.Name; sha256 = (Get-Sha256 $_.FullName) } })
-$cliquesDoRoteiro = @($roteiro | Where-Object { $_.o_que -like 'clique em *' }).Count
-$cliques = 'de uma pessoa, no painel do app'
-if ($AteAConsulta) { $cliques = 'nenhum: a rodada parou na consulta' }
-elseif ($Clicar -and $cliquesDoRoteiro -ge 2) { $cliques = 'do roteiro de dentro do Sandbox, por coordenada' }
-elseif ($Clicar) { $cliques = "o roteiro de dentro fez $cliquesDoRoteiro clique(s); o que faltou ficou para uma pessoa" }
+$cliques = Get-AutoriaDosCliques $roteiro ([bool]$Clicar) ([bool]$AteAConsulta)
 
 $evidencia = [ordered]@{
     aprovado       = $aprovado
