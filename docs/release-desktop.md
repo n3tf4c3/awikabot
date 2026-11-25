@@ -61,6 +61,8 @@ A primeira rodada é sem rede. A segunda marca o instalador como baixado da Inte
 
 O roteiro instala, abre o app, atualiza por cima com o app aberto, desinstala e confere que não sobrou arquivo, atalho, registro, pasta de dados, credencial no cofre nem processo. Cada rodada grava uma `evidencia.json` com o SHA-256 do instalador testado, em `apps/desktop/target/distribuicao/qa-sandbox/<data>`, e deixa uma cópia na pasta de evidências do commit: `qa-sandbox-sem-rede.json` ou `qa-sandbox-com-rede.json`. Vale a rodada mais recente de cada tipo, aprovada ou não.
 
+A partir da segunda versão, as duas rodadas levam também `-Anterior <pasta>`, com o instalador e o manifesto da versão que está publicada: a pasta do pacote dela, se ainda estiver neste computador, ou os dois arquivos baixados do release. Depois do roteiro comum, o QA instala a versão anterior, abre o app e atualiza para o pacote como o atualizador faz. Confere que a versão mudou no executável e no registro, que as preferências da pessoa ficaram e que a desinstalação não deixa nada. A evidência registra de que versão a rodada partiu; a publicação ainda não cobra isso.
+
 Nada é instalado no computador de trabalho. Um Sandbox por vez: a segunda rodada só começa depois de o Sandbox da primeira fechar, e o script recusa enquanto ele estiver aberto.
 
 `-DesligarSmartAppControl` existe só para o pacote de desenvolvimento, sem assinatura, e vale só dentro do Sandbox. Pacote que vai ser publicado não usa essa opção.
