@@ -2,13 +2,17 @@
 # trabalho: ele instala e desinstala o app, mexe no cofre de credenciais e desliga a máquina no fim.
 #
 # Confere o instalador como uma pessoa o usaria: instala, abre o app, atualiza por cima com o app
-# aberto, desinstala, e olha o que sobrou. O resultado vai para C:\qa\saida\result.json, que é a
-# única coisa que volta para fora.
+# aberto, desinstala, e olha o que sobrou. Com a versão anterior na entrada, instala também a
+# dela e atualiza para o pacote. O resultado vai para C:\qa\saida\result.json, que é a única
+# coisa que volta para fora.
 param(
     # Só para pacote sem assinatura, e só aqui dentro: sem isso o Smart App Control o bloqueia.
     [switch]$DesligarSmartAppControl,
     # Marca o instalador como baixado da Internet, como o navegador faria. Só para pacote assinado.
-    [switch]$MarcaDeDownload
+    [switch]$MarcaDeDownload,
+    # Parte também da versão anterior, que veio em C:\qa\entrada\anterior: instala a dela e
+    # atualiza para o pacote, como acontece com quem já tem o app.
+    [switch]$ComAnterior
 )
 $ErrorActionPreference = 'Stop'
 $entrada = 'C:\qa\entrada'
@@ -177,6 +181,74 @@ try {
     Conferir 'nao sobrou a pasta de dados do app' { if (Test-Path $pastaDeDados) { 'sobrou a pasta de dados' } }
     Conferir 'nao sobrou credencial no cofre' { if (NoCofre) { 'o item do app continua no cofre' } }
     Conferir 'nao sobrou processo' { if ((ProcessosDoApp).Count -gt 0) { 'ha processo do app rodando' } }
+
+    # --- A partir da versão anterior ------------------------------------------------
+    # Quem já tem o app recebe o pacote por cima da versão publicada. Instala a anterior, abre o
+    # app e atualiza como o atualizador dele faz: a versão tem de mudar e as preferências, ficar.
+    if ($ComAnterior) {
+        $manifestoAnterior = Get-Content -Raw (Join-Path $entrada 'anterior\awikabot-desktop-windows-x64.json') | ConvertFrom-Json
+        New-Item -ItemType Directory -Force (Join-Path $trabalho 'anterior') | Out-Null
+        $instaladorAnterior = Join-Path $trabalho "anterior\$($manifestoAnterior.arquivo)"
+        Copy-Item (Join-Path $entrada "anterior\$($manifestoAnterior.arquivo)") $instaladorAnterior
+        Conferir 'o instalador da versao anterior e o do manifesto dela' {
+            $hash = (Get-FileHash -Algorithm SHA256 $instaladorAnterior).Hash.ToLowerInvariant()
+            if ($hash -ne $manifestoAnterior.sha256 -or (Get-Item $instaladorAnterior).Length -ne $manifestoAnterior.tamanho) { return 'tamanho ou hash diferente do manifesto' }
+            if ($manifestoAnterior.versao -eq $manifesto.versao) { 'a versao anterior e a mesma do pacote' }
+        }
+        if ($MarcaDeDownload) {
+            Set-Content -LiteralPath $instaladorAnterior -Stream Zone.Identifier -Value "[ZoneTransfer]`r`nZoneId=3"
+        }
+        Conferir 'instalar a versao anterior em silencio' {
+            $codigo = Rodar $instaladorAnterior ($silencioso + "/LOG=$saida\instalacao-anterior.log")
+            if ($codigo -ne 0) { return "o instalador saiu com o codigo $codigo" }
+            if (-not (Test-Path $exeDoApp)) { return "nao existe: $exeDoApp" }
+            $versao = (Get-Item $exeDoApp).VersionInfo.ProductVersion
+            if ($versao -ne $manifestoAnterior.versao) { "versao instalada: $versao" }
+        }
+        # Uma preferência que a pessoa mudou: não ser avisada de versão nova. Com ela, o app
+        # também não consulta a rede durante a rodada.
+        $preferencias = Join-Path $pastaDeDados 'preferencias.json'
+        New-Item -ItemType Directory -Force $pastaDeDados | Out-Null
+        Set-Content $preferencias '{"avisar_de_versao_nova": false}'
+        Conferir 'a versao anterior abre a janela' {
+            Start-Process -FilePath $exeDoApp
+            if (-not (EsperarJanela)) { return 'a janela nao apareceu' }
+            if (-not (AppAberto)) { 'o app nao criou a marca de aberto' }
+        }
+        Conferir 'atualizar a versao anterior com o app aberto: o instalador fecha o app, troca e reabre' {
+            $antes = (ProcessosDoApp | Select-Object -First 1).Id
+            if (-not $antes) { return 'o app nao estava aberto para a atualizacao' }
+            $codigo = Rodar $instalador ($silencioso + @('/CLOSEAPPLICATIONS', '/REABRIR=1', "/LOG=$saida\atualizacao-da-anterior.log"))
+            if ($codigo -ne 0) { return "o instalador saiu com o codigo $codigo" }
+            if (-not (EsperarJanela)) { return 'o app nao voltou depois da atualizacao' }
+            $depois = (ProcessosDoApp | Select-Object -First 1).Id
+            if ($depois -eq $antes) { 'o processo e o mesmo de antes: o app nao foi fechado' }
+        }
+        Conferir 'depois de atualizar, o executavel e o registro estao na versao do pacote' {
+            $versao = (Get-Item $exeDoApp).VersionInfo.ProductVersion
+            if ($versao -ne $manifesto.versao) { return "versao instalada: $versao" }
+            $registrada = (EntradaDeDesinstalacao 'HKCU:').GetValue('DisplayVersion')
+            if ($registrada -ne $manifesto.versao) { return "versao no registro: $registrada" }
+            if (@(Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' | Where-Object { $_.GetValue('DisplayName') -eq 'awikabot' }).Count -ne 1) { 'ha mais de uma entrada de desinstalacao do app' }
+        }
+        Conferir 'depois de atualizar, as preferencias continuam as da pessoa' {
+            if (-not (Test-Path $preferencias)) { return 'o arquivo de preferencias sumiu' }
+            if ((Get-Content -Raw $preferencias | ConvertFrom-Json).avisar_de_versao_nova -ne $false) { 'a preferencia voltou ao valor de fabrica' }
+        }
+        FecharApp
+        Conferir 'depois de atualizar, o app fecha pela janela' { if ((ProcessosDoApp).Count -gt 0 -or (AppAberto)) { 'o app continuou aberto' } }
+        Conferir 'desinstalar em silencio depois de atualizar' {
+            $codigo = RodarDesinstalador $silencioso
+            if ($codigo -ne 0) { "o desinstalador saiu com o codigo $codigo" }
+        }
+        Conferir 'depois de atualizar e desinstalar, nao sobrou arquivo, atalho, registro nem pasta de dados' {
+            if (Test-Path $pastaDoApp) { return "sobrou: " + ((Get-ChildItem -Recurse -Force $pastaDoApp | ForEach-Object { $_.Name }) -join ', ') }
+            if (Test-Path $atalho) { return 'sobrou o atalho' }
+            if (EntradaDeDesinstalacao 'HKCU:') { return 'sobrou a entrada de desinstalacao' }
+            if (Test-Path $pastaDeDados) { return 'sobrou a pasta de dados' }
+            if ((ProcessosDoApp).Count -gt 0) { 'ha processo do app rodando' }
+        }
+    }
 
     $aprovado = @($passos | Where-Object { -not $_.ok }).Count -eq 0
 } catch {

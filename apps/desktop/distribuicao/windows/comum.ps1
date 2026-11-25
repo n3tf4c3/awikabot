@@ -269,9 +269,10 @@ function Write-EvidenciaDosArtefatos {
 }
 
 # A evidência de uma rodada de QA no Sandbox: amarra o resultado ao pacote testado e ao tipo de
-# rodada. Devolve o nome do arquivo na pasta do candidato e o texto dele.
+# rodada. Devolve o nome do arquivo na pasta do candidato e o texto dele. `$Anterior` é a versão
+# de onde a rodada também partiu (versão, instalador e SHA-256), ou nada.
 function New-EvidenciaDoQa {
-    param($Manifesto, $Informacoes, $Resultado, [bool]$ComRede, [bool]$MarcaDeDownload, [bool]$SmartAppControlDesligado)
+    param($Manifesto, $Informacoes, $Resultado, [bool]$ComRede, [bool]$MarcaDeDownload, [bool]$SmartAppControlDesligado, $Anterior = $null)
     $evidencia = [ordered]@{
         aprovado                    = $Resultado.aprovado
         versao                      = $Manifesto.versao
@@ -282,6 +283,7 @@ function New-EvidenciaDoQa {
         com_rede                    = $ComRede
         marca_de_download           = $MarcaDeDownload
         smart_app_control_desligado = $SmartAppControlDesligado
+        anterior                    = $Anterior
         resultado                   = $Resultado
     }
     $nome = if ($ComRede) { 'qa-sandbox-com-rede.json' } else { 'qa-sandbox-sem-rede.json' }

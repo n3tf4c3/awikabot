@@ -49,7 +49,7 @@ Do app de desktop, de dentro de `apps/desktop`, depois de `pnpm server:build`:
 |---|---|
 | `cargo run -p awikabot-desktop` | abre o app |
 | `powershell -ExecutionPolicy Bypass -File distribuicao/windows/empacotar.ps1` | compila o executável de distribuição do Windows, confere, junta as licenças e monta o instalador; com `-Assinar <impressão digital>`, assina |
-| `powershell -ExecutionPolicy Bypass -File distribuicao/windows/qa-sandbox.ps1` | confere o instalador no Windows Sandbox: instala, abre, atualiza, desinstala |
+| `powershell -ExecutionPolicy Bypass -File distribuicao/windows/qa-sandbox.ps1` | confere o instalador no Windows Sandbox: instala, abre, atualiza, desinstala; com `-Anterior <pasta>`, parte também da versão publicada e atualiza para o pacote |
 | `powershell -ExecutionPolicy Bypass -File distribuicao/windows/conferir-candidato.ps1` | conferências do commit de onde um pacote vai sair; grava a evidência em `relatorios/release` |
 | `powershell -ExecutionPolicy Bypass -File distribuicao/windows/conferir-artefatos.ps1` | só passa um pacote que pode ser publicado: assinado, com hashes e versões batendo |
 | `powershell -ExecutionPolicy Bypass -File distribuicao/windows/publicar-rascunho.ps1 -Ensaio` | confere pacote, evidências e GitHub para a publicação e não envia nada; sem `-Ensaio`, cria o release em rascunho |
