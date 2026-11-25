@@ -4,7 +4,7 @@ Como sai uma versão do app de desktop para Windows. Cada etapa só começa com 
 
 Tudo roda no computador de quem tem o certificado de assinatura. A chave fica em nuvem e pede sessão aberta nesse computador; ela não vai para a CI nem para o repositório. A CI monta o pacote sem assinatura a cada PR, só para o empacotamento não quebrar em silêncio.
 
-Os comandos partem da raiz do repositório. Estado de cada etapa em 24/11/2026: a 1 rodou como ensaio, e a 4 rodou com o pacote de desenvolvimento, sem assinatura; a 3 só foi vista recusando esse pacote, como deve; a 2 com assinatura de verdade ainda não foi exercitada. A 5 e a 6 têm script e teste com um `gh` de mentira. Contra o GitHub de verdade, a 5 só rodou como ensaio, recusando o pacote de desenvolvimento, e a 6 parou antes de consultá-lo, por não haver rascunho. Nenhum rascunho foi criado ainda: criar, baixar de volta e publicar nunca rodaram contra o GitHub.
+Os comandos partem da raiz do repositório. Estado em 24/11/2026: o roteiro rodou inteiro uma vez, com a versão 0.1.0, saída do commit `206b67f`. As seis etapas passaram com assinatura de verdade: o QA teve as duas rodadas com o Smart App Control ligado, e o rascunho foi criado, baixado de volta e publicado no GitHub. O que ainda não foi visto é a atualização de um app instalado: a 0.1.0 é a primeira versão, e não havia app anterior para avisar.
 
 As etapas 3, 4 e 5 gravam cada uma um arquivo na pasta de evidências do commit, `relatorios/release/<versão>-<commit>`, e cada etapa lê os das anteriores. A pasta fica fora do Git.
 
@@ -34,7 +34,7 @@ Abrir a sessão do certificado em nuvem. Depois:
 powershell -ExecutionPolicy Bypass -File apps/desktop/distribuicao/windows/empacotar.ps1 -Assinar <impressão digital do certificado>
 ```
 
-O script confere o certificado antes de compilar, para não falhar no fim. Compila o executável de distribuição, assina-o, junta as licenças e monta o instalador, que o próprio Inno Setup assina enquanto monta, junto com o desinstalador e a cópia interna do programa de instalação. Só então grava o manifesto e a lista de hashes. O certificado é usado várias vezes nesse passo. O pacote fica em `apps/desktop/target/distribuicao/pacotes/<versão>-<commit>`. Se essa pasta já existe, o script para: nada é sobrescrito.
+O script confere o certificado antes de compilar, para não falhar no fim. Essa conferência não prova que a sessão está aberta: o certificado continua listado com a sessão fechada, e logo depois de aberta ela pode levar um instante para responder. Compila o executável de distribuição, assina-o, junta as licenças e monta o instalador, que o próprio Inno Setup assina enquanto monta, junto com o desinstalador e a cópia interna do programa de instalação. Só então grava o manifesto e a lista de hashes. O certificado é usado várias vezes nesse passo. O pacote fica em `apps/desktop/target/distribuicao/pacotes/<versão>-<commit>`. Se essa pasta já existe, o script para: nada é sobrescrito.
 
 O script recebe só a impressão digital. Senha e token nunca passam por ele.
 
@@ -61,7 +61,7 @@ A primeira rodada é sem rede. A segunda marca o instalador como baixado da Inte
 
 O roteiro instala, abre o app, atualiza por cima com o app aberto, desinstala e confere que não sobrou arquivo, atalho, registro, pasta de dados, credencial no cofre nem processo. Cada rodada grava uma `evidencia.json` com o SHA-256 do instalador testado, em `apps/desktop/target/distribuicao/qa-sandbox/<data>`, e deixa uma cópia na pasta de evidências do commit: `qa-sandbox-sem-rede.json` ou `qa-sandbox-com-rede.json`. Vale a rodada mais recente de cada tipo, aprovada ou não.
 
-Nada é instalado no computador de trabalho. Um Sandbox por vez.
+Nada é instalado no computador de trabalho. Um Sandbox por vez: a segunda rodada só começa depois de o Sandbox da primeira fechar, e o script recusa enquanto ele estiver aberto.
 
 `-DesligarSmartAppControl` existe só para o pacote de desenvolvimento, sem assinatura, e vale só dentro do Sandbox. Pacote que vai ser publicado não usa essa opção.
 
