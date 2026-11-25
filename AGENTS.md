@@ -1,6 +1,6 @@
 # awikabot
 
-Gerenciador de bots: um servidor mantém agentes de IA rodando e apps de iOS e Android servem para conversar com eles e aprovar ações. Um app de desktop para Windows e Mac faz o mesmo, ainda sem instalador. O plano, as premissas e o resultado de cada etapa estão em `PLANO.md`. Licença MIT.
+Gerenciador de bots: um servidor mantém agentes de IA rodando e apps de iOS e Android servem para conversar com eles e aprovar ações. Um app de desktop faz o mesmo: no Windows tem instalador assinado e publicado, desde a versão 0.1.0; no Mac ainda não tem pacote. O plano, as premissas e o resultado de cada etapa estão em `PLANO.md`. Licença MIT.
 
 ## Estrutura
 
@@ -151,7 +151,7 @@ A memória do projeto fica no ai-memory, no escopo do `.ai-memory.toml`. Ao conc
 - Em build de release do Android, `http://` para a rede local é bloqueado pelo sistema; fora de desenvolvimento, o servidor precisa de HTTPS.
 - Os códigos de erro (`nao_autenticado`, `codigo_invalido` e os demais) são texto solto no servidor e no app, ainda não constantes do `core`.
 - O app não guarda conversas no aparelho: cada abertura busca do servidor.
-- O instalador do desktop existe, mas nunca foi assinado nem publicado: a assinatura está escrita e não foi exercitada. O atualizador está inteiro no código e testado com um servidor de mentira e com um arquivo assinado por outro publicador; nunca atualizou um app instalado, porque ainda não há versão publicada, e a tela dele não foi vista no app de verdade.
+- O desktop só tem uma versão publicada, a 0.1.0, e o atualizador só oferece versão maior: ele nunca atualizou um app instalado, e a tela dele não foi vista no app de verdade. A regra de assinatura do app já aceitou o pacote publicado, pela conferência dos artefatos; o painel de atualização só foi testado com um servidor de mentira e com um arquivo assinado por outro publicador.
 - A regra de assinatura do atualizador confere o nome do publicador e a autoridade, não a impressão digital do certificado: outra pessoa com o mesmo nome e certificado da mesma autoridade passaria. É o preço de a renovação do certificado não quebrar a atualização.
 - O QA no Sandbox roda com a conta do próprio Sandbox, que é administradora: a instalação sem privilégios é conferida pelo lugar onde os arquivos e o registro ficam, não com um usuário comum. Só prova o Windows 11.
 - No arquivo de licenças do desktop, 15 componentes foram publicados sem arquivo de licença no pacote; aparecem na lista com a licença declarada, sem o aviso de direitos autorais próprio. Fechar a janela encerra o app: não há ícone na bandeja, e com o app fechado não há aviso de pedido de aprovação. No macOS o aviso do sistema só é entregue a app empacotado, o que ainda não existe.

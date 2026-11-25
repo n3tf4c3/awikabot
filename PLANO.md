@@ -95,7 +95,7 @@ Um bot executa comandos, então o servidor equivale a um terminal remoto no Pi.
 4. Concluída em 23/11, no lado do servidor. Robustez no Pi: retomada depois de queda, backup do banco e health check vigiado.
    Verificar: derrubar o contêiner no meio de um turno e conferir o fluxo 5 na volta; restaurar o backup num ambiente descartável.
 5. Revisão de segurança e distribuição por TestFlight e teste interno da Play.
-6. App de desktop para Windows e Mac, em Rust com GPUI. Só planejada; ver "Etapa 6: plano do app de desktop".
+6. App de desktop para Windows e Mac, em Rust com GPUI. No Windows, a versão 0.1.0 foi publicada em 24/11; o Mac ainda não tem pacote. Ver "Etapa 6: plano do app de desktop".
    Verificar: os fluxos 1 a 5 percorridos no Windows e num Mac, com o app instalado pelo pacote assinado.
 
 ## Etapa 0: resultado (2026-11-23)
@@ -484,7 +484,7 @@ Depois, com a primeira parte na `main` (PR 11), veio o resto do subpasso 5:
 | Falsificação | Treze quebras de propósito no painel e na assinatura, uma por vez, todas acusadas. |
 | Sandbox, pacote novo, sem assinatura | O roteiro ganhou um passo, a pasta de dados depois de desinstalar, e na primeira rodada reprovou o pacote nele: o caminho da pasta no instalador tinha saído sem a barra. Corrigido, 18 de 18 passos. |
 
-O caminho feliz com o certificado do app ainda não foi exercitado: não existe pacote assinado por ele. Os testes provam o mecanismo com um arquivo assinado por outro publicador e uma regra de teste.
+Nesse ponto, o caminho feliz com o certificado do app não tinha sido exercitado: não existia pacote assinado por ele. Os testes provam o mecanismo com um arquivo assinado por outro publicador e uma regra de teste.
 
 Por fim, o começo do subpasso 6, o roteiro de release (`docs/release-desktop.md`):
 
@@ -516,14 +516,33 @@ Depois, as duas últimas etapas do roteiro:
 | Conferências do candidato, como ensaio | 13 de 13 passos, já com o teste dos scripts de publicação. |
 | Ensaio contra o GitHub de verdade | Com o pacote de desenvolvimento, a etapa 5 consulta o GitHub e recusa por seis motivos, entre eles a falta de assinatura e de evidências. A etapa 6 para antes, por não haver rascunho. |
 
-Nenhum rascunho foi criado no GitHub: depende de existir um pacote assinado. Criar o rascunho, baixá-lo de volta e publicar só rodaram contra o `gh` de mentira; se o `gh` de verdade se comportar de outro jeito com um rascunho, isso aparece na primeira publicação, que ainda é só rascunho.
+Por último, a segunda verificação de segurança e a primeira versão:
+
+- **Verificação de segurança sobre a `main`** (`f9616d6`). Cobriu também o desktop, o instalador, o atualizador, o roteiro de release e a CI. Nenhuma falha e dois achados de severidade baixa, o 9 e o 10 de `docs/auditoria-achados.md`: o atualizador aceitava um pacote assinado pelo publicador sem conferir que era a versão oferecida, e o Inno Setup não tinha versão fixa. Corrigidos pelo PR 15. A verificação foi reemitida sobre `1d1368c` e passou como gate; para `206b67f` valeu a mesma, com o diff entre os dois commits conferido.
+- **Produto e versão depois da assinatura** (`crates/app/src/confianca.rs`). Depois de conferir quem assinou, o app lê o nome do produto e a versão gravados no pacote e exige os do app e os da versão oferecida.
+- **Inno Setup em versão fixa** (`comum.ps1`). O pacote assinado só sai da versão fixada, que fica gravada no `build-info.json`.
+- **O Inno Setup assina o instalador por dentro** (PR 16). O primeiro pacote assinado, de `1d1368c`, passou na conferência dos artefatos e foi reprovado no Sandbox: o Smart App Control bloqueou a cópia do programa de instalação que o instalador extrai e roda, que saía sem assinatura. Agora o compilador assina o instalador, o desinstalador e essa cópia.
+- **Versão 0.1.0**, de `206b67f`. As seis etapas do roteiro, com o rascunho criado por autorização do titular e a publicação feita por ele.
+
+| Verificação | Resultado |
+|---|---|
+| Verificação de segurança, `f9616d6` | 28 quesitos atendidos, 1 em parte, nenhuma falha; 23 não se aplicam. |
+| Verificação de segurança reemitida, `1d1368c` | 29 quesitos atendidos, nenhum em parte, nenhuma falha; 23 não se aplicam. |
+| Testes | 99 do cliente, 10 do atualizador, 4 de contrato, 12 do fluxo e 76 do app. |
+| Sandbox, pacote assinado de `1d1368c`, Smart App Control ligado | Reprovado nas duas rodadas: o Windows bloqueou o instalador. |
+| Conferências do candidato, `206b67f` | 13 de 13 passos, sem mudança pendente. |
+| Conferência dos artefatos, `206b67f` | Aprovada; o app aceitou o pacote pela regra do atualizador. |
+| Sandbox, pacote assinado de `206b67f`, Smart App Control ligado | 17 de 17 passos em cada rodada: sem rede, e com rede e a marca de arquivo baixado. |
+| Rascunho no GitHub | Criado com os três arquivos, baixado de volta e comparado com os conferidos. |
+| Publicação | Feita pelo titular em 24/11. Lido no GitHub depois: o release é público, a etiqueta `desktop-v0.1.0` aponta para `206b67f`, e os três arquivos têm os hashes da conferência dos artefatos. |
+
+Na primeira tentativa de assinar o pacote de `206b67f`, a assinatura falhou por não achar o certificado, logo depois de a sessão dele ser aberta; refeita um minuto depois, passou. A conferência que o script faz antes de compilar não percebe a sessão fechada.
 
 Depende do titular para seguir:
 
-- aprovar o ícone, ou pedir outro;
-- abrir a sessão do certificado em nuvem e informar a impressão digital dele, para assinar (subpasso 3) e repetir o QA com o pacote assinado e o Smart App Control ligado.
+- aprovar o ícone, ou pedir outro.
 
-Não coberto ainda: a assinatura de verdade; o QA com pacote assinado, com rede e com a marca de arquivo baixado; a atualização de um app instalado para uma versão publicada; a tela do atualizador vista no app de verdade; o roteiro de release de ponta a ponta, com rascunho e publicação de verdade. No Sandbox a conta é administradora, e a instalação sem privilégios é conferida pelo lugar dos arquivos e do registro, não com um usuário comum. Os scripts de distribuição só rodaram neste PC; a CI passa a montar o pacote sem assinatura no Windows, e esse passo ainda não rodou lá.
+Não coberto ainda: a atualização de um app instalado para uma versão publicada, que só pode ser vista quando houver uma segunda versão; a tela do atualizador vista no app de verdade; a conferência de revogação com o computador sem rede; a recusa do roteiro do instalador diante de outra versão do Inno Setup. No Sandbox a conta é administradora, e a instalação sem privilégios é conferida pelo lugar dos arquivos e do registro, não com um usuário comum. A assinatura e a publicação só rodaram neste PC; a CI monta o pacote sem assinatura no Windows a cada PR.
 
 ### Decisões que são do titular
 
