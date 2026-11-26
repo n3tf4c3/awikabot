@@ -222,6 +222,8 @@ export function criarMotorCodex(opcoes: {
     let corte: string | null = null;
     let encerrado = false;
     let mensagemAtual: string | null = null;
+    const textoPorMensagem = new Map<string, string>();
+    let ultimaMensagem: string | null = null;
     let stderr = '';
     let resto = '';
     let proximoId = 1;
@@ -311,7 +313,10 @@ export function criarMotorCodex(opcoes: {
           if (texto !== '') acrescentar('\n\n');
           mensagemAtual = itemId;
         }
-        if (typeof parametros.delta === 'string') acrescentar(parametros.delta);
+        if (typeof parametros.delta === 'string') {
+          acrescentar(parametros.delta);
+          if (itemId !== null) textoPorMensagem.set(itemId, (textoPorMensagem.get(itemId) ?? '') + parametros.delta);
+        }
         return;
       }
       if (metodo === 'item/started' || metodo === 'item/completed') {
@@ -320,6 +325,10 @@ export function criarMotorCodex(opcoes: {
         const tipo = typeof item?.type === 'string' ? item.type : 'desconhecido';
         if (item === null || itemId === null) return;
         itens.set(itemId, item);
+        if (metodo === 'item/completed' && tipo === 'agentMessage') {
+          // A última mensagem do turno é a resposta final: num turno de decisão, a presa ao esquema.
+          ultimaMensagem = typeof item.text === 'string' ? item.text : (textoPorMensagem.get(itemId) ?? null);
+        }
         if (ITENS_SEM_ACAO.has(tipo)) {
           // Uma mensagem que chegou inteira, sem trechos, ainda é resposta.
           if (metodo === 'item/completed' && tipo === 'agentMessage' && itemId !== mensagemAtual && typeof item.text === 'string') {
@@ -402,7 +411,9 @@ export function criarMotorCodex(opcoes: {
     // A política de cada turno é a mesma da configuração gerenciada: a caixa de areia só de leitura,
     // sem rede, e os pedidos para a pessoa.
     const politica = { approvalPolicy: 'on-request', approvalsReviewer: 'user' } as const;
-    const instrucoes = instrucoesDoTurno(pedido.instrucoes);
+    // Num turno de decisão não há ferramenta a pedir: a orientação do ambiente, que manda pedir
+    // aprovação em vez de desistir, não vale. As instruções são as de quem pergunta.
+    const instrucoes = pedido.saida ? pedido.instrucoes : instrucoesDoTurno(pedido.instrucoes);
 
     const conduzir = async (): Promise<void> => {
       await pedir('initialize', { clientInfo: { name: 'awikabot', title: 'awikabot', version: '0' } });
@@ -444,6 +455,8 @@ export function criarMotorCodex(opcoes: {
           ...politica,
           ...(pedido.modelo ? { model: pedido.modelo } : {}),
           ...(pedido.esforco ? { effort: pedido.esforco } : {}),
+          // Turno de decisão: a resposta final presa ao esquema da pergunta.
+          ...(pedido.saida ? { outputSchema: pedido.saida.esquema } : {}),
         }),
       );
       turnoId = textoOuNulo(objeto(inicio?.turn)?.id) ?? turnoId;
@@ -474,7 +487,7 @@ export function criarMotorCodex(opcoes: {
           return;
         }
         if (estadoDoTurno === 'completed') {
-          ok({ estado: 'completa', texto, sessao });
+          ok({ estado: 'completa', texto, sessao, ...(pedido.saida ? { estruturada: ultimaMensagem } : {}) });
           return;
         }
         // O motivo bruto pode trazer trecho de conversa ou a conta: só a classe vai ao log e à conversa.

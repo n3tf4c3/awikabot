@@ -335,11 +335,11 @@ describe('catálogo (F2)', () => {
     expect(resposta.status).toBe(200);
     const catalogo = EsquemaCatalogo.parse(await resposta.json());
     const claude = catalogo.motores.find((motor) => motor.id === 'claude-code');
-    expect(claude).toMatchObject({ familia: 'agente', pronto: true, papeis: ['worker'] });
+    expect(claude).toMatchObject({ familia: 'agente', pronto: true, papeis: ['worker', 'decisao'] });
     expect(claude?.modelos.map((modelo) => modelo.id)).toEqual(['fable', 'opus', 'sonnet', 'haiku']);
     expect(claude?.esforcos.map((esforco) => esforco.id)).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
     const codex = catalogo.motores.find((motor) => motor.id === 'codex');
-    expect(codex).toMatchObject({ familia: 'agente', pronto: true, papeis: ['worker'] });
+    expect(codex).toMatchObject({ familia: 'agente', pronto: true, papeis: ['worker', 'decisao'] });
     expect(codex?.esforcos.map((esforco) => esforco.id)).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
     // O motor simulado é só de teste: nunca aparece para a pessoa escolher.
     expect(catalogo.motores.map((motor) => motor.id)).not.toContain('simulado');

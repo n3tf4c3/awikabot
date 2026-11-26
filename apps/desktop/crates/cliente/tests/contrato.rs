@@ -322,12 +322,12 @@ fn catalogo_e_motor_do_bot_contra_o_servidor() {
     let aparelho = Aparelho::parear(&servidor);
     let (api, credencial) = (&aparelho.api, &aparelho.credencial);
 
-    // O catálogo que o formulário usa: o Claude Code pronto, com "Auto" no topo dos modelos.
+    // O catálogo que o formulário usa: o Claude Code pronto, worker e juiz, com "Auto" no topo dos modelos.
     let catalogo = api.catalogo(credencial).expect("catálogo");
     let claude = catalogo.motores.iter().find(|motor| motor.id == MOTOR_PADRAO).expect("o motor padrão está no catálogo");
     assert_eq!(
         (claude.familia, claude.pronto, claude.papeis.as_slice()),
-        (MotorDoCatalogoFamilia::Agente, true, &[MotorDoCatalogoPapeis::Worker][..])
+        (MotorDoCatalogoFamilia::Agente, true, &[MotorDoCatalogoPapeis::Worker, MotorDoCatalogoPapeis::Decisao][..])
     );
     // O Codex entrou pronto na etapa 7: os dois motores vão para a lista de criar.
     assert_eq!(

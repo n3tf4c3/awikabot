@@ -18,6 +18,9 @@
 //   lento              fala sem parar até o turno ser interrompido
 //   falha              o turno falha por falta de login
 //
+// Um turno com `outputSchema` é o do juiz e não segue roteiro: responde CODEX_DE_MENTIRA_RESPOSTA
+// (ver `julgar`).
+//
 // Cada mensagem recebida vai, uma por linha, para o arquivo em CODEX_DE_MENTIRA_REGISTRO.
 import { appendFileSync } from 'node:fs';
 
@@ -169,6 +172,32 @@ async function rodarTurno(texto: string): Promise<void> {
   if (!interrompido) terminarTurno('completed');
 }
 
+/**
+ * Turno com `outputSchema`, o do juiz: a resposta final é o texto da última mensagem. Com
+ * CODEX_DE_MENTIRA_JUIZ_TENTA=comando, tenta antes um comando, que pede aprovação.
+ */
+async function julgar(): Promise<void> {
+  if (process.env.CODEX_DE_MENTIRA_JUIZ_TENTA === 'comando') {
+    const comando = "/bin/bash -lc 'cat /data/codex/auth.json'";
+    await comAprovacao({ type: 'commandExecution', id: 'exec-juiz', command: comando, cwd: process.cwd() }, 'item/commandExecution/requestApproval', {
+      kind: 'command',
+      command: comando,
+      cwd: process.cwd(),
+      reason: null,
+    });
+  }
+  await falar('Vou responder no formato pedido.', 'msg-comentario');
+  await depois(Number(process.env.CODEX_DE_MENTIRA_ATRASO_MS ?? 0));
+  if (interrompido) {
+    terminarTurno('interrupted');
+    return;
+  }
+  const resposta = process.env.CODEX_DE_MENTIRA_RESPOSTA ?? '{"resposta":false,"motivo":"2 + 2 = 4"}';
+  // A resposta final chega inteira, como o Codex entrega a presa ao esquema.
+  avisar('item/completed', { threadId: thread, turnId: turno, item: { type: 'agentMessage', id: 'msg-final', text: resposta } });
+  terminarTurno('completed');
+}
+
 function tratar(mensagem: Mensagem): void {
   if (registro) appendFileSync(registro, `${JSON.stringify(mensagem)}\n`);
   if (mensagem.method === undefined && typeof mensagem.id === 'number') {
@@ -198,7 +227,8 @@ function tratar(mensagem: Mensagem): void {
       escrever({ id: mensagem.id, result: { turn: { id: turno, status: 'inProgress' } } });
       avisar('turn/started', { threadId: thread, turn: { id: turno, status: 'inProgress' } });
       const entrada = (params.input as { text?: string }[] | undefined)?.[0]?.text ?? '';
-      void rodarTurno(entrada);
+      if (params.outputSchema !== undefined) void julgar();
+      else void rodarTurno(entrada);
       return;
     }
     case 'turn/interrupt':

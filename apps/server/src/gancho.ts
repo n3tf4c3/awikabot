@@ -4,22 +4,36 @@ import { Hono } from 'hono';
 import { ESPERA_APROVACAO_MS, LIMITES } from '@awikabot/core';
 import type { GestorDeAprovacoes } from './aprovacoes';
 import { novoToken } from './ids';
-import { avaliarFerramenta } from './politica';
+import { avaliarFerramenta, avaliarFerramentaDoDecisor } from './politica';
 
-export interface TurnoRegistrado {
+export interface TurnoDeBot {
   botId: string;
   mensagemId: string;
   /** Pasta de trabalho do bot, absoluta. */
   pasta: string;
 }
 
+/** O turno de um decisor: não tem bot nem mensagem, e nada dele vai para um cartão. */
+export interface TurnoDeDecisor {
+  decisor: true;
+}
+
+export type TurnoRegistrado = TurnoDeBot | TurnoDeDecisor;
+
 /** Liga cada turno em curso a um token que só o gancho daquele turno conhece. */
 export class Ganchos {
   private readonly turnos = new Map<string, TurnoRegistrado>();
 
-  registrar(turno: TurnoRegistrado): string {
+  registrar(turno: TurnoDeBot): string {
     const token = novoToken();
     this.turnos.set(token, turno);
+    return token;
+  }
+
+  /** Um token para o turno de um decisor: com ele, o gancho só deixa a resposta passar. */
+  registrarDecisor(): string {
+    const token = novoToken();
+    this.turnos.set(token, { decisor: true });
     return token;
   }
 
@@ -42,7 +56,7 @@ export interface RespostaDoGancho {
  * loopback, numa porta que não é publicada. O token do turno deixa pedir uma aprovação;
  * aprovar só quem tem token de aparelho, pela API.
  */
-export function criarAppDoGancho(deps: { ganchos: Ganchos; aprovacoes: GestorDeAprovacoes }): Hono {
+export function criarAppDoGancho(deps: { ganchos: Ganchos; aprovacoes: GestorDeAprovacoes | null }): Hono {
   const app = new Hono();
 
   app.post('/gancho', async (c) => {
@@ -62,9 +76,18 @@ export function criarAppDoGancho(deps: { ganchos: Ganchos; aprovacoes: GestorDeA
     const entrada =
       typeof pedido.tool_input === 'object' && pedido.tool_input !== null ? (pedido.tool_input as Record<string, unknown>) : {};
 
+    if ('decisor' in turno) {
+      // O turno de um decisor nunca chega à pessoa nem às aprovações: só a resposta passa.
+      const veredito = avaliarFerramentaDoDecisor(ferramenta);
+      return c.json<RespostaDoGancho>(
+        veredito.acao === 'permitir' ? { decisao: 'allow', motivo: 'entrega da resposta' } : { decisao: 'deny', motivo: veredito.motivo },
+      );
+    }
+
     const veredito = avaliarFerramenta(ferramenta, entrada, turno.pasta);
     if (veredito.acao === 'permitir') return c.json<RespostaDoGancho>({ decisao: 'allow', motivo: 'leitura dentro da pasta do bot' });
     if (veredito.acao === 'negar') return c.json<RespostaDoGancho>({ decisao: 'deny', motivo: veredito.motivo });
+    if (deps.aprovacoes === null) return c.json<RespostaDoGancho>({ decisao: 'deny', motivo: 'sem pedidos de aprovação neste processo' });
 
     const decisao = await deps.aprovacoes.pedir({
       botId: turno.botId,
