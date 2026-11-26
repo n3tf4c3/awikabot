@@ -48,7 +48,7 @@ Cinco fluxos, cada um conferido no aparelho:
 4. Aprovar ou negar uma ação pelo celular, com aviso push mesmo com o app fechado.
 5. Ver o que está rodando e o histórico depois de o servidor reiniciar.
 
-Fica fora da primeira versão: app web, computador ou VM para o bot, apps conectados (Gmail, Slack), voz, salas com vários bots, importação de times e temas. Rotinas agendadas e webhooks são as candidatas à segunda versão. O app de desktop para Windows e Mac, pedido em 23/11, está planejado como etapa 6, sem data.
+Fica fora da primeira versão: app web, computador ou VM para o bot, apps conectados (Gmail, Slack), voz, salas com vários bots, importação de times e temas. Rotinas agendadas e webhooks são as candidatas à segunda versão. O app de desktop para Windows e Mac, pedido em 23/11, está planejado como etapa 6, sem data. As equipes de bots, com mais de um motor e com modelos de decisão, pedidas em 26/11, estão planejadas como etapa 7, também sem data.
 
 ## Arquitetura
 
@@ -97,6 +97,8 @@ Um bot executa comandos, então o servidor equivale a um terminal remoto no Pi.
 5. Revisão de segurança e distribuição por TestFlight e teste interno da Play.
 6. App de desktop para Windows e Mac, em Rust com GPUI. No Windows, as versões 0.1.0 a 0.1.3 foram publicadas entre 24 e 26/11; o Mac ainda não tem pacote. Ver "Etapa 6: plano do app de desktop".
    Verificar: os fluxos 1 a 5 percorridos no Windows e num Mac, com o app instalado pelo pacote assinado.
+7. Papéis, motores e decisores: mais de um motor, escolhido em cada bot; equipes em que um bot orquestra e outros executam; e modelos de decisão que respondem a perguntas fechadas. Nada feito. Ver "Etapa 7: plano dos papéis, dos motores e dos decisores".
+   Verificar: um pedido feito a uma equipe, no aparelho, com dois motores diferentes, cada ação aprovada pela pessoa e a entrega conferida por um decisor.
 
 ## Etapa 0: resultado (2026-11-23)
 
@@ -695,6 +697,123 @@ Não coberto ainda: a linha do pedido resolvido no app de desktop de verdade dep
 - O que foi escrito em TypeScript para o app (sessão, fluxo de eventos, regras de tela) é reescrito em Rust, com os testes.
 - Os componentes de base também são escritos aqui. Um campo de texto com seleção, área de transferência e teclado ABNT2 é a peça mais trabalhosa.
 
+## Etapa 7: plano dos papéis, dos motores e dos decisores (2026-11-26)
+
+Pedido do titular em 26/11: definir os papéis de orquestrador, worker e decisão, com uma lista para escolher o modelo de cada um entre Claude Code, Codex, Antigravity e Jev, em arranjo híbrido. No mesmo dia, o titular apontou o Stitch Rapid, do Google, como a mesma ideia. Nada disto está feito, e nenhum motor além do Claude Code foi provado aqui.
+
+Hoje o motor é um só para o servidor inteiro (`AWIKA_MOTOR`), o modelo é um texto livre em cada bot, e cada bot trabalha sozinho.
+
+### Duas famílias
+
+| Família | O que é | Opções | Como roda |
+|---|---|---|---|
+| Agente | Conversa, usa ferramentas e pede aprovação. | Claude Code, que é o de hoje. Codex e Antigravity, a provar. | CLI no contêiner, com o login da pessoa. |
+| Decisor | Responde a uma pergunta fechada: escolhe entre opções, dá uma nota ou diz se uma afirmação é verdadeira. Não conversa e não usa ferramenta. | Um agente como juiz. Dois decisores rápidos: o Jev, da TypeSafe AI, e o Gemini Decision 1, do Google. | Juiz: um turno do motor, sem ferramentas. Decisor rápido: chamada HTTP do servidor a um serviço de fora. |
+
+O Jev foi lido em 26/11 no anúncio e na documentação da TypeSafe AI, sem conta e sem nenhuma chamada. É um modelo de decisão oferecido como API, em acesso antecipado com lista de espera. Recebe um estado e um conjunto de perguntas, e devolve, para cada uma, o valor, as probabilidades e a confiança. Os tipos de pergunta são a escolha entre até 255 opções, a nota numa escala e a afirmação verdadeira ou falsa. O anúncio fala em respostas entre 70 e 500 ms e em US$ 0,042 por milhão de tokens de entrada, com a saída sem custo; são números do fabricante, não conferidos. O serviço fica nos Estados Unidos. A política de privacidade diz que as consultas não treinam modelos e que são guardadas pelo tempo "razoavelmente necessário", sem prazo e sem opção de não guardar.
+
+O Gemini Decision 1 foi lido no mesmo dia, no anúncio e na documentação do Google, sem chave e sem nenhuma chamada. É o modelo da Gemini Decisions API, anunciada em 11/11, e aceita os mesmos três tipos de pergunta, com até mil perguntas por chamada. O anúncio diz que dá para usar desde já, com uma chave do AI Studio. Fala em respostas entre 150 e 250 ms e em US$ 0,10 por milhão de tokens de entrada, com a saída sem custo e uma faixa sem custo para protótipo; também são números do fabricante. As páginas lidas não dizem por quanto tempo as consultas são guardadas nem se treinam modelos.
+
+O Stitch Rapid é um experimento do Google sobre essa API, visto em 26/11 só na tela inicial, sem gerar nada. Dele vêm três ideias de uso: a lista que começa por "Auto", em que o sistema escolhe e a pessoa pode fixar uma opção; o rascunho rápido, que a pessoa ajusta antes de mandar o trabalho à ferramenta completa; e o selo de experimento.
+
+### Papéis
+
+| Papel | O que faz | O que pode |
+|---|---|---|
+| Orquestrador | Recebe o pedido da pessoa, divide em tarefas, entrega cada uma a um worker e junta os resultados numa resposta. | Ler e delegar. Não grava arquivo nem roda comando. |
+| Worker | Executa a tarefa que recebe, na pasta dele. Fora de uma equipe, é o bot de hoje. | As ferramentas de hoje, com a mesma política e o mesmo cartão de aprovação. |
+| Decisão | Responde ao servidor nos pontos em que a equipe precisa escolher ou conferir. | Só responder à pergunta. |
+
+O híbrido vale em dois sentidos. Cada papel pode usar um motor diferente: um orquestrador num motor, workers em outro, a decisão num decisor. E a decisão sobe uma escada, do mais barato ao mais caro (ver "A escada da decisão").
+
+### Premissas
+
+| Premissa | Base |
+|---|---|
+| O papel é do lugar do bot numa equipe, não do bot. | Um bot sozinho continua como hoje, e o mesmo bot pode executar numa equipe e conversar fora dela. A equipe diz quem orquestra, quem executa e qual decisor responde. |
+| A decisão não é um bot. | Um decisor rápido não conversa: recebe um estado e perguntas com resposta de tipo fixo. Tratada como pergunta que o servidor faz, a decisão serve aos decisores rápidos e ao juiz pela mesma interface. |
+| Quem aprova uma ação continua sendo só a pessoa. | É a regra "o motor pede, a pessoa aprova". Nenhum papel e nenhum decisor resolve um pedido de aprovação. |
+| A delegação passa pelo servidor. | Nenhum motor chama outro. O servidor confere quem pode delegar a quem, aplica os limites e grava cada tarefa na conversa do worker, onde a pessoa a vê. |
+| Só executa um motor cujo gancho nega quando falha. | A política de ferramentas, o cartão e a gravação presa à pasta dependem do gancho. Motor sem um gancho assim pode ser juiz, nunca worker nem orquestrador. |
+| O motor de um bot é escolhido na criação e não muda. | A sessão que guarda a conversa é do motor. Trocar de motor perderia a conversa, e um bot sem sessão não tem como recomeçar pelo app. |
+| Os bots de uma equipe são da mesma pessoa. | Cada bot roda com o login da dona dele, e os termos não deixam o pedido de uma pessoa gastar a assinatura de outra. |
+| O catálogo de modelos sugere, não bloqueia. | O servidor diz quais motores e modelos conhece, e o app monta a lista com isso. Um modelo fora da lista continua aceito se passar no formato: lista fechada envelhece a cada modelo novo e recusaria bots que já existem. |
+| O decisor rápido fica desligado até alguém ligar, equipe por equipe, e aparece como experimento. | O Jev e o Gemini Decision 1 são terceiros no caminho, e o que a pergunta leva sai do Pi. Sem eles, o juiz responde ao que é conferência, e a escolha de modelo fica no padrão do motor. |
+| "Auto" é o primeiro item da lista de modelos, e é o bot sem modelo de hoje. | Com o decisor rápido ligado, ele escolhe o modelo e o esforço de cada tarefa, dentro do motor do bot. Com ele desligado, vale o padrão do motor, como hoje. O juiz não faz essa escolha: gastaria um turno para economizar outro. |
+
+### A escada da decisão
+
+1. **Regra no código**: o que já é certo decide sozinho, como a política de ferramentas e os limites da equipe.
+2. **Decisor rápido**: o Jev ou o Gemini Decision 1, quando ligado. A resposta só vale com a confiança acima do limiar.
+3. **Juiz**: um agente, num turno sem ferramentas, que decide e diz o motivo.
+4. **Pessoa**: o que o juiz não resolve vira uma pergunta na conversa.
+
+Toda resposta de decisor é conferida contra o esquema da pergunta. Resposta fora das opções, ilegível ou atrasada conta como "sem decisão" e sobe um degrau; nunca vira um "sim".
+
+O limiar não é escolhido de antemão. A confiança dos dois decisores rápidos é dita calibrada pelo fabricante e não foi medida aqui. Cada um entra primeiro em sombra: responde junto com o juiz, sem decidir nada, e o servidor guarda quando os dois concordam. O limiar sai dessa medição, e é um por decisor.
+
+### Onde a decisão entra
+
+- **Conferir a entrega**: o resultado do worker atende à tarefa? Se não, a tarefa volta uma vez ao worker; na segunda, vai à pessoa. Quem confere não é quem planejou nem quem executou.
+- **Escolher entre resultados**: quando dois workers fazem a mesma tarefa, qual fica.
+- **Escolher o modelo e o esforço**: é o "Auto" da lista. A tarefa simples vai a um modelo barato e a difícil a um caro, dentro do motor do bot. Só o decisor rápido faz essa escolha.
+- **Rascunhar o plano da equipe**: o orquestrador escreve as tarefas, num turno que só lê. O decisor rápido propõe, na hora, o worker, o modelo e o esforço de cada uma. A pessoa vê o plano num cartão, ajusta e manda executar. Nenhum worker roda antes disso. Sem decisor rápido, o orquestrador diz o destinatário de cada tarefa, e o cartão é o mesmo.
+
+Fora desta etapa: uma nota de risco no cartão de aprovação. A proteção de hoje é a pessoa ler o comando inteiro. Um "baixo risco" ao lado dele, vindo de um modelo que ninguém mediu, convida a aprovar sem ler, e mandaria todo comando a um terceiro.
+
+### Limites da equipe
+
+- Um worker não delega: a equipe tem um nível só.
+- Cada pedido da pessoa tem um teto de tarefas, e cada tarefa volta ao worker no máximo uma vez.
+- As tarefas entram na mesma fila de turnos, com o mesmo limite de simultâneos do servidor.
+- "Parar" no orquestrador para a equipe inteira.
+- O resultado de um worker chega ao orquestrador e ao decisor como dado, não como instrução. O orquestrador não grava nem roda comando, e toda ação de worker passa pelo cartão.
+
+### Contrato
+
+Tudo entra de modo que os clientes já publicados continuem valendo; o desktop 0.1.3 ignora o que não conhece.
+
+- Uma rota nova entrega o catálogo: cada motor com a família, os modelos sugeridos, os papéis que aceita e se está pronto para uso.
+- O bot ganha o campo `motor`, opcional, com o Claude Code por padrão, e o campo `esforco`, também opcional. O esforço só aparece no catálogo do motor que o aceita. Um bot sem modelo é o "Auto".
+- A equipe é um recurso novo: o orquestrador, os workers, o decisor e os limites.
+- O plano da equipe tem esquema próprio: as tarefas, com o worker, o modelo e o esforço de cada uma, e o estado, de rascunho a enviado. Só a pessoa envia, com token de aparelho, como numa aprovação.
+- A mensagem que chega a um worker vinda do orquestrador é marcada por um campo novo e opcional. O enum `papel` da mensagem não ganha valor novo, o que quebraria os clientes antigos.
+- A decisão tem esquema próprio: a pergunta, as opções, a resposta, a confiança, o motivo e quem respondeu. Fica gravada e aparece na conversa da equipe.
+
+### Passos
+
+1. **Prova dos motores**, com código descartável, como a etapa 0. Codex e Antigravity num contêiner arm64.
+   Verificar: a resposta sai em eventos; a conversa é retomada depois de reiniciar; um comando gera um pedido que um programa de fora responde, e a ação não roda quando esse programa falha ou demora; o modelo e o esforço mudam de um turno para o outro sem perder a conversa; a memória por turno é medida; os termos de uso de cada um são lidos. Sai daqui quais motores entram e em quais papéis. A mesma prova diz como o orquestrador entrega uma tarefa ao servidor: por uma ferramenta própria ou por uma lista no fim da resposta.
+2. **Catálogo e motor por bot**, ainda sem equipes: a rota do catálogo, o campo `motor` e a lista nos dois apps, com "Auto" no topo.
+   Verificar: criar um bot escolhendo motor e modelo pela lista, no celular e no desktop; um bot antigo continua igual; um modelo fora da lista é aceito.
+3. **Segundo motor**: o que passou na prova, com a mesma política, o mesmo cartão e a mesma regra de gravação.
+   Verificar: o runbook de motor real, F0 a F4, percorrido com ele no Pi.
+4. **Juiz**: a interface de decisor no servidor e o primeiro decisor, um turno sem ferramentas.
+   Verificar: por teste, a resposta fora das opções, a ilegível e a atrasada sobem um degrau; nenhuma vira aprovação.
+5. **Equipe**: orquestrador, workers, o cartão do plano, delegação pelo servidor e limites. Depende do aviso push da etapa 3: sem ele, um worker parado num cartão expira em 15 minutos e segura os outros.
+   Verificar: um pedido que vira duas tarefas, em dois workers; o plano aparece num cartão antes de qualquer worker rodar, e a mudança feita nele é a que vale; cada ação aprovada no cartão; "Parar" encerra tudo; a queda do servidor no meio marca as tarefas como falhas e nada volta a rodar sozinho.
+6. **Decisor rápido em sombra**: o Gemini Decision 1, que não tem lista de espera, e o Jev, se houver acesso. Responde junto com o juiz, sem decidir.
+   Verificar: a concordância medida numa amostra de decisões reais; a chave fora do ambiente dos bots; o que cada pergunta leva para fora, conferido por teste.
+7. **Decisor rápido decidindo**, com o limiar que a medição apontar: a conferência da entrega, o "Auto" e a proposta do plano. Entra marcado como experimento.
+   Verificar: abaixo do limiar a pergunta sobe para o juiz; com o serviço fora do ar a equipe segue só com o juiz, e o "Auto" volta ao padrão do motor.
+
+### Decisões que são do titular
+
+- **O que "híbrido" quer dizer**: este plano assume os dois sentidos, motores diferentes por papel e a escada da decisão.
+- **Decisor de fora**: aceitar que trechos de conversa saiam do Pi, e para quem. O PLANO prometia "nenhuma conta nem relay de terceiros". O Jev pede lista de espera, fica nos Estados Unidos e não declara prazo de guarda; o contrato de cliente da TypeSafe AI não foi lido. O Gemini Decision 1 pede uma chave do Google, de quem for o dono da conta; falta ler o que o Google faz com as consultas, sobretudo na faixa sem custo.
+- **A pasta da equipe**: uma pasta só, em que os workers gravam um por vez, ou uma por worker, com o orquestrador juntando. A regra de gravação presa à pasta do bot muda num caso e não no outro.
+- **Ordem com o resto**: esta etapa disputa a vez com o push, o iPhone e as lojas, que ainda faltam na primeira versão.
+
+### Riscos
+
+- **Termos de uso**: numa equipe, o orquestrador dispara turnos sem a pessoa digitar cada um. Isso fica mais longe do uso comum de uma assinatura do que um bot que responde à pessoa, que já era dúvida. Codex e Antigravity têm termos próprios, ainda não lidos para este uso. A saída segura continua sendo chave de API.
+- **Memória**: uma equipe ocupa vários turnos de uma vez, cada um um processo de CLI, e cada motor novo engorda a imagem. O limite de quatro turnos foi medido com turnos curtos de um motor só.
+- **Três drivers**: a saída de cada CLI muda entre versões, e o Antigravity se atualiza sozinho. Cada motor tem a versão fixada na imagem e o driver testado contra ela.
+- **O gancho dos outros motores**: no termIAX, a lista de bloqueio do Antigravity não impediu sozinha a busca na web; foi preciso um agente próprio com as ferramentas fechadas e uma trava. Se a prova não achar um gancho que nega ao falhar, o motor não executa.
+- **Login de cada motor**: cada CLI guarda o login num lugar próprio do volume. O backup, que hoje deixa de fora o do Claude Code, precisa deixar de fora o de cada motor novo.
+- **Decisor errado com confiança alta**: uma entrega ruim dada por boa chega à pessoa como pronta. A conferência da entrega reduz retrabalho; não substitui a pessoa ler o resultado. No "Auto", o erro custa menos: uma resposta pior ou um turno mais caro.
+- **Custo**: uma equipe gasta vários turnos por pedido. O teto de tarefas é o freio.
+
 ## Riscos
 
 - Aprovação: um comando aprovado roda com os direitos do contêiner e alcança tudo o que está no volume, inclusive o login do motor. A proteção é a pessoa ler o comando no cartão.
@@ -710,6 +829,7 @@ Não coberto ainda: a linha do pedido resolvido no app de desktop de verdade dep
 - Assinatura de cada pessoa ou chave de API no uso contínuo: depende da leitura dos termos acima. A prova usou a assinatura.
 - Túnel: o subdomínio foi escolhido em 26/11, `api.awikabot.com`, e o serviço do túnel está no compose (`docs/tunel.md`). O túnel foi criado no painel e ligado ao servidor do Pi em 26/11 (ver "Servidor no Pi pelo túnel"). Segue em aberto se o endereço ganha uma proteção na frente, além do pareamento.
 - App de desktop: quem confere a versão de Mac, e quando a etapa 6 começa. Ver "Etapa 6: plano do app de desktop".
+- Papéis, motores e decisores: um decisor de fora como terceiro no caminho, a pasta da equipe e a vez da etapa 7 diante do que falta na primeira versão. Ver "Etapa 7: plano dos papéis, dos motores e dos decisores".
 
 ## Referência: OpenMausBot em 2026-11-23
 
