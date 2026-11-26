@@ -89,7 +89,7 @@ Um bot executa comandos, então o servidor equivale a um terminal remoto no Pi.
 1. Esqueleto: monorepo com os três pacotes, CI e imagem arm64.
    Verificar: typecheck, lint, testes e build passam; o contêiner sobe no Pi e responde ao health check; o app abre no iPhone e no Android.
 2. Protocolo e conversa: pareamento, bots e turno com streaming.
-   Verificar: fluxos 1 a 3 no aparelho, passando pelo túnel.
+   Verificar: fluxos 1 a 3 no aparelho, passando pelo túnel. Em 26/11, num Android: o pareamento e a conversa pelo túnel, com o motor real; de bots, só a lista.
 3. Aprovações e push.
    Verificar: fluxo 4 com o app fechado e o celular bloqueado.
 4. Concluída em 23/11, no lado do servidor. Robustez no Pi: retomada depois de queda, backup do banco e health check vigiado.
@@ -280,6 +280,22 @@ Agora a página de mensagens traz, num campo opcional, os pedidos já resolvidos
 | Servidor que não manda o campo | A página vale sem ele, no celular e no desktop, por teste. |
 
 Não coberto: a linha vista num aparelho e no app de desktop de verdade depois de reabrir; o motor real; o desktop num Mac, que fica para a CI. O desktop 0.1.2 ignora o campo: quem o usa só vê os pedidos antigos a partir da 0.1.3, publicada em 26/11.
+
+## Servidor no Pi pelo túnel (2026-11-26)
+
+O servidor ficou acessível de fora pela primeira vez. O compose ganhou o serviço do túnel (`docs/tunel.md`), o túnel foi criado no painel da Cloudflare e o servidor subiu no Pi com ele, a partir da `main`, com o login do motor do titular.
+
+| Verificação | Resultado |
+|---|---|
+| Túnel com um servidor num Docker local (amd64) | Pelo endereço público: saúde, pareamento, recusa do código repetido, rota com e sem token. O sinal de vida do fluxo de eventos chega a cada 15 segundos, igual ao acesso direto. |
+| Métricas do túnel | De dentro do contêiner do servidor, a conexão é recusada. |
+| Runbook de motor real, dentro do servidor no Pi | 15 de 15 em 50 segundos: F0 a F4, com o histórico trazendo os pedidos resolvidos. |
+| Resposta de um bot pelo endereço público | Pareamento, criação de bot e um turno, a partir de outro computador: a resposta chegou em 78 trechos, entre 3,5 e 7,2 segundos. |
+| Um Android pelo endereço público | Pelo Expo Go, com o código digitado no teclado da tela: pareou, abriu a lista de bots e conversou com um bot. O aparelho apareceu como ativo no servidor. |
+
+Não coberto: o cartão de aprovação num aparelho por esse caminho; criar e editar bot pelo celular; o iPhone; o app de desktop pelo endereço público; um build próprio do app; a queda do túnel com o app aberto; a queda de energia do Pi.
+
+O endereço responde a qualquer um em `/healthz` e em `POST /v1/parear`. O que isso expõe está em `docs/tunel.md`.
 
 ## Etapa 6: plano do app de desktop (2026-11-23)
 
@@ -692,7 +708,7 @@ Não coberto ainda: a linha do pedido resolvido no app de desktop de verdade dep
 ## Decisões em aberto
 
 - Assinatura de cada pessoa ou chave de API no uso contínuo: depende da leitura dos termos acima. A prova usou a assinatura.
-- Túnel: o subdomínio foi escolhido em 26/11, `api.awikabot.com`, e o serviço do túnel está no compose (`docs/tunel.md`). O túnel foi criado no painel e visto em 26/11 com um servidor num Docker local: saúde, pareamento e fluxo de eventos passam pelo endereço público. Falta ligá-lo ao servidor do Pi e ver o app conversar por ele.
+- Túnel: o subdomínio foi escolhido em 26/11, `api.awikabot.com`, e o serviço do túnel está no compose (`docs/tunel.md`). O túnel foi criado no painel e ligado ao servidor do Pi em 26/11 (ver "Servidor no Pi pelo túnel"). Segue em aberto se o endereço ganha uma proteção na frente, além do pareamento.
 - App de desktop: quem confere a versão de Mac, e quando a etapa 6 começa. Ver "Etapa 6: plano do app de desktop".
 
 ## Referência: OpenMausBot em 2026-11-23
