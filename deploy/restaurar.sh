@@ -5,7 +5,7 @@
 #
 # Só restaura num volume que ainda não tem o banco nem as pastas de bots e as
 # conversas do motor que vêm no arquivo: nunca escreve por cima de um servidor com
-# dados. O volume pode já ter o login do motor, que não vem no backup.
+# dados. O volume pode já ter o login dos motores, que não vem no backup.
 #
 # Para ensaiar ao lado do servidor de verdade, use outro projeto:
 #   COMPOSE_PROJECT_NAME=awikabot-ensaio AWIKA_SUBREDE=172.28.0.0/16 AWIKA_PORTA_HOST=8799 \
@@ -33,6 +33,7 @@ estranhas=$(tar -tf "$arquivo" | awk '
   $0 ~ /(^|\/)\.\.(\/|$)/ { print; next }
   $0 == "awikabot.db" || $0 == "trabalho" || index($0, "trabalho/") == 1 { next }
   $0 == "claude/projects" || index($0, "claude/projects/") == 1 { next }
+  $0 == "codex/sessions" || index($0, "codex/sessions/") == 1 { next }
   { print }
 ' | head -n 3)
 if [ -n "$estranhas" ]; then
@@ -47,11 +48,13 @@ if compose ps -q server </dev/null | grep -q .; then
 fi
 
 # O que o arquivo traz, no nível que identifica cada coisa: o banco, a pasta de cada bot e a
-# conversa de cada bot. Se qualquer um já existe no volume, nada é restaurado.
+# conversa de cada bot (no Codex, cada arquivo de conversa). Se qualquer um já existe no volume,
+# nada é restaurado.
 itens=$(tar -tf "$arquivo" | awk -F/ '
   $1 == "awikabot.db" { print $1 }
   $1 == "trabalho" && $2 != "" { print $1 "/" $2 }
   $1 == "claude" && $2 == "projects" && $3 != "" { print $1 "/" $2 "/" $3 }
+  $1 == "codex" && $2 == "sessions" && NF > 3 && $NF != "" { print }
 ' | sort -u)
 printf '%s\n' "$itens" | grep -qx 'awikabot.db' || { echo "o arquivo não tem o banco; não parece um backup do awikabot" >&2; exit 1; }
 
@@ -63,7 +66,7 @@ if ! printf '%s\n' "$itens" | compose run --rm -T --no-deps --entrypoint sh serv
 fi
 
 # -k: se, apesar da conferência, algum arquivo já existir, o tar para em vez de trocá-lo.
-membros=$(tar -tf "$arquivo" | awk -F/ '$1 == "awikabot.db" || $1 == "trabalho" { print $1 } $1 == "claude" { print "claude/projects" }' | sort -u)
+membros=$(tar -tf "$arquivo" | awk -F/ '$1 == "awikabot.db" || $1 == "trabalho" { print $1 } $1 == "claude" { print "claude/projects" } $1 == "codex" { print "codex/sessions" }' | sort -u)
 # shellcheck disable=SC2086
 compose run --rm -T --no-deps --entrypoint tar server -C /data -k -xf - $membros <"$arquivo"
 

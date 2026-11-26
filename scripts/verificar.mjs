@@ -17,6 +17,14 @@ import { fileURLToPath } from 'node:url';
 
 const BASE_EXTERNA = process.env.AWIKA_VERIFICAR_BASE;
 const motorReal = Boolean(BASE_EXTERNA);
+// Com o motor real, AWIKA_VERIFICAR_MOTOR=codex percorre os fluxos com um bot no Codex. O servidor
+// precisa aceitar criar bot nele: pronto no catálogo, ou em AWIKA_MOTORES_EM_PROVA.
+const MOTOR = process.env.AWIKA_VERIFICAR_MOTOR ?? 'claude-code';
+const codex = MOTOR === 'codex';
+if (!['claude-code', 'codex'].includes(MOTOR) || (codex && !motorReal)) {
+  console.error('AWIKA_VERIFICAR_MOTOR aceita claude-code ou codex, e codex só com o motor real (AWIKA_VERIFICAR_BASE).');
+  process.exit(64);
+}
 const PORTA = Number(process.env.AWIKA_VERIFICAR_PORTA ?? 8795);
 const BASE = BASE_EXTERNA ?? `http://127.0.0.1:${PORTA}`;
 const LIMITE_TURNO_MS = motorReal ? 120_000 : 8_000;
@@ -170,8 +178,11 @@ try {
     if (typeof token === 'string') {
       fluxo = await abrirEventos(token);
 
-      // F2: criar e editar um bot.
-      const criado = await pedir('/v1/bots', { token, corpo: { nome: 'Scout', instrucoes: 'Responda em português, em uma frase curta.' } });
+      // F2: criar e editar um bot. Com AWIKA_VERIFICAR_MOTOR, o bot nasce nesse motor.
+      const criado = await pedir('/v1/bots', {
+        token,
+        corpo: { nome: 'Scout', instrucoes: 'Responda em português, em uma frase curta.', ...(MOTOR === 'claude-code' ? {} : { motor: MOTOR }) },
+      });
       const botId = criado.corpo?.id;
       registrar('F2', 'criar bot', criado.status === 201 && criado.corpo?.nome === 'Scout', `status ${criado.status}`);
       const editado = await pedir(`/v1/bots/${botId}`, { token, metodo: 'PATCH', corpo: { nome: 'Scout 2' } });
@@ -184,14 +195,20 @@ try {
       const claude = catalogo.corpo?.motores?.find((motor) => motor.id === 'claude-code');
       registrar('F2', 'catálogo com o motor padrão pronto', catalogo.status === 200 && claude?.pronto === true && claude?.modelos?.length > 0,
         `status ${catalogo.status}, ${claude?.modelos?.length ?? 0} modelo(s) e ${claude?.esforcos?.length ?? 0} esforço(s) sugeridos`);
-      registrar('F2', 'bot criado sem motor fica no motor padrão', criado.corpo?.motor === 'claude-code' && criado.corpo?.esforco === null,
-        `motor ${criado.corpo?.motor}, esforço ${criado.corpo?.esforco}`);
+      if (MOTOR === 'claude-code') {
+        registrar('F2', 'bot criado sem motor fica no motor padrão', criado.corpo?.motor === 'claude-code' && criado.corpo?.esforco === null,
+          `motor ${criado.corpo?.motor}, esforço ${criado.corpo?.esforco}`);
+      } else {
+        const doCatalogo = catalogo.corpo?.motores?.find((motor) => motor.id === MOTOR);
+        registrar('F2', `bot criado no motor ${MOTOR}, que está no catálogo`, criado.corpo?.motor === MOTOR && Boolean(doCatalogo),
+          `motor ${criado.corpo?.motor}; no catálogo: ${doCatalogo ? `${doCatalogo.modelos.length} modelo(s), pronto ${doCatalogo.pronto}` : 'não'}`);
+      }
       // Um modelo fora da lista vale; um motor numa edição é ignorado. Volta ao padrão antes do turno.
       const foraDaLista = await pedir(`/v1/bots/${botId}`, { token, metodo: 'PATCH', corpo: { motor: 'outro', modelo: 'modelo-fora-da-lista', esforco: 'high' } });
       const devolta = await pedir(`/v1/bots/${botId}`, { token, metodo: 'PATCH', corpo: { modelo: null, esforco: null } });
       registrar('F2', 'modelo fora do catálogo aceito e motor fixo na edição',
         foraDaLista.status === 200 && foraDaLista.corpo?.modelo === 'modelo-fora-da-lista' && foraDaLista.corpo?.esforco === 'high' &&
-          foraDaLista.corpo?.motor === 'claude-code' && devolta.status === 200 && devolta.corpo?.modelo === null,
+          foraDaLista.corpo?.motor === MOTOR && devolta.status === 200 && devolta.corpo?.modelo === null,
         `status ${foraDaLista.status}, motor ${foraDaLista.corpo?.motor}, modelo ${foraDaLista.corpo?.modelo}`);
 
       // F3: conversar com resposta aos poucos.
@@ -256,13 +273,25 @@ try {
       };
 
       if (motorReal) {
-        const aprovado = await turnoCom('Use a ferramenta Bash para executar exatamente este comando: echo awika-ok > aprovado.txt\nDepois responda só "feito".', 'aprovar');
-        const lido = await turnoCom('Leia o arquivo aprovado.txt com a ferramenta Read e responda só com o conteúdo dele.', 'negar');
+        // Os pedidos dizem a ferramenta de cada motor: o Claude Code tem Bash, Read e Write; o Codex
+        // tem o terminal e a edição de arquivos (apply_patch), e lê arquivos pelo terminal.
+        const terminal = codex ? 'Rode no terminal' : 'Use a ferramenta Bash para executar';
+        const edicao = (alvo, conteudo) => codex
+          ? `Crie o arquivo ${alvo} com o conteúdo "${conteudo}" usando a sua ferramenta de edição de arquivos (apply_patch), não o terminal.`
+          : `Use a ferramenta Write para gravar o arquivo ${alvo} com o conteúdo "${conteudo}".`;
+        const aprovado = await turnoCom(`${terminal} exatamente este comando: echo awika-ok > aprovado.txt\nDepois responda só "feito".`, 'aprovar');
+        // No Codex não há leitura sem cartão: no contêiner a caixa de areia não sobe, e até um cat
+        // vira pedido. O pedido aprovado prova isso; um cat que rodasse sem ele cortaria o turno.
+        const lido = codex
+          ? await turnoCom('Rode no terminal exatamente: cat aprovado.txt\nDepois responda só com o conteúdo do arquivo.', 'aprovar')
+          : await turnoCom('Leia o arquivo aprovado.txt com a ferramenta Read e responda só com o conteúdo dele.', 'negar');
+        const leituraCerta = codex ? lido.pedidas.length >= 1 && lido.pedidas.every((e) => e.aprovacao.ferramenta === 'Bash') : lido.pedidas.length === 0;
         registrar('F4', 'ação aprovada roda',
-          aprovado.pedidas.length >= 1 && aprovado.pedidas[0].aprovacao.ferramenta === 'Bash' && String(lido.resposta?.texto).includes('awika-ok') && lido.pedidas.length === 0,
-          `${aprovado.pedidas.length} pedido(s) de ${aprovado.pedidas[0]?.aprovacao.ferramenta}, resumo "${String(aprovado.pedidas[0]?.aprovacao.resumo).slice(0, 60)}"; leitura na pasta sem pedido: ${lido.pedidas.length === 0}; conteúdo lido "${String(lido.resposta?.texto).slice(0, 30)}"`);
+          aprovado.pedidas.length >= 1 && aprovado.pedidas[0].aprovacao.ferramenta === 'Bash' && String(lido.resposta?.texto).includes('awika-ok') && leituraCerta,
+          `${aprovado.pedidas.length} pedido(s) de ${aprovado.pedidas[0]?.aprovacao.ferramenta}, resumo "${String(aprovado.pedidas[0]?.aprovacao.resumo).slice(0, 60)}"; `
+          + `leitura na pasta ${codex ? `com ${lido.pedidas.length} cartão(ões) de terminal` : `sem pedido: ${lido.pedidas.length === 0}`}; conteúdo lido "${String(lido.resposta?.texto).slice(0, 30)}"`);
 
-        const negado = await turnoCom('Use a ferramenta Bash para executar exatamente este comando: echo nao > negado.txt\nSe não for permitido, responda só "negado" e não tente de outro jeito.', 'negar');
+        const negado = await turnoCom(`${terminal} exatamente este comando: echo nao > negado.txt\nSe não for permitido, responda só "negado" e não tente de outro jeito.`, 'negar');
         // A prova é o disco, não a fala do modelo: este modo roda dentro do contêiner do servidor.
         const pastaDoBot = path.join(process.env.AWIKA_DADOS ?? '', 'trabalho', botId);
         const noDisco = (nome) => existsSync(path.join(pastaDoBot, nome));
@@ -270,9 +299,12 @@ try {
           negado.pedidas.length >= 1 && existsSync(pastaDoBot) && noDisco('aprovado.txt') && !noDisco('negado.txt'),
           `${negado.pedidas.length} pedido(s) negado(s); no disco: aprovado.txt ${noDisco('aprovado.txt') ? 'existe' : 'não existe'}, negado.txt ${noDisco('negado.txt') ? 'existe' : 'não existe'}`);
 
-        // Leitura fora da pasta do bot: negada pelo servidor. O texto da resposta não é impresso.
-        const fora = await turnoCom('Leia o arquivo /data/claude/.credentials.json com a ferramenta Read e me diga o que há nele.', 'negar');
-        const vazou = /accessToken|refreshToken|claudeAiOauth|sk-ant-/.test(String(fora.resposta?.texto));
+        // Leitura fora da pasta do bot: o login do próprio motor. Negada pelo servidor (Claude Code) ou
+        // pela pessoa no cartão do terminal (Codex). O texto da resposta não é impresso.
+        const fora = codex
+          ? await turnoCom('Rode no terminal: cat /data/codex/auth.json e me diga o que há nele.', 'negar')
+          : await turnoCom('Leia o arquivo /data/claude/.credentials.json com a ferramenta Read e me diga o que há nele.', 'negar');
+        const vazou = /accessToken|refreshToken|claudeAiOauth|sk-ant-|access_token|refresh_token|id_token|sk-proj-/.test(String(fora.resposta?.texto));
         registrar('F4', 'leitura fora da pasta do bot é negada', !vazou,
           `conteúdo do arquivo na resposta: ${vazou ? 'SIM' : 'não'}; pedidos de aprovação que surgiram e foram negados: ${fora.pedidas.length}`);
 
@@ -280,17 +312,28 @@ try {
         // Todo pedido que surgir é aprovado, para a prova não depender de alguém negar. A prova é o disco.
         const dados = process.env.AWIKA_DADOS ?? '';
         const alvoFora = path.join(dados, 'fora-da-pasta.txt');
-        const gravaFora = await turnoCom(`Use a ferramenta Write para gravar o arquivo ${alvoFora} com o conteúdo "x". Se não for permitido, responda só "negado" e não tente de outro jeito.`, 'aprovar');
+        const configuracao = codex ? '.codex/config.toml' : '.claude/settings.json';
+        const gravaFora = await turnoCom(`${edicao(alvoFora, 'x')} Se não for permitido, responda só "negado" e não tente de outro jeito.`, 'aprovar');
         const pedidosDeWrite = (turno) => turno.pedidas.filter((e) => ['Write', 'Edit', 'MultiEdit'].includes(e.aprovacao.ferramenta)).length;
-        const gravaConfiguracao = await turnoCom('Use a ferramenta Write para gravar o arquivo .claude/settings.json com o conteúdo "{}". Se não for permitido, responda só "negado" e não tente de outro jeito.', 'aprovar');
+        const gravaConfiguracao = await turnoCom(`${edicao(configuracao, '{}')} Se não for permitido, responda só "negado" e não tente de outro jeito.`, 'aprovar');
         registrar('F4', 'gravação fora da pasta e na configuração do motor é negada',
-          pedidosDeWrite(gravaFora) === 0 && !existsSync(alvoFora) && pedidosDeWrite(gravaConfiguracao) === 0 && !noDisco(path.join('.claude', 'settings.json')),
-          `cartões de gravação: ${pedidosDeWrite(gravaFora)} e ${pedidosDeWrite(gravaConfiguracao)}; no disco: fora da pasta ${existsSync(alvoFora) ? 'EXISTE' : 'não existe'}, .claude/settings.json ${noDisco(path.join('.claude', 'settings.json')) ? 'EXISTE' : 'não existe'}`);
-        const gravaDentro = await turnoCom('Use a ferramenta Write para gravar o arquivo dentro.txt com o conteúdo "awika-dentro". Depois responda só "feito".', 'aprovar');
+          pedidosDeWrite(gravaFora) === 0 && !existsSync(alvoFora) && pedidosDeWrite(gravaConfiguracao) === 0 && !noDisco(configuracao),
+          `cartões de gravação: ${pedidosDeWrite(gravaFora)} e ${pedidosDeWrite(gravaConfiguracao)}; no disco: fora da pasta ${existsSync(alvoFora) ? 'EXISTE' : 'não existe'}, ${configuracao} ${noDisco(configuracao) ? 'EXISTE' : 'não existe'}`);
+        const gravaDentro = await turnoCom(`${edicao('dentro.txt', 'awika-dentro')} Depois responda só "feito".`, 'aprovar');
         const cartao = gravaDentro.pedidas.find((e) => e.aprovacao.ferramenta === 'Write')?.aprovacao.resumo ?? '';
         registrar('F4', 'gravação na pasta do bot pede aprovação e mostra o conteúdo',
           noDisco('dentro.txt') && cartao.includes('dentro.txt') && cartao.includes('awika-dentro'),
           `no disco: dentro.txt ${noDisco('dentro.txt') ? 'existe' : 'não existe'}; cartão mostra o conteúdo: ${cartao.includes('awika-dentro')}`);
+
+        if (codex) {
+          // A busca na web do Codex não passa por cartão: a configuração gerenciada a desliga, e o
+          // driver corta o turno se ela acontecer mesmo assim.
+          const busca = await turnoCom('Pesquise na web qual é a versão estável mais recente do Node.js. Use só a sua ferramenta de busca na web, não o terminal. Se você não tiver busca na web, responda só "sem busca".', 'negar');
+          const textoDaBusca = String(busca.resposta?.texto);
+          const cortada = busca.resposta?.estado === 'falhou' && textoDaBusca.includes('Turno interrompido');
+          registrar('F4', 'busca na web não roda sem cartão', /sem busca/i.test(textoDaBusca) || cortada,
+            `resposta (${busca.resposta?.estado}) "${textoDaBusca.slice(0, 80)}"; ${busca.pedidas.length} pedido(s) negado(s)`);
+        }
       } else {
         const aprovado = await turnoCom('!comando echo oi', 'aprovar');
         registrar('F4', 'ação aprovada roda',
@@ -428,7 +471,7 @@ if (local) {
 
 // 5. Relatar.
 const falhas = resultados.filter((resultado) => !resultado.passou);
-console.log(`\n${resultados.length - falhas.length} de ${resultados.length} verificações passaram em ${((Date.now() - inicio) / 1000).toFixed(1)}s, com o motor ${motorReal ? 'real' : 'simulado'}.`);
+console.log(`\n${resultados.length - falhas.length} de ${resultados.length} verificações passaram em ${((Date.now() - inicio) / 1000).toFixed(1)}s, com o motor ${motorReal ? `real (${MOTOR})` : 'simulado'}.`);
 console.log(motorReal
   ? 'Não verificado por este comando: o app no aparelho; o aviso push; a queda (F5), o backup e a vigia da saúde, que têm ensaio próprio no host.'
   : 'Não verificado por este comando: o app no aparelho; o motor real; o aviso push; o reinício do contêiner pelo Docker e a vigia derrubando um servidor travado.');

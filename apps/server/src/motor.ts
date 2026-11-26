@@ -1,5 +1,7 @@
 /** O que o servidor entrega a um motor para rodar um turno. */
 export interface PedidoMotor {
+  /** O motor gravado no bot, que escolhe o driver. */
+  motor: string;
   /** Pasta de trabalho do bot. */
   pasta: string;
   texto: string;
@@ -39,3 +41,17 @@ export interface TurnoEmCurso {
 }
 
 export type Motor = (pedido: PedidoMotor) => TurnoEmCurso;
+
+/**
+ * Um motor que entrega cada turno ao driver do motor do bot. Um bot cujo motor este servidor não
+ * sabe rodar recebe uma resposta que diz isso, marcada como falha; nada roda.
+ */
+export function despacharPorMotor(motores: Readonly<Record<string, Motor>>): Motor {
+  return (pedido) => {
+    const motor = Object.hasOwn(motores, pedido.motor) ? motores[pedido.motor] : undefined;
+    if (motor) return motor(pedido);
+    const texto = `Este servidor não roda o motor "${pedido.motor}".`;
+    pedido.aoTexto(texto);
+    return { parar: () => {}, fim: Promise.resolve({ estado: 'falhou', texto, sessao: pedido.sessao }) };
+  };
+}

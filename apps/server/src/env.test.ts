@@ -11,6 +11,8 @@ describe('lerEnv', () => {
       AWIKA_DADOS: './dados',
       AWIKA_MOTOR: 'claude-code',
       AWIKA_CLAUDE_BIN: 'claude',
+      AWIKA_CODEX_BIN: 'codex',
+      AWIKA_MOTORES_EM_PROVA: [],
       AWIKA_TURNOS_SIMULTANEOS: 4,
       AWIKA_GANCHO: 'opcao',
     });
@@ -47,6 +49,18 @@ describe('lerEnv', () => {
   it('recusa o motor simulado em produção e o aceita fora dela', () => {
     expect(() => lerEnv({ NODE_ENV: 'production', AWIKA_MOTOR: 'simulado' })).toThrow(EnvInvalida);
     expect(lerEnv({ NODE_ENV: 'test', AWIKA_MOTOR: 'simulado' }).AWIKA_MOTOR).toBe('simulado');
+  });
+
+  it('lê os motores em prova, e só aceita os do catálogo', () => {
+    expect(lerEnv({ AWIKA_MOTORES_EM_PROVA: ' codex , ' }).AWIKA_MOTORES_EM_PROVA).toEqual(['codex']);
+    for (const lista of ['antigravity', 'codex,--model=x', 'Codex']) {
+      try {
+        lerEnv({ AWIKA_MOTORES_EM_PROVA: lista });
+        expect.unreachable('devia ter recusado');
+      } catch (erro) {
+        expect((erro as EnvInvalida).campos).toEqual(['AWIKA_MOTORES_EM_PROVA']);
+      }
+    }
   });
 
   it('diz o nome da variável recusada sem repetir o valor', () => {
@@ -91,6 +105,19 @@ describe('ambienteDoMotor', () => {
       HTTPS_PROXY: 'http://proxy:3128',
       Path: 'C:\\Windows',
     });
+  });
+
+  it('dá a cada motor só as variáveis dele', () => {
+    const origem = {
+      PATH: '/usr/bin',
+      CLAUDE_CONFIG_DIR: '/data/claude',
+      ANTHROPIC_API_KEY: 'chave-do-claude',
+      CODEX_HOME: '/data/codex',
+      OPENAI_API_KEY: 'chave-do-codex',
+      AWIKA_CODEX_BIN: 'codex',
+    };
+    expect(ambienteDoMotor(origem, 'claude-code')).toEqual({ PATH: '/usr/bin', CLAUDE_CONFIG_DIR: '/data/claude', ANTHROPIC_API_KEY: 'chave-do-claude' });
+    expect(ambienteDoMotor(origem, 'codex')).toEqual({ PATH: '/usr/bin', CODEX_HOME: '/data/codex', OPENAI_API_KEY: 'chave-do-codex' });
   });
 });
 

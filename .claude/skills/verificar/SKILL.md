@@ -40,6 +40,14 @@ Nesse modo o comando também confere que o bot lembra do turno anterior e prova 
 
 Depois de mexer na chamada do motor, na política ou na configuração gerenciada, conferir também que uma configuração plantada na pasta do bot não tem efeito: gravar, pelo host, um `.claude/settings.json` com um gancho de início de sessão que cria um arquivo, rodar um turno e conferir que o arquivo não apareceu.
 
+### Com o Codex
+
+Com `-e AWIKA_VERIFICAR_MOTOR=codex` no segundo comando, o bot do runbook nasce no Codex. O servidor precisa ter feito o login do Codex (ver `deploy/compose.yaml`) e aceitar bot nele: enquanto o catálogo não o marca como pronto, suba o servidor com `AWIKA_MOTORES_EM_PROVA=codex`, num arquivo de compose a mais ou no `deploy/.env`, e tire a variável depois. Nesse modo os pedidos usam o terminal e a edição de arquivos do Codex, a leitura na pasta do bot também passa por cartão (no Codex, até um `cat` vira pedido), a leitura fora da pasta tenta o `codex/auth.json`, a gravação na configuração é em `.codex/config.toml`, e há uma conferência a mais: a busca na web não roda.
+
+Para provar que a configuração gerenciada de `/etc/codex` vence a do usuário, grave antes, no volume, um `codex/config.toml` que liga o que ela desliga (`web_search = "live"`, `approval_policy = "never"`, `[features] apps = true`) e devolva o original no fim.
+
+O modelo do Codex nem sempre pede: às vezes responde "negado" sem tentar. A conferência da ação negada depende de surgir um pedido; quando ela falha com zero pedidos, ler a resposta gravada antes de concluir que a trava falhou.
+
 ## Ensaio no host: queda, vigia, backup e restauração
 
 O comando acima mata e sobe o processo do servidor, mas não passa pelo Docker. O que depende do contêiner é conferido no host, à mão, depois de uma mudança em `deploy/`, no `Dockerfile`, em `saude.ts` ou em `backup.ts`. Usar um servidor de ensaio, nunca um com dado real:

@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Evento } from '@awikabot/core';
 import { criarApi, type Api, type Buscar } from '../../mobile/src/lib/api';
 import { aprovacoesDoBot, ehAprovacao, intercalarAprovacoes, situacaoDoBot } from '../../mobile/src/lib/aprovacoes';
+import { motoresParaCriar, opcoesDeModelo } from '../../mobile/src/lib/catalogo';
 import { mensagensVisiveis } from '../../mobile/src/lib/conversa';
 import { criarArmazemDados } from '../../mobile/src/lib/dados';
 import { iniciarFluxoEventos, type BuscarFluxo, type FluxoEventos } from '../../mobile/src/lib/fluxo-eventos';
@@ -110,6 +111,9 @@ describe('cliente do app contra o servidor', () => {
       esforco: motor.esforcos[0]!.id,
     });
     expect(bot).toMatchObject({ motor: 'claude-code', modelo: 'fable', esforco: 'low' });
+    // O Codex, pronto, entra na lista de motores do formulário, com os modelos e esforços dele.
+    expect(motoresParaCriar(catalogo).map((opcao) => opcao.valor)).toEqual(['claude-code', 'codex']);
+    expect(opcoesDeModelo(catalogo, 'codex').map((opcao) => opcao.valor)).toEqual(['', 'gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-6.1-terra', 'gpt-6-luna']);
     const editado = await api.editarBot(bot.id, { nome: 'Scout 2', modelo: null, esforco: null });
     expect(editado).toMatchObject({ id: bot.id, nome: 'Scout 2', instrucoes: 'Seja breve.', motor: 'claude-code', modelo: null, esforco: null });
     expect((await api.listarBots()).bots.map((b) => b.nome)).toEqual(['Scout 2']);

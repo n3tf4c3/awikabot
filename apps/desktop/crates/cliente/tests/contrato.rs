@@ -329,7 +329,11 @@ fn catalogo_e_motor_do_bot_contra_o_servidor() {
         (claude.familia, claude.pronto, claude.papeis.as_slice()),
         (MotorDoCatalogoFamilia::Agente, true, &[MotorDoCatalogoPapeis::Worker][..])
     );
-    assert_eq!(motores_para_criar(Some(&catalogo)), vec![Opcao { valor: MOTOR_PADRAO.into(), rotulo: "Claude Code".into() }]);
+    // O Codex entrou pronto na etapa 7: os dois motores vão para a lista de criar.
+    assert_eq!(
+        motores_para_criar(Some(&catalogo)),
+        vec![Opcao { valor: MOTOR_PADRAO.into(), rotulo: "Claude Code".into() }, Opcao { valor: "codex".into(), rotulo: "Codex".into() }]
+    );
     let modelos: Vec<String> = opcoes_de_modelo(Some(&catalogo), MOTOR_PADRAO).into_iter().map(|opcao| opcao.valor).collect();
     assert_eq!(modelos, ["", "fable", "opus", "sonnet", "haiku"]);
     let esforcos: Vec<String> = opcoes_de_esforco(Some(&catalogo), MOTOR_PADRAO, "").into_iter().map(|opcao| opcao.valor).collect();
@@ -358,8 +362,8 @@ fn catalogo_e_motor_do_bot_contra_o_servidor() {
     aparelho.bot_salvo();
 
     // Motor que o servidor não roda e esforço que o motor não lista são recusados.
-    let codex = BotEntrada { motor: Some("codex".into()), ..validar_bot(&campos).expect("válido") };
-    assert_eq!(api.criar_bot(credencial, &codex), Err(recusa(400, "dados_invalidos")));
+    let antigravity = BotEntrada { motor: Some("antigravity".into()), ..validar_bot(&campos).expect("válido") };
+    assert_eq!(api.criar_bot(credencial, &antigravity), Err(recusa(400, "dados_invalidos")));
     let turbo = BotEntrada { esforco: Some("turbo".into()), ..validar_bot(&campos).expect("válido") };
     assert_eq!(api.criar_bot(credencial, &turbo), Err(recusa(400, "dados_invalidos")));
 

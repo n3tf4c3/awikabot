@@ -6,7 +6,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { EsquemaBot, EsquemaCatalogo, MOTOR_PADRAO } from '@awikabot/core';
 import { abrirBanco } from './banco';
 import { criarBot, editarBot, listarBots, obterBot, paraContrato } from './bots';
-import { CATALOGO, esforcoValido, motorDoCatalogo, motorParaCriarBot } from './catalogo';
+import { CATALOGO, esforcoValido, MOTOR_CODEX, motorDoCatalogo, motorParaCriarBot } from './catalogo';
 import { Barramento } from './eventos';
 import type { Motor, PedidoMotor } from './motor';
 import { GestorDeTurnos } from './turnos';
@@ -88,10 +88,21 @@ describe('motor e esforço gravados', () => {
 });
 
 describe('catálogo', () => {
-  it('passa no esquema do contrato, com o Claude Code pronto e o motor padrão nele', () => {
+  it('passa no esquema do contrato, com o Claude Code e o Codex prontos', () => {
     expect(EsquemaCatalogo.parse(CATALOGO)).toEqual(CATALOGO);
     expect(motorParaCriarBot(MOTOR_PADRAO)?.nome).toBe('Claude Code');
-    expect(CATALOGO.motores.map((motor) => motor.id)).toEqual([MOTOR_PADRAO]);
+    expect(CATALOGO.motores.map((motor) => [motor.id, motor.pronto])).toEqual([
+      [MOTOR_PADRAO, true],
+      [MOTOR_CODEX, true],
+    ]);
+  });
+
+  it('cria bot num motor não pronto só no servidor que o põe em prova', () => {
+    const catalogo = { motores: CATALOGO.motores.map((motor) => (motor.id === MOTOR_CODEX ? { ...motor, pronto: false } : motor)) };
+    expect(motorParaCriarBot(MOTOR_CODEX)?.nome).toBe('Codex');
+    expect(motorParaCriarBot(MOTOR_CODEX, catalogo)).toBeNull();
+    expect(motorParaCriarBot(MOTOR_CODEX, catalogo, [MOTOR_CODEX])?.nome).toBe('Codex');
+    expect(motorParaCriarBot('desconhecido', CATALOGO, ['desconhecido'])).toBeNull();
   });
 
   it('não deixa criar bot em motor desconhecido, não pronto ou que não é agente', () => {
