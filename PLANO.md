@@ -807,7 +807,7 @@ Tudo entra de modo que os clientes já publicados continuem valendo; o desktop 0
 
 ### Riscos
 
-- **Termos de uso**: numa equipe, o orquestrador dispara turnos sem a pessoa digitar cada um. Isso fica mais longe do uso comum de uma assinatura do que um bot que responde à pessoa, que já era dúvida. Codex e Antigravity têm termos próprios, ainda não lidos para este uso. A saída segura continua sendo chave de API.
+- **Termos de uso**: numa equipe, o orquestrador dispara turnos sem a pessoa digitar cada um. Isso fica mais longe do uso comum de uma assinatura do que um bot que responde à pessoa, que já era dúvida. Codex e Antigravity têm termos próprios, lidos depois; ver "Termos de uso dos motores". A saída segura continua sendo chave de API.
 - **Memória**: uma equipe ocupa vários turnos de uma vez, cada um um processo de CLI, e cada motor novo engorda a imagem. O limite de quatro turnos foi medido com turnos curtos de um motor só.
 - **Três drivers**: a saída de cada CLI muda entre versões, e o Antigravity se atualiza sozinho. Cada motor tem a versão fixada na imagem e o driver testado contra ela.
 - **O gancho dos outros motores**: no termIAX, a lista de bloqueio do Antigravity não impediu sozinha a busca na web; foi preciso um agente próprio com as ferramentas fechadas e uma trava. Se a prova não achar um gancho que nega ao falhar, o motor não executa.
@@ -977,19 +977,52 @@ Não coberto:
 - as telas: o Codex na lista de motores do celular e do desktop não foi visto num aparelho, e o desktop 0.1.3, publicado, ignora o catálogo e não o oferece;
 - a memória de vários turnos do Codex ao mesmo tempo no Pi.
 
+## Termos de uso dos motores (2026-11-26)
+
+Pedido do titular em 26/11, depois de a prova achar a restrição do Antigravity: conferir se o Claude Code e o Codex têm o mesmo problema, e se usar o motor por ACP ou pela CLI, como o termIAX, muda a resposta. Não têm o mesmo problema. No Claude Code e no Codex o protocolo não muda nada: as páginas olham quem faz o login, com qual credencial, e se o aplicativo é local ou um serviço. No Antigravity muda: o `agy acp` é um caminho documentado, e o modo sem tela embrulhado num aplicativo é o que a FAQ recusa.
+
+Lidas em 26/11, direto na página: a "Legal and compliance" do Claude Code, inteira; o parágrafo de autenticação da página do servidor de aplicativo do Codex; e, do Antigravity, a pergunta da FAQ sobre o modo sem tela e a página "Outros editores (ACP)". As três últimas, na versão em português. Nenhuma mostra data. Os termos de consumidor da Anthropic e da OpenAI vieram por subagente, sem conferência direta, e os termos do Antigravity não foram lidos aqui.
+
+Sobre o Antigravity há ainda duas respostas no fórum de desenvolvedores do Google, de 12 e de 20/11, trazidas pelo titular. Quem responde fala pelas políticas do produto e avisa que não é parecer jurídico; o selo dele no fórum é o de participante regular, e a resposta não é documento oficial.
+
+| Motor | Login de assinatura dentro de um aplicativo de terceiros | O que a página pede |
+|---|---|---|
+| Claude Code | Permitido. A pessoa pode entrar com a própria assinatura no binário sem modificação, também quando uma plataforma hospeda o Claude Code. | O binário como a Anthropic publica, sem tirar nem restringir nenhum modo de login. O login se completa no fluxo da Anthropic, e o aplicativo não recolhe, não guarda e não repassa credencial. Cada pessoa com a própria conta, cobrada direto dela; ninguém paga, revende ou intermedeia o uso de outro. O nome "Claude Code" só em texto corrido, nunca no nome do produto nem no logotipo. |
+| Codex | Permitido para aplicativo local ou de código aberto, com a recomendação de migrar para o "Entrar com o ChatGPT". Esse login "nunca foi permitido em serviços comerciais ou hospedados". | Não ser serviço comercial nem hospedado. Para automação e CI, a documentação aponta o SDK do Codex e a chave de API. |
+| Antigravity | Depende do modo. A FAQ diz que o modo sem tela (`agy -p`) é para scripts diretos e CI, e que embrulhar o `agy` em aplicativos ou agentes de terceiros não é coberto pelos planos individuais. A documentação oferece o `agy acp` para qualquer cliente ACP, com o login guardado pela própria CLI. Pelas respostas do fórum, o `agy acp` com a assinatura vale para conversa em que a pessoa digita cada pedido, mesmo fora de um editor; não vale para pedido disparado pelo aplicativo, tarefa sem a pessoa presente nem orquestração entre agentes, nem para um servidor remoto que repassa respostas entre vários agentes, ainda que de uso de uma pessoa só. | Para o que a assinatura não cobre, chave de API do Gemini, que o `agy acp` aceita pelo ambiente. A fiscalização é automática e pode suspender a conta do Antigravity. Decisão do titular em 26/11: só entra por chave de API. |
+
+### O que isto fixa
+
+- **O desenho de hoje cumpre as condições do Claude Code**: binário sem modificação, login pelo fluxo dele, nenhuma credencial guardada ou repassada, uma conta por pessoa. São as mesmas regras que o `AGENTS.md` já traz como invariantes; passam a ser também condição dos termos.
+- **O awikabot continua de código aberto e instalado por quem usa.** É o que o mantém no "pode continuar" do Codex. A página não define "hospedado": o servidor de uma pessoa, usado só por ela, é lido aqui como coberto.
+- **Um servidor por pessoa, quando o login é de assinatura.** Quem não é o dono do servidor não usa as assinaturas do dono, e um servidor que atende outra pessoa se aproxima de serviço hospedado. O colaborador roda o servidor dele, com as contas dele, ou usa chave de API.
+- **Produto pago ou hospedado para outros pede chave de API nos três motores.**
+- **A linha é a mesma nos três: a assinatura é para a pessoa que digita o pedido; o que o aplicativo dispara sozinho pede chave de API.** Só o Antigravity diz isso como proibição. O Codex diz como recomendação, e o Claude Code, como premissa dos limites do plano. As equipes da etapa 7, em que o orquestrador dispara turnos, caem do lado da chave de API.
+- **A próxima prova do Antigravity usa o `agy acp`, não o `agy -p`.** É o caminho documentado para um cliente de fora, aceita a chave de API pelo ambiente e traz o pedido de permissão, que pausa o turno até a pessoa permitir ou negar. É o que a prova do passo 1 não achou no modo sem tela. Se esse pedido nega quando ninguém responde, falta provar.
+- **O "Entrar com o ChatGPT" não entra agora.** Nele, o aplicativo recebe um token da conta e o entrega ao servidor de aplicativo, o que contraria a regra de o awikabot nunca receber o login. A página não dá prazo para migrar.
+
+### O que segue em dúvida
+
+- **Uso contínuo e equipes**: a página do Claude Code diz que os limites dos planos supõem uso comum e individual, e a Anthropic pode aplicar as restrições sem aviso. Uma equipe que dispara turnos sozinha se afasta disso. No Codex, a documentação manda a automação para a chave de API.
+- **Termos comerciais da Anthropic**: a página pede que quem roda o Claude Code num produto ou serviço aceite os termos comerciais. Não diz se um projeto de código aberto, instalado por cada pessoa, é esse caso.
+- **"Hospedado", no Codex**: sem definição na página.
+- **Um bot só do Antigravity, com a assinatura, num servidor próprio**: as respostas do fórum não cobrem esse caso. A que recusa o servidor remoto se apoia no repasse entre vários agentes, e manda quem quer usar a assinatura pelo celular para o controle remoto do próprio Antigravity. Com a decisão de usar só chave de API, a pergunta não precisa de resposta agora.
+
+As duas empresas mandam perguntar em caso de dúvida: a Anthropic a vendas, a OpenAI pela lista de espera de parceiros. Ninguém perguntou ainda.
+
 ## Riscos
 
 - Aprovação: um comando aprovado roda com os direitos do contêiner e alcança tudo o que está no volume, inclusive o login do motor. A proteção é a pessoa ler o comando no cartão.
 - Memória: os 8 GB são divididos com outros serviços, e cada turno é um processo de CLI. A etapa 4 mediu quatro turnos simultâneos curtos, com pico de 681 MiB; turnos longos com ferramentas podem passar disso.
 - Energia: o servidor fica numa placa doméstica e pode reiniciar por queda de energia. A etapa 4 provou a volta depois de o processo morrer; a queda de energia da placa não foi ensaiada.
 - Backup: enquanto o arquivo ficar só no Pi, a perda do cartão leva o servidor e o backup juntos.
-- Termos de uso: a página "Legal and compliance" do Claude Code não diz se um servidor sempre ligado, comandado pelo celular, conta como uso comum da assinatura, e manda perguntar à Anthropic em caso de dúvida. Ela reserva o direito de aplicar as restrições sem aviso. A saída segura é chave de API.
+- Termos de uso: lidos em 26/11 para os três motores (ver "Termos de uso dos motores"). O Claude Code permite a própria assinatura no binário sem modificação; o Codex, em aplicativo local ou de código aberto, nunca em serviço comercial ou hospedado; o Antigravity, só por chave de API. A página do Claude Code não diz se um servidor sempre ligado, comandado pelo celular, conta como uso comum da assinatura, e manda perguntar à Anthropic em caso de dúvida. Ela reserva o direito de aplicar as restrições sem aviso. A saída segura é chave de API.
 - Formato das CLIs: a saída muda entre versões. Fixar a versão na imagem e testar o driver contra ela.
 - Push: o serviço da Expo é um terceiro no caminho do aviso.
 
 ## Decisões em aberto
 
-- Assinatura de cada pessoa ou chave de API no uso contínuo: depende da leitura dos termos acima. A prova usou a assinatura.
+- Assinatura de cada pessoa ou chave de API no uso contínuo: depende da leitura dos termos acima. A prova usou a assinatura. A leitura de 26/11 (ver "Termos de uso dos motores") deixa a assinatura para quem roda o próprio servidor; para atender outra pessoa e para as equipes, a decisão segue aberta.
 - Túnel: o subdomínio foi escolhido em 26/11, `api.awikabot.com`, e o serviço do túnel está no compose (`docs/tunel.md`). O túnel foi criado no painel e ligado ao servidor do Pi em 26/11 (ver "Servidor no Pi pelo túnel"). Segue em aberto se o endereço ganha uma proteção na frente, além do pareamento.
 - App de desktop: quem confere a versão de Mac, e quando a etapa 6 começa. Ver "Etapa 6: plano do app de desktop".
 - Papéis, motores e decisores: um decisor de fora como terceiro no caminho, a pasta da equipe e a vez da etapa 7 diante do que falta na primeira versão. Ver "Etapa 7: plano dos papéis, dos motores e dos decisores".
