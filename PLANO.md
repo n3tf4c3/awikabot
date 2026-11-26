@@ -97,7 +97,7 @@ Um bot executa comandos, então o servidor equivale a um terminal remoto no Pi.
 5. Revisão de segurança e distribuição por TestFlight e teste interno da Play.
 6. App de desktop para Windows e Mac, em Rust com GPUI. No Windows, as versões 0.1.0 a 0.1.3 foram publicadas entre 24 e 26/11; o Mac ainda não tem pacote. Ver "Etapa 6: plano do app de desktop".
    Verificar: os fluxos 1 a 5 percorridos no Windows e num Mac, com o app instalado pelo pacote assinado.
-7. Papéis, motores e decisores: mais de um motor, escolhido em cada bot; equipes em que um bot orquestra e outros executam; e modelos de decisão que respondem a perguntas fechadas. Feito o passo 2, o catálogo e o motor por bot (ver "Etapa 7, passo 2: resultado do catálogo e do motor por bot"); o resto, não. Ver "Etapa 7: plano dos papéis, dos motores e dos decisores".
+7. Papéis, motores e decisores: mais de um motor, escolhido em cada bot; equipes em que um bot orquestra e outros executam; e modelos de decisão que respondem a perguntas fechadas. Em 26/11 rodou o passo 1, a prova dos motores, no Docker local, e foi feito o passo 2, o catálogo e o motor por bot; o resto não está feito. Ver "Etapa 7: plano dos papéis, dos motores e dos decisores", "Etapa 7, passo 1: resultado da prova" e "Etapa 7, passo 2: resultado do catálogo e do motor por bot".
    Verificar: um pedido feito a uma equipe, no aparelho, com dois motores diferentes, cada ação aprovada pela pessoa e a entrega conferida por um decisor.
 
 ## Etapa 0: resultado (2026-11-23)
@@ -298,27 +298,6 @@ O servidor ficou acessível de fora pela primeira vez. O compose ganhou o servi�
 Não coberto: o cartão de aprovação num aparelho por esse caminho; criar e editar bot pelo celular; o iPhone; o app de desktop pelo endereço público; um build próprio do app; a queda do túnel com o app aberto; a queda de energia do Pi.
 
 O endereço responde a qualquer um em `/healthz` e em `POST /v1/parear`. O que isso expõe está em `docs/tunel.md`.
-
-## Etapa 7, passo 2: resultado do catálogo e do motor por bot (2026-11-26)
-
-O servidor passou a dizer quais motores conhece, e cada bot passou a guardar o seu. A rota `GET /v1/catalogo`, com token, entrega cada motor com a família, os modelos sugeridos, os esforços, os papéis e se está pronto. Por ora o catálogo tem só o Claude Code, pronto, no papel de worker, com os apelidos `fable`, `opus`, `sonnet` e `haiku` e os esforços de baixo a máximo. O motor simulado continua só de teste e não aparece nele.
-
-O bot ganhou dois campos, os dois opcionais no contrato: `motor`, gravado na criação e que a edição não muda, com o Claude Code por padrão; e `esforco`, com o padrão do motor quando nulo. A migração 3 põe os dois na tabela, e todo bot de antes fica no Claude Code, sem esforço. O modelo fora da lista continua aceito se passar no formato; o motor e o esforço, não: o servidor recusa o que não sabe rodar.
-
-O esforço entrou porque o binário fixado na imagem aceita a opção. O `claude` 2.1.330 para Windows, baixado do npm e rodado sem login numa pasta temporária, lista `--effort <level>` com `low`, `medium`, `high`, `xhigh` e `max`; `--effort=high` passa sem aviso e um valor fora da lista é ignorado com um aviso. O servidor passa `--effort=<valor>` só quando o bot tem esforço. O binário de Linux arm64, que é o da imagem, não foi rodado.
-
-Os dois apps ganharam as listas no formulário de bot: o motor, só ao criar; o modelo, com "Auto" no topo, os sugeridos e "Outro", para digitar; e o esforço, com "Padrão" no topo, que só aparece quando o motor tem esforços. No celular, o campo de texto do modelo só aparece no "Outro". No desktop, ele fica à vista e a lista o preenche. Sem catálogo, num servidor anterior à rota, o formulário fica com "Auto", "Outro" e o motor padrão. A lógica das listas está em helper puro nos dois lados, com teste, e a regra do formulário cobre o motor e o esforço contra a mesma tabela, `packages/core/casos/bot-entrada.json`, que passou de 133 para 161 casos.
-
-| Verificação | Resultado |
-|---|---|
-| Suíte (lint, tipos e testes) | Passa: 59 testes no `core`, 235 no servidor e 750 no celular. O servidor confere a rota do catálogo contra o esquema e a lista das rotas protegidas, a criação com e sem motor, o modelo fora da lista, a recusa do motor e do esforço desconhecidos, e a edição que muda o esforço e ignora o motor. |
-| Bot antigo, sem `motor` | Igual, por teste (`bots.test.ts`): um banco da versão 2, aberto por esta, mantém o bot com os mesmos campos, no Claude Code, sem esforço, e o turno dele leva ao motor o mesmo modelo, a mesma sessão e nenhum esforço. O contrato lê o bot de um servidor anterior como bot do motor padrão, no TypeScript e no Rust gerado. |
-| Cliente do celular contra o servidor | `contrato-app.test.ts` busca o catálogo, cria o bot com o motor, o modelo e o esforço que vieram dele, e edita de volta aos padrões. |
-| `pnpm verificar` | 27 de 27, com três conferências novas em F2: o catálogo com o motor padrão pronto; o bot criado sem motor no motor padrão; o modelo fora do catálogo aceito e o motor fixo na edição. |
-| Desktop no Windows (rustfmt, clippy e testes) | Passa: 143 testes do cliente e 78 da janela. O cliente, contra o servidor, busca o catálogo, cria pelas listas, cria sem os campos novos, recebe a recusa do motor e do esforço desconhecidos e edita o esforço. A janela clica no motor, num modelo, num esforço, em "Auto", em "Padrão" e em "Outro", e confere no servidor o que ficou gravado. |
-| Chamada do motor | `--effort=high` vai na forma `--nome=valor`; sem esforço nem modelo, nenhuma das duas opções vai (`gancho.test.ts`). |
-
-Não coberto: as listas vistas num aparelho e no app de desktop de verdade, inclusive a prova visual, que não passa pelo formulário; o motor real com um esforço escolhido; o binário de Linux arm64 da imagem rodado com `--effort`; o formulário da janela diante de um servidor sem a rota do catálogo, coberto só pela lógica das listas; o desktop num Mac, que fica para a CI. O desktop 0.1.3 ignora os campos novos: quem o usa cria bots no motor padrão, sem esforço, e a edição feita nele não mexe no esforço. Nenhum teste novo foi rodado contra o código sem a mudança.
 
 ## Etapa 6: plano do app de desktop (2026-11-23)
 
@@ -803,7 +782,7 @@ Tudo entra de modo que os clientes já publicados continuem valendo; o desktop 0
 
 ### Passos
 
-1. **Prova dos motores**, com código descartável, como a etapa 0. Codex e Antigravity num contêiner arm64.
+1. **Prova dos motores**, com código descartável, como a etapa 0. Codex e Antigravity num contêiner arm64. Rodou em 26/11 no Docker local, sem o Pi; ver "Etapa 7, passo 1: resultado da prova".
    Verificar: a resposta sai em eventos; a conversa é retomada depois de reiniciar; um comando gera um pedido que um programa de fora responde, e a ação não roda quando esse programa falha ou demora; o modelo e o esforço mudam de um turno para o outro sem perder a conversa; a memória por turno é medida; os termos de uso de cada um são lidos. Sai daqui quais motores entram e em quais papéis. A mesma prova diz como o orquestrador entrega uma tarefa ao servidor: por uma ferramenta própria ou por uma lista no fim da resposta.
 2. **Catálogo e motor por bot**, ainda sem equipes: a rota do catálogo, o campo `motor` e a lista nos dois apps, com "Auto" no topo.
    Verificar: criar um bot escolhendo motor e modelo pela lista, no celular e no desktop; um bot antigo continua igual; um modelo fora da lista é aceito.
@@ -834,6 +813,127 @@ Tudo entra de modo que os clientes já publicados continuem valendo; o desktop 0
 - **Login de cada motor**: cada CLI guarda o login num lugar próprio do volume. O backup, que hoje deixa de fora o do Claude Code, precisa deixar de fora o de cada motor novo.
 - **Decisor errado com confiança alta**: uma entrega ruim dada por boa chega à pessoa como pronta. A conferência da entrega reduz retrabalho; não substitui a pessoa ler o resultado. No "Auto", o erro custa menos: uma resposta pior ou um turno mais caro.
 - **Custo**: uma equipe gasta vários turnos por pedido. O teto de tarefas é o freio.
+
+## Etapa 7, passo 1: resultado da prova (2026-11-26)
+
+Rodada no Docker local, no PC do titular (amd64), com o kit de `spike/motores-etapa-7`. O Codex CLI 0.172.0 rodou com o login do ChatGPT do titular, feito por ele pelo fluxo de código de dispositivo da própria CLI. O Antigravity CLI 1.5.18 rodou sem conta: em 26/11 o titular decidiu que ele só entra por chave de API, e nenhuma chave foi criada nesta rodada. O Claude Code 2.1.330 entrou só para a pergunta do orquestrador, com o login da assinatura do titular. Nada rodou no Pi.
+
+O contêiner da prova tem as travas do contêiner do produto: usuário sem root, `cap_drop: ALL`, `no-new-privileges` e o filtro de chamadas padrão do Docker. Um segundo serviço, sem esse filtro, serviu só para medir a caixa de areia do Codex.
+
+### O que as páginas oficiais dizem
+
+Lidas em 26/11. Nenhuma mostra data de atualização. As do Codex estão em `developers.openai.com/codex`, que hoje redireciona para `learn.chatgpt.com/docs`; as do Antigravity, em `antigravity.google/docs`. O nome entre parênteses é o da página.
+
+| Pergunta | Codex | Antigravity |
+|---|---|---|
+| Modo sem tela com eventos | `codex exec --json`, uma linha de JSON por evento (`non-interactive-mode`). Texto em trechos só no servidor de aplicativo, `codex app-server`, um JSON-RPC pela entrada e saída padrão (`app-server`). | `agy -p --output-format stream-json`, com os eventos `init`, `step_update` e `result`; o texto vem em `text_delta` (`cli/headless`). |
+| Linux arm64 | Sim. O pacote `@openai/codex` 0.172.0, publicado em 24/11, tem a dependência `linux-arm64`, e a página de releases no GitHub tem `codex-aarch64-unknown-linux-musl`. | Sim. O instalador oficial (`antigravity.google/cli/install.sh`) escolhe `linux_arm64`. Não aceita versão: baixa a que o manifesto do dia aponta. |
+| Retomar a conversa | `codex exec resume <id>`; no servidor de aplicativo, `thread/resume`. | `--conversation <id>`, com o `conversation_id` de uma rodada anterior. |
+| Aprovação de ferramenta | Três mecanismos: os ganchos `PreToolUse` e `PermissionRequest` (`hooks`); a caixa de areia com política de aprovação `on-request`, `never` ou granular, já sem a `untrusted` (`agent-approvals-security`); e os pedidos de aprovação que o servidor de aplicativo faz ao programa que o dirige. | Gancho `PreToolUse` em `~/.gemini/config/hooks.json`; regras de permitir, perguntar e negar; caixa de areia por namespaces (`hooks`, `permissions`, `sandbox`). Sem tela, o que precisa de aprovação é negado e a rodada segue. |
+| Gancho que falha | "A `PreToolUse` error, timeout, or malformed response can let the tool run." e "Treat tool hooks as a useful guardrail, not a complete enforcement boundary." (`hooks`). | A página `hooks` não diz. |
+| Atualização automática | Só confere se há versão nova ao abrir; atualizar é o comando `codex update`. | O instalador avisa: "The Antigravity CLI automatically self-updates in the background during regular runs." A documentação não diz como desligar. |
+| Termos para este uso | "Use API key authentication for programmatic Codex CLI workflows, such as CI/CD jobs. Don't expose Codex execution in untrusted or public environments." (`auth`). O login do ChatGPT em automação é admitido "only if you specifically need to run as your Codex account", e não em repositório público (`non-interactive-mode`). Nenhuma das duas fala de um servidor sempre ligado, comandado por um app. | "Wrapping `agy` inside third-party coding agents or applications, or automating account rotation, is not supported under consumer plans.", e a mesma página fala em suspensão da conta para quem acessa o serviço por software de terceiros (`faq`). A chave de API do Gemini é o modo descrito para rodar sem tela: "Model requests go directly to the Gemini API, and the CLI never establishes an account session." (`install`). |
+
+Os termos de uso do Antigravity (`antigravity.google/terms`) foram lidos por um subagente, não diretamente: a página é montada por script. O trecho que ele trouxe, da seção 6, diz que usar software de terceiros para acessar o serviço quebra o acordo.
+
+### Codex: verificação
+
+| Verificação | Resultado |
+|---|---|
+| Imagem e arm64 | A CLI ocupa 429 MB na imagem. Na imagem `linux/arm64`, emulada, respondeu três turnos de verdade: eventos, aprovar e negar. |
+| Resposta em eventos, aos poucos | Pelo `codex exec --json`, não: os eventos saem, mas o texto de cada mensagem chega inteiro, num evento só. Pelo servidor de aplicativo, passa: 179 a 184 trechos de texto, o primeiro entre 3,3 e 5 s e o último 3 a 4 s depois. |
+| Aprovação respondida por um programa de fora | Passa, pelo servidor de aplicativo. O pedido chega com o comando inteiro. Com "aceitar" depois de 5 s e depois de 180 s o comando rodou; com "recusar", não rodou. |
+| O programa de fora falha, demora ou devolve algo ilegível | Passa, pelo servidor de aplicativo. Com uma decisão que não existe, com uma linha que não é JSON, com 30 s de silêncio seguidos de interrupção e com o processo morto no meio da espera, o comando não rodou. |
+| Gancho `PreToolUse` | Não serve de trava. Inteiro, ele aprova, nega, e nega quando o servidor de aprovação está fora do ar, demora ou devolve lixo. Quebrado, deixa passar: com saída 1, com texto que não é JSON, com saída 0 sem dizer nada e travado até o corte do motor, o comando rodou nas quatro vezes. |
+| `codex exec` e a aprovação | O `exec` grava `approval_policy: never` na sessão mesmo quando se pede `on-request`. Nunca pede aprovação, e o gancho `PermissionRequest` não é chamado. |
+| No contêiner com as travas do produto | A caixa de areia do Codex não sobe ("No permissions to create new namespace"). Com a caixa de areia só de leitura e a aprovação `on-request`, todo comando falha primeiro e vira pedido de aprovação, até um `ls`; toda edição de arquivo também. Aceito, o comando roda sem caixa de areia, com os direitos do contêiner. |
+| Gravar fora da pasta de trabalho | Passa, por pedido recusado: a gravação fora da pasta, pelo terminal e pela ferramenta de edição, chegou como pedido e não aconteceu. Na edição, o caminho do arquivo vem no item que antecede o pedido. Sem o filtro de chamadas do Docker, a caixa de areia sobe e barra sozinha a escrita e a rede. |
+| Busca na web | Roda sem pedido de aprovação. Com `web_search = "disabled"`, o modelo buscou assim mesmo, por um conector da conta (o "Search Service", pelo servidor `codex_apps`). Só com `web_search = "disabled"` e `features.apps = false` ele respondeu que não tinha acesso. Pela opção `-c` do servidor de aplicativo o `web_search` não valeu; pelo `config.toml`, valeu. |
+| Modelo e esforço de um turno para o outro | Passa. Na mesma conversa, `gpt-6-luna` com esforço `low` e depois `gpt-6.2-sol` com `high`: a palavra guardada voltou, e o arquivo da sessão registra os dois pares. Vale pelo `exec` e pelo servidor de aplicativo. |
+| Retomada em contêiner novo | Passa, pelos dois caminhos. A conversa fica em `CODEX_HOME/sessions`, no volume. |
+| Resposta presa a um esquema | Passa: com `outputSchema` no turno, a resposta veio como JSON dentro do esquema. |
+| Gancho do sistema | Um `/etc/codex/hooks.json` roda sem a revisão que o gancho do usuário exige. |
+| Memória por turno | Pelo servidor de aplicativo, com os conectores desligados, pico de 168 a 199 MB na árvore de processos e de 57 a 70 MB no contêiner. No padrão, 262 a 315 MB e 161 a 186 MB. Pelo `exec`, no padrão, até 353 MB na árvore de processos. |
+
+### Antigravity: verificação
+
+| Verificação | Resultado |
+|---|---|
+| Imagem e arm64 | O binário tem 268 MB. Na imagem `linux/arm64`, emulada, só respondeu `--version`. |
+| Acesso | Sem conta, o `agy -p` imprime um endereço do Google, espera 60 s por um código colado e termina com erro. Com `modelProvider: "gemini"` e sem a chave no ambiente, recusa a partida e diz o que falta. |
+| Versão fixada | Não há como pelo instalador, que baixa a versão do dia. O binário traz o nome `AGY_CLI_DISABLE_AUTO_UPDATE`, a variável que o termIAX usava para segurar a atualização; se ela ainda segura, não foi provado. |
+| Eventos, retomada, aprovação, gancho que falha, gravação fora da pasta, troca de modelo e de esforço, memória | Não provado. Nenhum turno rodou. |
+
+### Claude Code: como o orquestrador entrega a tarefa
+
+Rodada no mesmo contêiner, com o Claude Code 2.1.330, que é a versão da imagem do produto, e o login da assinatura do titular. Toda chamada levou `--setting-sources=user`, e a pasta de trabalho tinha um `.mcp.json` e um `.claude/settings.json` plantados. O gancho foi dado de dois jeitos, pela opção `--settings` e pela configuração gerenciada, e o resultado foi o mesmo.
+
+| Verificação | Ferramenta própria | Lista no fim da resposta |
+|---|---|---|
+| Como se pede | `--mcp-config=<json>` com `--strict-mcp-config`: um servidor MCP que oferece `delegar`. | `--json-schema=<esquema>`: o motor confere a resposta final contra o esquema. |
+| Funciona com `--setting-sources=user` | Passa. O servidor da linha de comando conecta e a ferramenta entra na lista do turno. | Passa. A lista sai em `structured_output`, no evento de resultado, dentro do esquema. |
+| A pasta do bot não vira configuração | Passa. O servidor do `.mcp.json` plantado não carrega, e o gancho plantado não roda. | Passa. O gancho plantado não roda. |
+| O orquestrador só lê e delega | Passa. Com `--tools=Read,Glob,Grep`, o `Bash`, o `Write` e o `Edit` saem da lista do turno. | Passa. Com `--tools=` vazio, a única ferramenta do turno é a `StructuredOutput`. |
+| O servidor vê a tarefa antes de ela valer | Passa. O gancho `PreToolUse` recebe cada chamada de `mcp__awika__delegar`, com o worker e a tarefa, e com o token do turno. | Passa. A lista passa pelo mesmo gancho, como a ferramenta `StructuredOutput`. |
+| Custo, com o modelo `haiku` | 3 voltas do modelo, 7,3 a 7,6 s. | 2 voltas do modelo, 1,3 a 1,6 s. |
+
+A resposta: **a lista no fim da resposta, conferida por esquema.** Ela chega de uma vez, que é o que o cartão do plano pede: nenhum worker roda antes de a pessoa ver todas as tarefas. Não sobe processo nenhum além do motor, e custa uma volta a menos do modelo. Na ferramenta própria, cada chamada é uma tarefa já entregue: na primeira rodada, o modelo fez três chamadas para um pedido de duas tarefas e avisou do engano só no texto.
+
+A ferramenta própria também funciona e fica como caminho para o dia em que o orquestrador precisar delegar no meio de uma conversa. Nos dois casos a tarefa chega ao servidor pelo gancho que já existe, com o token do turno; o servidor MCP da prova só confirma o recebimento e não fala com ninguém.
+
+O que isto pede do servidor, no passo da equipe:
+
+- a política de ferramentas precisa conhecer a `StructuredOutput`. Hoje ferramenta desconhecida vai para a pessoa. Na prova, com o gancho negando, a lista não chegou e o turno terminou sem erro: resultado sem `structured_output` conta como falha;
+- a chamada do motor ganha `--tools`, `--json-schema` e, na ferramenta própria, `--mcp-config` com `--strict-mcp-config`, todas na forma `--nome=valor`, que foi a usada na prova.
+
+### O que sai daqui
+
+- **O Codex entra**, como worker, como orquestrador e como juiz. O driver dele fala com o servidor de aplicativo, não com o `codex exec`: é ali que o texto sai em trechos e que a aprovação chega como pedido.
+- **A trava do Codex é o pedido de aprovação, não o gancho.** A premissa "só executa um motor cujo gancho nega quando falha" vale pelo que protege, não pelo nome: no Codex o gancho quebrado deixa passar, e o pedido de aprovação sem resposta não deixa.
+- **O driver do Codex fixa a configuração do motor**: caixa de areia só de leitura com aprovação `on-request`, `web_search = "disabled"` e `features.apps = false`. Sem as duas últimas, o bot pesquisa na web e alcança os conectores da conta do ChatGPT sem cartão.
+- **O Codex como juiz e como orquestrador** usa um turno com `outputSchema`: a resposta já vem conferida contra o esquema da pergunta ou da lista de tarefas.
+- **O Claude Code segue como worker e entra como orquestrador e como juiz.** O orquestrador entrega as tarefas numa lista conferida por esquema, e o juiz responde do mesmo jeito, num turno sem ferramentas.
+- **O Antigravity não entra agora, em nenhum papel.** Nenhum turno dele foi provado, a versão não se fixa pelo instalador e, pelo que a FAQ diz, a assinatura pessoal não cobre este uso. Volta à prova quando houver uma chave de API.
+- **Limite de turnos**: um turno do Codex pesa menos que um do Claude Code (até 353 MB contra até 405 MB na árvore de processos). O limite de quatro turnos simultâneos continua valendo, a conferir no Pi.
+- **Backup**: o login do Codex é `CODEX_HOME/auth.json`. Fica de fora do backup, como o do Claude Code.
+- **Termos**: para o Codex vale a mesma dúvida do Claude Code. A documentação recomenda chave de API para uso programado e admite a conta só para quem precisa rodar como ela mesma.
+
+### Não coberto pela prova
+
+- o Pi: tudo rodou em amd64, e em arm64 só emulado. Tempos e memória no Pi não foram medidos;
+- se o kernel do Pi deixa a caixa de areia do Codex subir. Faz diferença: com ela de pé, um comando que só lê roda sem pedido, e na prova leu o arquivo de login do próprio Codex. O "tudo vira pedido" medido aqui depende de ela não subir;
+- a leitura restrita a pastas escolhidas (`readableRoots`), que seria o conserto do item acima;
+- a configuração do Codex fora do alcance do bot: o `config.toml` usado fica em `CODEX_HOME`, que um comando aprovado consegue alterar. O arquivo de requisitos gerenciados não foi testado;
+- um processo do servidor de aplicativo atendendo vários turnos, e turnos simultâneos: a prova abriu um processo por turno;
+- espera de aprovação acima de 180 s;
+- ferramentas de servidor MCP e subagentes no Codex, e as ferramentas dinâmicas do servidor de aplicativo, que são experimentais;
+- o Codex com chave de API: só rodou com o login do ChatGPT;
+- o modelo pequeno, `gpt-6-luna`: em duas de sete tentativas respondeu "negado" sem pedir a aprovação. A ação não rodou, mas a pessoa não veria um cartão;
+- o orquestrador com um pedido de verdade: a prova usou um pedido de duas tarefas, o modelo `haiku` e nenhum worker rodando;
+- o Antigravity inteiro, e o que o Google faz com as consultas feitas por chave de API.
+
+No PC da prova, o antivírus abre o TLS de `chatgpt.com` também no tráfego dos contêineres, e o login do Codex só passou depois de o contêiner aceitar o certificado dele (`CODEX_CA_CERTIFICATE`). É coisa da máquina de desenvolvimento, descrita no `LEIAME.md` do kit.
+
+## Etapa 7, passo 2: resultado do catálogo e do motor por bot (2026-11-26)
+
+O servidor passou a dizer quais motores conhece, e cada bot passou a guardar o seu. A rota `GET /v1/catalogo`, com token, entrega cada motor com a família, os modelos sugeridos, os esforços, os papéis e se está pronto. Por ora o catálogo tem só o Claude Code, pronto, no papel de worker, com os apelidos `fable`, `opus`, `sonnet` e `haiku` e os esforços de baixo a máximo. O motor simulado continua só de teste e não aparece nele.
+
+O bot ganhou dois campos, os dois opcionais no contrato: `motor`, gravado na criação e que a edição não muda, com o Claude Code por padrão; e `esforco`, com o padrão do motor quando nulo. A migração 3 põe os dois na tabela, e todo bot de antes fica no Claude Code, sem esforço. O modelo fora da lista continua aceito se passar no formato; o motor e o esforço, não: o servidor recusa o que não sabe rodar.
+
+O esforço entrou porque o binário fixado na imagem aceita a opção. O `claude` 2.1.330 para Windows, baixado do npm e rodado sem login numa pasta temporária, lista `--effort <level>` com `low`, `medium`, `high`, `xhigh` e `max`; `--effort=high` passa sem aviso e um valor fora da lista é ignorado com um aviso. O servidor passa `--effort=<valor>` só quando o bot tem esforço. O binário de Linux arm64, que é o da imagem, não foi rodado.
+
+Os dois apps ganharam as listas no formulário de bot: o motor, só ao criar; o modelo, com "Auto" no topo, os sugeridos e "Outro", para digitar; e o esforço, com "Padrão" no topo, que só aparece quando o motor tem esforços. No celular, o campo de texto do modelo só aparece no "Outro". No desktop, ele fica à vista e a lista o preenche. Sem catálogo, num servidor anterior à rota, o formulário fica com "Auto", "Outro" e o motor padrão. A lógica das listas está em helper puro nos dois lados, com teste, e a regra do formulário cobre o motor e o esforço contra a mesma tabela, `packages/core/casos/bot-entrada.json`, que passou de 133 para 161 casos.
+
+| Verificação | Resultado |
+|---|---|
+| Suíte (lint, tipos e testes) | Passa: 59 testes no `core`, 235 no servidor e 750 no celular. O servidor confere a rota do catálogo contra o esquema e a lista das rotas protegidas, a criação com e sem motor, o modelo fora da lista, a recusa do motor e do esforço desconhecidos, e a edição que muda o esforço e ignora o motor. |
+| Bot antigo, sem `motor` | Igual, por teste (`bots.test.ts`): um banco da versão 2, aberto por esta, mantém o bot com os mesmos campos, no Claude Code, sem esforço, e o turno dele leva ao motor o mesmo modelo, a mesma sessão e nenhum esforço. O contrato lê o bot de um servidor anterior como bot do motor padrão, no TypeScript e no Rust gerado. |
+| Cliente do celular contra o servidor | `contrato-app.test.ts` busca o catálogo, cria o bot com o motor, o modelo e o esforço que vieram dele, e edita de volta aos padrões. |
+| `pnpm verificar` | 27 de 27, com três conferências novas em F2: o catálogo com o motor padrão pronto; o bot criado sem motor no motor padrão; o modelo fora do catálogo aceito e o motor fixo na edição. |
+| Desktop no Windows (rustfmt, clippy e testes) | Passa: 143 testes do cliente e 78 da janela. O cliente, contra o servidor, busca o catálogo, cria pelas listas, cria sem os campos novos, recebe a recusa do motor e do esforço desconhecidos e edita o esforço. A janela clica no motor, num modelo, num esforço, em "Auto", em "Padrão" e em "Outro", e confere no servidor o que ficou gravado. |
+| Chamada do motor | `--effort=high` vai na forma `--nome=valor`; sem esforço nem modelo, nenhuma das duas opções vai (`gancho.test.ts`). |
+
+Não coberto: as listas vistas num aparelho e no app de desktop de verdade, inclusive a prova visual, que não passa pelo formulário; o motor real com um esforço escolhido; o binário de Linux arm64 da imagem rodado com `--effort`; o formulário da janela diante de um servidor sem a rota do catálogo, coberto só pela lógica das listas; o desktop num Mac, que fica para a CI. O desktop 0.1.3 ignora os campos novos: quem o usa cria bots no motor padrão, sem esforço, e a edição feita nele não mexe no esforço. Nenhum teste novo foi rodado contra o código sem a mudança.
 
 ## Riscos
 

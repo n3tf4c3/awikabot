@@ -1,0 +1,8 @@
+{
+  "allowManagedHooksOnly": true,
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "node /opt/orquestrador/gancho-orquestrador.mjs", "timeout": 60 }] }
+    ]
+  }
+}

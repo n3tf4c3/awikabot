@@ -1,0 +1,74 @@
+# Prova descartável do passo 1 da etapa 7. Mesmas travas do contêiner do produto: rede própria
+# com sub-rede declarada, nenhuma porta publicada, sem privilégios.
+name: awikabot-spike-etapa7
+
+x-prova: &prova
+  build: .
+  image: awikabot-spike:etapa7
+  init: true
+  entrypoint: ["sh", "/opt/prova/entrada.sh"]
+  environment:
+    AWIKA_ATRASO_APROVACAO: ${AWIKA_ATRASO_APROVACAO:-5}
+    AWIKA_PRAZO_MOTOR: ${AWIKA_PRAZO_MOTOR:-40}
+    AWIKA_PRAZO_GANCHO_MS: ${AWIKA_PRAZO_GANCHO_MS:-15000}
+    AWIKA_MODELO_A: ${AWIKA_MODELO_A:-}
+    AWIKA_MODELO_B: ${AWIKA_MODELO_B:-}
+    AWIKA_ESFORCO_A: ${AWIKA_ESFORCO_A:-low}
+    AWIKA_ESFORCO_B: ${AWIKA_ESFORCO_B:-high}
+    AWIKA_CODEX_SANDBOX: ${AWIKA_CODEX_SANDBOX:-danger-full-access}
+    AWIKA_CODEX_APROVACAO: ${AWIKA_CODEX_APROVACAO:-on-request}
+    AWIKA_CODEX_GANCHOS: ${AWIKA_CODEX_GANCHOS:-PreToolUse}
+    AWIKA_CODEX_ORIGEM_GANCHO: ${AWIKA_CODEX_ORIGEM_GANCHO:-usuario}
+    AWIKA_AGY_EXTRAS: ${AWIKA_AGY_EXTRAS:-}
+    # O termIAX segurava a atualização automática do agy com esta variável; a prova confere.
+    AGY_CLI_DISABLE_AUTO_UPDATE: ${AGY_CLI_DISABLE_AUTO_UPDATE:-1}
+  volumes:
+    - dados:/data
+    - ./prova:/opt/prova:ro
+    - ./orquestrador:/opt/orquestrador:ro
+    # Certificado extra da máquina de desenvolvimento, quando um antivírus abre o TLS (ver LEIAME).
+    - ${AWIKA_CA_EXTRA:-./prova/sem-ca-extra.pem}:/etc/awika/ca-extra.pem:ro
+  networks:
+    - prova
+  mem_limit: 2g
+  pids_limit: 512
+  cap_drop:
+    - ALL
+  restart: "no"
+
+services:
+  # O contêiner como o do produto: sem privilégios novos e com o filtro de chamadas padrão.
+  prova:
+    <<: *prova
+    security_opt:
+      - no-new-privileges:true
+
+  # Só para medir a caixa de areia do Codex e do Antigravity: sem o filtro de chamadas do Docker,
+  # que é o que impede as duas de criar o próprio isolamento. Não é como o produto roda.
+  prova-sem-filtro:
+    <<: *prova
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=unconfined
+
+  # O Claude Code com o gancho na configuração gerenciada, como na imagem do produto.
+  orquestrador-gerenciado:
+    <<: *prova
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - dados:/data
+      - ./prova:/opt/prova:ro
+      - ./orquestrador:/opt/orquestrador:ro
+      - ${AWIKA_CA_EXTRA:-./prova/sem-ca-extra.pem}:/etc/awika/ca-extra.pem:ro
+      - ./orquestrador/managed-settings.json:/etc/claude-code/managed-settings.json:ro
+    command: ["node", "/opt/orquestrador/prova-orquestrador.mjs", "gerenciado"]
+
+networks:
+  prova:
+    ipam:
+      config:
+        - subnet: 172.27.0.0/16
+
+volumes:
+  dados:
