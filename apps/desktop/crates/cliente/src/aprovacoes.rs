@@ -230,6 +230,8 @@ mod testes {
             nome: "Ajudante".into(),
             instrucoes: String::new(),
             modelo: None,
+            motor: "claude-code".into(),
+            esforco: None,
             criado_em: 1,
             atualizado_em: 1,
             turno_ativo,

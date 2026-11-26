@@ -207,7 +207,7 @@ describe('cliente do app depois de o servidor reiniciar', () => {
     const cargas = (): number => eventos.filter((e) => e.tipo === 'ressincronizar').length;
     await esperar(() => cargas() === 1);
 
-    const bot = await api.criarBot({ nome: 'Scout', instrucoes: '', modelo: null });
+    const bot = await api.criarBot({ nome: 'Scout', instrucoes: '', modelo: null, motor: 'claude-code', esforco: null });
     await api.enviarTurno(bot.id, { texto: 'conte até o fim' });
     await esperar(() => eventos.filter((e) => e.tipo === 'texto').length >= 8);
     expect((await api.listarBots()).bots[0]?.turnoAtivo).toBe(true);

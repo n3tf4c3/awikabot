@@ -10,6 +10,8 @@ pub const VERSAO_PROTOCOLO: u64 = 1;
 pub const INTERVALO_PING_MS: u64 = 15000;
 /// Quanto um pedido de aprovação espera pela pessoa, em milissegundos.
 pub const ESPERA_APROVACAO_MS: u64 = 900000;
+/// O motor do bot que não diz o seu.
+pub const MOTOR_PADRAO: &str = "claude-code";
 
 /// Limites que o servidor aplica. O cliente usa os mesmos nos campos.
 pub mod limites {
@@ -66,11 +68,69 @@ pub struct RespostaPareamento {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ModeloSugerido {
+    pub id: String,
+    pub nome: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EsforcoDoMotor {
+    pub id: String,
+    pub nome: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum MotorDoCatalogoFamilia {
+    #[serde(rename = "agente")]
+    Agente,
+    #[serde(rename = "decisor")]
+    Decisor,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum MotorDoCatalogoPapeis {
+    #[serde(rename = "orquestrador")]
+    Orquestrador,
+    #[serde(rename = "worker")]
+    Worker,
+    #[serde(rename = "decisao")]
+    Decisao,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MotorDoCatalogo {
+    pub id: String,
+    pub nome: String,
+    pub familia: MotorDoCatalogoFamilia,
+    pub modelos: Vec<ModeloSugerido>,
+    pub esforcos: Vec<EsforcoDoMotor>,
+    pub papeis: Vec<MotorDoCatalogoPapeis>,
+    pub pronto: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Catalogo {
+    pub motores: Vec<MotorDoCatalogo>,
+}
+
+fn padrao_bot_motor() -> String {
+    "claude-code".to_owned()
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Bot {
     pub id: String,
     pub nome: String,
     pub instrucoes: String,
     pub modelo: Option<String>,
+    #[serde(default = "padrao_bot_motor")]
+    pub motor: String,
+    #[serde(default)]
+    pub esforco: Option<String>,
     pub criado_em: u64,
     pub atualizado_em: u64,
     pub turno_ativo: bool,
@@ -212,6 +272,10 @@ pub struct BotEntrada {
     pub instrucoes: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modelo: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub motor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub esforco: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -223,6 +287,8 @@ pub struct BotEdicao {
     pub instrucoes: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none", with = "crate::opcional_nulo")]
     pub modelo: Option<Option<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "crate::opcional_nulo")]
+    pub esforco: Option<Option<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

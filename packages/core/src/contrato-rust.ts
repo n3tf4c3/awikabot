@@ -13,6 +13,10 @@ const RESPOSTAS: Record<string, ZodType> = {
   Erro: core.EsquemaErro,
   Dispositivo: core.EsquemaDispositivo,
   RespostaPareamento: core.EsquemaRespostaPareamento,
+  ModeloSugerido: core.EsquemaModeloSugerido,
+  EsforcoDoMotor: core.EsquemaEsforcoDoMotor,
+  MotorDoCatalogo: core.EsquemaMotorDoCatalogo,
+  Catalogo: core.EsquemaCatalogo,
   Bot: core.EsquemaBot,
   ListaBots: core.EsquemaListaBots,
   Mensagem: core.EsquemaMensagem,
@@ -112,7 +116,19 @@ class Gerador {
       if (nome === ignorar || !ehObjeto(bruto)) continue;
       let tipo = this.tipo(bruto, dono, nome);
       const atributos: string[] = [];
-      if (!obrigatorios.has(nome)) {
+      if (obrigatorios.has(nome) && 'default' in bruto) {
+        // Campo de resposta com valor padrão: um servidor anterior a ele não o manda, e o
+        // cliente fica com o mesmo valor que o esquema dá.
+        if (bruto.default === null && tipo.startsWith('Option<')) {
+          atributos.push('default');
+        } else if (typeof bruto.default === 'string' && tipo === 'String') {
+          const funcao = `padrao${emSnake(dono)}_${emSnake(nome)}`;
+          this.blocos.push(`fn ${funcao}() -> String {\n    ${JSON.stringify(bruto.default)}.to_owned()\n}`);
+          atributos.push(`default = "${funcao}"`);
+        } else {
+          throw new Error(`contrato-rust: não sei o valor padrão de ${dono}.${nome}: ${JSON.stringify(bruto.default)}`);
+        }
+      } else if (!obrigatorios.has(nome)) {
         if (tipo.startsWith('Option<') && !('default' in bruto)) {
           // Ausente e nulo dizem coisas diferentes: "não mexer" e "apagar o valor".
           tipo = `Option<${tipo}>`;
@@ -195,6 +211,8 @@ pub const VERSAO_PROTOCOLO: u64 = ${core.VERSAO_PROTOCOLO};
 pub const INTERVALO_PING_MS: u64 = ${core.INTERVALO_PING_MS};
 /// Quanto um pedido de aprovação espera pela pessoa, em milissegundos.
 pub const ESPERA_APROVACAO_MS: u64 = ${core.ESPERA_APROVACAO_MS};
+/// O motor do bot que não diz o seu.
+pub const MOTOR_PADRAO: &str = ${JSON.stringify(core.MOTOR_PADRAO)};
 
 /// Limites que o servidor aplica. O cliente usa os mesmos nos campos.
 pub mod limites {

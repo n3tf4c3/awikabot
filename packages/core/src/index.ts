@@ -68,25 +68,68 @@ export const EsquemaRespostaPareamento = z.object({
 });
 export type RespostaPareamento = z.infer<typeof EsquemaRespostaPareamento>;
 
+// --- Catálogo de motores ----------------------------------------------------
+
+/** O motor de todo bot que não diz o seu, inclusive os criados antes de o campo existir. */
+export const MOTOR_PADRAO = 'claude-code';
+
+/** Identificador de motor. Texto, não enum: um motor novo no servidor não invalida o bot num cliente antigo. */
+const IdMotor = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/);
+/** Nome de modelo do motor. O formato restrito impede que vire uma opção de linha de comando. */
+const Modelo = z.string().trim().min(1).max(LIMITES.modelo).regex(/^[A-Za-z0-9][A-Za-z0-9._:[\]-]*$/);
+/** Nível de esforço do motor. Só vale um que o catálogo lista para o motor do bot; o servidor confere. */
+const Esforco = z.string().regex(/^[a-z][a-z0-9-]{0,19}$/);
+const NomeNoCatalogo = z.string().min(1).max(60);
+
+/** Um modelo que o catálogo sugere. A lista sugere e não bloqueia: outro modelo vale se passar no formato. */
+export const EsquemaModeloSugerido = z.object({ id: Modelo, nome: NomeNoCatalogo });
+export type ModeloSugerido = z.infer<typeof EsquemaModeloSugerido>;
+
+export const EsquemaEsforcoDoMotor = z.object({ id: Esforco, nome: NomeNoCatalogo });
+export type EsforcoDoMotor = z.infer<typeof EsquemaEsforcoDoMotor>;
+
+export const EsquemaMotorDoCatalogo = z.object({
+  id: IdMotor,
+  nome: NomeNoCatalogo,
+  /** Agente conversa, usa ferramentas e pede aprovação; decisor só responde a uma pergunta fechada. */
+  familia: z.enum(['agente', 'decisor']),
+  /** Em ordem de exibição. A lista do app põe "Auto", o modelo padrão do motor, antes deles. */
+  modelos: z.array(EsquemaModeloSugerido),
+  /** Vazio quando o motor não aceita escolher o esforço. */
+  esforcos: z.array(EsquemaEsforcoDoMotor),
+  papeis: z.array(z.enum(['orquestrador', 'worker', 'decisao'])),
+  /** Só um motor pronto aparece para criar bot. */
+  pronto: z.boolean(),
+});
+export type MotorDoCatalogo = z.infer<typeof EsquemaMotorDoCatalogo>;
+
+/** Resposta de `GET /v1/catalogo`. */
+export const EsquemaCatalogo = z.object({ motores: z.array(EsquemaMotorDoCatalogo) });
+export type Catalogo = z.infer<typeof EsquemaCatalogo>;
+
 // --- Bots -------------------------------------------------------------------
 
 const NomeBot = z.string().trim().min(1).max(LIMITES.nomeBot);
 const Instrucoes = z.string().max(LIMITES.instrucoes);
-/** Nome de modelo do motor. O formato restrito impede que vire uma opção de linha de comando. */
-const Modelo = z.string().trim().min(1).max(LIMITES.modelo).regex(/^[A-Za-z0-9][A-Za-z0-9._:[\]-]*$/);
 
 export const EsquemaBotEntrada = z.object({
   nome: NomeBot,
   instrucoes: Instrucoes.default(''),
   modelo: Modelo.nullable().default(null),
+  /** Escolhido na criação; a edição não o muda. */
+  motor: IdMotor.default(MOTOR_PADRAO),
+  /** `null` é o esforço padrão do motor. */
+  esforco: Esforco.nullable().default(null),
 });
 export type BotEntrada = z.infer<typeof EsquemaBotEntrada>;
 
+/** Sem `motor`: a sessão que guarda a conversa é do motor, e trocá-lo a perderia. Um `motor` aqui é ignorado. */
 export const EsquemaBotEdicao = z
   .object({
     nome: NomeBot.optional(),
     instrucoes: Instrucoes.optional(),
     modelo: Modelo.nullable().optional(),
+    esforco: Esforco.nullable().optional(),
   })
   .refine((edicao) => Object.values(edicao).some((valor) => valor !== undefined), { message: 'edição vazia' });
 export type BotEdicao = z.infer<typeof EsquemaBotEdicao>;
@@ -95,7 +138,12 @@ export const EsquemaBot = z.object({
   id: Id,
   nome: NomeBot,
   instrucoes: Instrucoes,
+  /** `null` é o "Auto": o modelo padrão do motor. */
   modelo: Modelo.nullable(),
+  /** Um servidor anterior a este campo não o manda; o bot dele é do motor padrão. */
+  motor: IdMotor.default(MOTOR_PADRAO),
+  /** `null` é o esforço padrão do motor. Um servidor anterior a este campo não o manda. */
+  esforco: Esforco.nullable().default(null),
   criadoEm: Instante,
   atualizadoEm: Instante,
   turnoAtivo: z.boolean(),

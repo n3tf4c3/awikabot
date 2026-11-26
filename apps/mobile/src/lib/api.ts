@@ -1,6 +1,7 @@
 import {
   EsquemaAprovacao,
   EsquemaBot,
+  EsquemaCatalogo,
   EsquemaListaAprovacoes,
   EsquemaListaBots,
   EsquemaListaMensagens,
@@ -10,6 +11,7 @@ import {
   type Bot,
   type BotEdicao,
   type BotEntrada,
+  type Catalogo,
   type DecisaoAprovacao,
   type ListaAprovacoes,
   type ListaBots,
@@ -54,6 +56,8 @@ export interface OpcoesApi {
 export interface Api {
   parear(servidor: string, pedido: PedidoPareamento): Promise<RespostaPareamento>;
   listarBots(): Promise<ListaBots>;
+  /** Os motores, modelos e esforços que o servidor conhece, para as listas do formulário. */
+  catalogo(): Promise<Catalogo>;
   criarBot(entrada: BotEntrada): Promise<Bot>;
   editarBot(id: string, edicao: BotEdicao): Promise<Bot>;
   /** Página em ordem crescente de `seq`. `antes` pede as mensagens anteriores àquele `seq`. */
@@ -178,6 +182,11 @@ export function criarApi(opcoes: OpcoesApi): Api {
     async listarBots() {
       const { status, texto } = await pedir('GET', '/v1/bots');
       return ler(EsquemaListaBots, status, texto);
+    },
+
+    async catalogo() {
+      const { status, texto } = await pedir('GET', '/v1/catalogo');
+      return ler(EsquemaCatalogo, status, texto);
     },
 
     async criarBot(entrada) {

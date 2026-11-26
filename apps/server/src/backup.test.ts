@@ -32,7 +32,7 @@ describe('backup do banco', () => {
     const destino = path.join(pasta, 'copias', 'a.db');
 
     const resumo = fazerBackup(origem.banco, destino);
-    expect(resumo).toMatchObject({ arquivo: destino, versaoDoEsquema: 2, bots: 1, mensagens: 2, aparelhosAtivos: 1 });
+    expect(resumo).toMatchObject({ arquivo: destino, versaoDoEsquema: 3, bots: 1, mensagens: 2, aparelhosAtivos: 1 });
     expect(resumo.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(resumo.bytes).toBe(readFileSync(destino).length);
 

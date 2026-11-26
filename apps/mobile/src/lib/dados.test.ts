@@ -7,7 +7,7 @@ const BOT_A = 'bot0000000000001';
 const BOT_B = 'bot0000000000002';
 
 function bot(id: string, extra: Partial<Bot> = {}): Bot {
-  return { id, nome: `Bot ${id.slice(-1)}`, instrucoes: '', modelo: null, criadoEm: 1, atualizadoEm: 1, turnoAtivo: false, ...extra };
+  return { id, nome: `Bot ${id.slice(-1)}`, instrucoes: '', modelo: null, motor: 'claude-code', esforco: null, criadoEm: 1, atualizadoEm: 1, turnoAtivo: false, ...extra };
 }
 
 function msg(botId: string, seq: number, estado: Mensagem['estado'] = 'completa', texto = `texto ${seq}`): Mensagem {

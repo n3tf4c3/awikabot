@@ -5,6 +5,8 @@ export interface PedidoMotor {
   texto: string;
   instrucoes: string;
   modelo: string | null;
+  /** Esforço do motor; `null` é o padrão dele. */
+  esforco: string | null;
   /** Sessão do motor a retomar, para o bot lembrar da conversa. */
   sessao: string | null;
   /**

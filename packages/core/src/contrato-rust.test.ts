@@ -16,5 +16,14 @@ describe('contrato em Rust', () => {
     expect(gerado).toContain('#[serde(tag = "tipo")]\npub enum Evento {');
     expect(gerado).toContain('#[serde(rename = "em_andamento")]\n    EmAndamento,');
     expect(gerado).toContain('pub resolvida_em: Option<u64>,');
+    expect(gerado).toContain('pub const MOTOR_PADRAO: &str = "claude-code";');
+  });
+
+  it('dá ao campo de resposta com valor padrão o mesmo padrão do esquema', () => {
+    // Um servidor anterior ao campo não o manda: o bot dele é do motor padrão, com o esforço padrão.
+    const gerado = gerarContratoRust();
+    expect(gerado).toContain('fn padrao_bot_motor() -> String {\n    "claude-code".to_owned()\n}');
+    expect(gerado).toContain('    #[serde(default = "padrao_bot_motor")]\n    pub motor: String,');
+    expect(gerado).toContain('    #[serde(default)]\n    pub esforco: Option<String>,');
   });
 });

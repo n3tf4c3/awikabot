@@ -8,7 +8,7 @@ use ureq::tls::{RootCerts, TlsConfig};
 use ureq::{Agent, Body, http};
 
 use crate::contrato::{
-    Aprovacao, Bot, BotEdicao, BotEntrada, DecisaoAprovacao, Erro, ListaAprovacoes, ListaBots, ListaMensagens, PedidoPareamento,
+    Aprovacao, Bot, BotEdicao, BotEntrada, Catalogo, DecisaoAprovacao, Erro, ListaAprovacoes, ListaBots, ListaMensagens, PedidoPareamento,
     PedidoTurno, RespostaPareamento, RespostaTurno, Saude,
 };
 
@@ -165,6 +165,12 @@ impl Api {
 
     pub fn listar_bots(&self, credencial: &Credencial) -> Result<ListaBots, ErroApi> {
         self.obter(credencial, "/v1/bots")
+    }
+
+    /// Os motores, modelos e esforços que o servidor conhece, para as listas do formulário. Um
+    /// servidor anterior à rota responde 404.
+    pub fn catalogo(&self, credencial: &Credencial) -> Result<Catalogo, ErroApi> {
+        self.obter(credencial, "/v1/catalogo")
     }
 
     pub fn criar_bot(&self, credencial: &Credencial, entrada: &BotEntrada) -> Result<Bot, ErroApi> {

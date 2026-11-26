@@ -8,7 +8,7 @@ import { criarOperacoes } from './operacoes';
 const BOT = 'bot0000000000001';
 
 function bot(extra: Partial<Bot> = {}): Bot {
-  return { id: BOT, nome: 'Ajudante', instrucoes: '', modelo: null, criadoEm: 1, atualizadoEm: 1, turnoAtivo: false, ...extra };
+  return { id: BOT, nome: 'Ajudante', instrucoes: '', modelo: null, motor: 'claude-code', esforco: null, criadoEm: 1, atualizadoEm: 1, turnoAtivo: false, ...extra };
 }
 
 function msg(seq: number, estado: Mensagem['estado'] = 'completa'): Mensagem {
@@ -62,6 +62,7 @@ function montar(parcial: Partial<Api> = {}) {
   const api: Api = {
     parear: naoUsada('parear'),
     listarBots: naoUsada('listarBots'),
+    catalogo: naoUsada('catalogo'),
     criarBot: naoUsada('criarBot'),
     editarBot: naoUsada('editarBot'),
     listarMensagens: naoUsada('listarMensagens'),
@@ -179,9 +180,9 @@ describe('criarBot e editarBot', () => {
     const { armazem, operacoes } = montar({ criarBot });
     armazem.despachar({ tipo: 'bots_carregados', bots: [] });
 
-    await expect(operacoes.criarBot({ nome: 'Ajudante', instrucoes: '', modelo: null })).resolves.toEqual(bot());
+    await expect(operacoes.criarBot({ nome: 'Ajudante', instrucoes: '', modelo: null, motor: 'claude-code', esforco: null })).resolves.toEqual(bot());
 
-    expect(criarBot).toHaveBeenCalledWith({ nome: 'Ajudante', instrucoes: '', modelo: null });
+    expect(criarBot).toHaveBeenCalledWith({ nome: 'Ajudante', instrucoes: '', modelo: null, motor: 'claude-code', esforco: null });
     expect(armazem.estado().bots).toEqual([bot()]);
   });
 

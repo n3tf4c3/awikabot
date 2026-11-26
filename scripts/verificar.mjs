@@ -179,6 +179,21 @@ try {
       const naLista = lista.corpo?.bots?.find((bot) => bot.id === botId);
       registrar('F2', 'editar bot', editado.status === 200 && naLista?.nome === 'Scout 2', `status ${editado.status}, nome na lista "${naLista?.nome}"`);
 
+      // F2: o catálogo que monta as listas do formulário, e o motor por bot.
+      const catalogo = await pedir('/v1/catalogo', { token });
+      const claude = catalogo.corpo?.motores?.find((motor) => motor.id === 'claude-code');
+      registrar('F2', 'catálogo com o motor padrão pronto', catalogo.status === 200 && claude?.pronto === true && claude?.modelos?.length > 0,
+        `status ${catalogo.status}, ${claude?.modelos?.length ?? 0} modelo(s) e ${claude?.esforcos?.length ?? 0} esforço(s) sugeridos`);
+      registrar('F2', 'bot criado sem motor fica no motor padrão', criado.corpo?.motor === 'claude-code' && criado.corpo?.esforco === null,
+        `motor ${criado.corpo?.motor}, esforço ${criado.corpo?.esforco}`);
+      // Um modelo fora da lista vale; um motor numa edição é ignorado. Volta ao padrão antes do turno.
+      const foraDaLista = await pedir(`/v1/bots/${botId}`, { token, metodo: 'PATCH', corpo: { motor: 'outro', modelo: 'modelo-fora-da-lista', esforco: 'high' } });
+      const devolta = await pedir(`/v1/bots/${botId}`, { token, metodo: 'PATCH', corpo: { modelo: null, esforco: null } });
+      registrar('F2', 'modelo fora do catálogo aceito e motor fixo na edição',
+        foraDaLista.status === 200 && foraDaLista.corpo?.modelo === 'modelo-fora-da-lista' && foraDaLista.corpo?.esforco === 'high' &&
+          foraDaLista.corpo?.motor === 'claude-code' && devolta.status === 200 && devolta.corpo?.modelo === null,
+        `status ${foraDaLista.status}, motor ${foraDaLista.corpo?.motor}, modelo ${foraDaLista.corpo?.modelo}`);
+
       // F3: conversar com resposta aos poucos.
       const enviadoEm = Date.now();
       const turno = await pedir(`/v1/bots/${botId}/turnos`, { token, corpo: { texto: motorReal ? 'Diga olá e guarde o número 47 para depois.' : 'olá mundo' } });
