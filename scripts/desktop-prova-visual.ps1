@@ -136,12 +136,12 @@ function CodigoDePareamento {
 }
 
 # Onde ficam os botões, na janela do tamanho em que o app abre (980 por 680).
-$novoBot = @(190, 27)        # no alto da lateral
-$aprovar = @(305, 295)       # no cartão de aprovação de uma conversa nova: uma mensagem de uma linha, a resposta e o cartão
-$negar = @(380, 295)
-$segundoBot = @(120, 104)    # a segunda linha da lista de bots
-$parar = @(938, 653)         # à direita do campo de mensagem, no lugar do "Enviar"
-$desparear = @(119, 653)     # no pé da lateral
+$novoBot = @(124, 23)        # no alto da lateral
+$aprovar = @(311, 251)       # no cartão de aprovação de uma conversa nova: uma mensagem de uma linha, a resposta e o cartão
+$negar = @(383, 251)
+$segundoBot = @(120, 115)    # a segunda linha da lista de bots
+$parar = @(925, 640)         # no canto do cartão do compositor, no lugar do "Enviar"
+$desparear = @(120, 657)     # no pé da lateral
 
 try {
     $no_ar = $false

@@ -194,6 +194,8 @@ pub struct CampoDeTexto {
     linhas: (usize, usize),
     /// Na área de texto: Enter confirma (e Shift+Enter quebra a linha), ou Enter quebra a linha.
     enter_confirma: bool,
+    /// Sem fundo nem borda: quem desenha a moldura é o cartão em volta, como o do compositor.
+    sem_moldura: bool,
     desenho: Option<Desenho>,
     /// Quanto do texto ficou para fora, à esquerda (campo de uma linha) ou acima (área).
     rolagem: Point<Pixels>,
@@ -232,12 +234,19 @@ impl CampoDeTexto {
             em_composicao: None,
             linhas,
             enter_confirma,
+            sem_moldura: false,
             desenho: None,
             rolagem: point(px(0.), px(0.)),
             revelar_cursor: true,
             coluna: None,
             arrastando: false,
         }
+    }
+
+    /// O campo sem fundo nem borda, para ficar dentro de um cartão que faz esse papel.
+    pub fn sem_moldura(mut self) -> Self {
+        self.sem_moldura = true;
+        self
     }
 
     pub fn texto(&self) -> &str {
@@ -627,10 +636,7 @@ impl Render for CampoDeTexto {
         base.w_full()
             .px_2()
             .overflow_hidden()
-            .bg(tema::elevado())
-            .border_1()
-            .border_color(borda)
-            .rounded_md()
+            .when(!self.sem_moldura, |campo| campo.bg(tema::elevado()).border_1().border_color(borda).rounded_md())
             .text_size(px(tema::TAMANHO_DO_TEXTO))
             .line_height(px(tema::ALTURA_DA_LINHA))
             .text_color(tema::texto())

@@ -24,7 +24,7 @@ use futures::StreamExt;
 use futures::channel::mpsc;
 use gpui::{
     AnyWindowHandle, App, Context, ElementId, Entity, FocusHandle, Focusable, KeyBinding, ScrollHandle, SharedString, Subscription,
-    SystemNotification, SystemNotificationResponse, Task, Window, WindowHandle, actions, div, prelude::*, px,
+    SystemNotification, SystemNotificationResponse, Task, Window, WindowHandle, actions, div, prelude::*, px, relative,
 };
 
 use crate::atualizador::{Configuracao, PainelDeAtualizacao};
@@ -326,7 +326,7 @@ impl Janela {
 
     fn entrar(&mut self, credencial: Credencial, cx: &mut Context<Self>) {
         // Enter envia; Shift+Enter quebra a linha. O campo cresce com o texto até seis linhas.
-        let compositor = cx.new(|cx| CampoDeTexto::area("Escreva para o bot", limites::TEXTO, (1, 6), true, cx));
+        let compositor = cx.new(|cx| CampoDeTexto::area("Escreva para o bot", limites::TEXTO, (1, 6), true, cx).sem_moldura());
         let assinatura = cx.subscribe(&compositor, |janela: &mut Self, _, _: &Confirmado, cx| janela.enviar(cx));
         self.foco_pendente = Some(compositor.focus_handle(cx));
 
@@ -896,6 +896,19 @@ pub(crate) fn botao(id: impl Into<ElementId>, rotulo: impl Into<SharedString>, p
     }
 }
 
+/// Uma ação discreta, do tamanho de uma linha da lateral: sem fundo até o mouse passar.
+fn linha_de_acao(id: impl Into<ElementId>, rotulo: impl Into<SharedString>) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .px_2()
+        .py_1p5()
+        .rounded_md()
+        .cursor_pointer()
+        .text_color(tema::texto())
+        .hover(|estilo| estilo.bg(tema::sob_o_mouse()))
+        .child(rotulo.into())
+}
+
 fn rotulo_do_campo(texto: &'static str) -> gpui::Div {
     div().text_size(px(tema::TAMANHO_PEQUENO)).text_color(tema::texto_secundario()).child(texto)
 }
@@ -986,8 +999,10 @@ impl Janela {
             });
             div()
                 .id(("bot", indice))
-                .px_3()
+                .mx_2()
+                .px_2()
                 .py_1p5()
+                .rounded_md()
                 .flex()
                 .items_center()
                 .gap_2()
@@ -999,8 +1014,9 @@ impl Janela {
                 .on_click(cx.listener(move |janela, _, _, cx| janela.escolher_na_lista(&credencial, id.clone(), cx)))
         });
 
+        // A ação principal no alto, a lista no meio, e no pé o que é da conexão com o servidor.
         div()
-            .w(px(240.))
+            .w(px(tema::LARGURA_DA_LATERAL))
             .flex_none()
             .h_full()
             .flex()
@@ -1009,39 +1025,61 @@ impl Janela {
             .border_r_1()
             .border_color(tema::divisoria())
             .child(
-                div()
-                    .p_3()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .border_b_1()
-                    .border_color(tema::divisoria())
-                    .child(div().text_color(tema::texto_forte()).font_weight(gpui::FontWeight::SEMIBOLD).child("Bots"))
-                    .child(
-                        botao("novo-bot", "Novo bot", false)
-                            .debug_selector(|| "novo-bot".into())
-                            .on_click(cx.listener(|janela, _, _, cx| janela.abrir_formulario(None, cx))),
-                    ),
+                div().p_2().child(
+                    botao("novo-bot", "+  Novo bot", false)
+                        .w_full()
+                        .justify_start()
+                        .debug_selector(|| "novo-bot".into())
+                        .on_click(cx.listener(|janela, _, _, cx| janela.abrir_formulario(None, cx))),
+                ),
             )
-            .child(div().id("lista-de-bots").flex_1().min_h_0().overflow_y_scroll().py_1().children(bots))
+            .child(div().px_4().pt_2().pb_1().child(texto_pequeno("Bots", tema::texto_secundario())))
+            .child(div().id("lista-de-bots").flex_1().min_h_0().overflow_y_scroll().pb_1().flex().flex_col().gap_0p5().children(bots))
             .child(
                 div()
-                    .p_3()
+                    .p_2()
                     .flex()
                     .flex_col()
-                    .gap_2()
-                    .border_t_1()
-                    .border_color(tema::divisoria())
-                    .children(self.atualizacao.clone())
-                    .child(texto_pequeno(estado, cor))
-                    .child(botao("desparear", "Desparear", false).on_click(cx.listener(|janela, _, _, cx| janela.desparear(cx)))),
+                    .gap_1()
+                    .children(self.atualizacao.clone().map(|painel| div().px_2().pb_1().child(painel)))
+                    .child(
+                        div()
+                            .px_2()
+                            .py_1()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(div().size(px(7.)).flex_none().rounded_full().bg(cor))
+                            .child(texto_pequeno(estado, tema::texto_secundario())),
+                    )
+                    .child(
+                        linha_de_acao("desparear", "Desparear")
+                            .debug_selector(|| "desparear".into())
+                            .on_click(cx.listener(|janela, _, _, cx| janela.desparear(cx))),
+                    ),
             )
     }
 
     fn desenhar_mensagem(mensagem: &Mensagem, nome_do_bot: &str) -> gpui::Div {
-        let da_pessoa = mensagem.papel == MensagemPapel::Usuario;
-        let quem: SharedString = if da_pessoa { "Você".into() } else { nome_do_bot.to_owned().into() };
         let estado = rotulo_do_estado(mensagem).map(|(texto, cor)| texto_pequeno(texto, cor));
+        let texto = (!mensagem.texto.is_empty())
+            .then(|| div().min_w_0().whitespace_normal().text_color(tema::texto()).child(mensagem.texto.clone()));
+        // O que a pessoa escreveu fica num balão à direita; a resposta do bot, solta na coluna.
+        if mensagem.papel == MensagemPapel::Usuario {
+            return div().w_full().min_w_0().flex_none().flex().flex_col().items_end().gap_1().child(
+                div()
+                    .max_w(relative(0.8))
+                    .min_w_0()
+                    .px_3()
+                    .py_2()
+                    .rounded_xl()
+                    .bg(tema::elevado())
+                    .border_1()
+                    .border_color(tema::divisoria())
+                    .children(texto)
+                    .children(estado),
+            );
+        }
         div()
             .w_full()
             .min_w_0()
@@ -1049,13 +1087,9 @@ impl Janela {
             .flex()
             .flex_col()
             .gap_1()
-            .p_3()
-            .rounded_md()
-            .when(da_pessoa, |bloco| bloco.bg(tema::elevado()))
-            .child(texto_pequeno(quem, tema::texto_secundario()))
-            .when(!mensagem.texto.is_empty(), |bloco| {
-                bloco.child(div().w_full().min_w_0().whitespace_normal().text_color(tema::texto()).child(mensagem.texto.clone()))
-            })
+            .py_1()
+            .child(texto_pequeno(nome_do_bot.to_owned(), tema::texto_secundario()))
+            .children(texto.map(|texto| texto.w_full()))
             .children(estado)
     }
 
@@ -1067,7 +1101,6 @@ impl Janela {
                 .w_full()
                 .min_w_0()
                 .flex_none()
-                .px_3()
                 .flex()
                 .items_center()
                 .gap_2()
@@ -1102,7 +1135,7 @@ impl Janela {
             .flex_col()
             .gap_2()
             .p_3()
-            .rounded_md()
+            .rounded_lg()
             .bg(tema::elevado())
             .border_1()
             .border_color(tema::estado_de_aviso())
@@ -1130,7 +1163,7 @@ impl Janela {
             .child(texto_pequeno("Sem resposta, o pedido expira e a ação não roda.", tema::texto_apagado()))
     }
 
-    fn desenhar_conversa(&self, sessao: &SessaoAberta, cx: &mut Context<Self>) -> gpui::Div {
+    fn desenhar_conversa(&self, sessao: &SessaoAberta, compositor_com_o_teclado: bool, cx: &mut Context<Self>) -> gpui::Div {
         let bot = sessao.selecionado.as_ref().and_then(|id| sessao.bots.iter().find(|bot| &bot.id == id));
         let Some(bot) = bot else {
             return div()
@@ -1149,7 +1182,7 @@ impl Janela {
             Item::Aprovacao(aprovacao) => self.desenhar_aprovacao(sessao, aprovacao, indice, cx),
         });
         let itens: Vec<gpui::Div> = itens.collect();
-        let aviso = sessao.aviso.clone().map(|texto| div().px_4().pb_2().text_color(tema::estado_de_aviso()).child(texto));
+        let aviso = sessao.aviso.clone().map(|texto| div().px_1().text_color(tema::estado_de_aviso()).child(texto));
         let acao = if respondendo(bot, &sessao.conversa) {
             botao("parar", if sessao.parando { "Parando…" } else { "Parar" }, false)
                 .debug_selector(|| "parar".into())
@@ -1157,8 +1190,12 @@ impl Janela {
         } else {
             botao("enviar", "Enviar", true).debug_selector(|| "enviar".into()).on_click(cx.listener(|janela, _, _, cx| janela.enviar(cx)))
         };
+        let borda_do_compositor = if compositor_com_o_teclado { tema::destaque() } else { tema::borda_de_controle() };
 
+        // A conversa e o compositor ficam numa coluna de largura limitada, no meio da área central;
+        // a rolagem é da área inteira, para a barra ficar na borda da janela.
         // Sem largura mínima zero, um texto longo empurra a coluna para fora da janela em vez de quebrar.
+        let coluna = || div().w_full().max_w(px(tema::LARGURA_DA_CONVERSA)).min_w_0().px_4();
         div()
             .flex_1()
             .min_w_0()
@@ -1167,12 +1204,11 @@ impl Janela {
             .flex_col()
             .child(
                 div()
-                    .p_3()
+                    .px_4()
+                    .py_2()
                     .flex()
                     .items_center()
                     .gap_2()
-                    .border_b_1()
-                    .border_color(tema::divisoria())
                     .child(
                         div()
                             .flex_1()
@@ -1195,23 +1231,42 @@ impl Janela {
                     .min_h_0()
                     .overflow_y_scroll()
                     .track_scroll(&sessao.rolagem)
-                    .p_4()
                     .flex()
                     .flex_col()
-                    .gap_2()
-                    .children(itens),
+                    .items_center()
+                    .child(coluna().py_4().flex().flex_col().gap_3().children(itens)),
             )
-            .children(aviso)
             .child(
-                div()
-                    .p_3()
-                    .flex()
-                    .items_end()
-                    .gap_2()
-                    .border_t_1()
-                    .border_color(tema::divisoria())
-                    .child(div().flex_1().min_w_0().child(sessao.compositor.clone()))
-                    .child(acao.flex_none()),
+                div().w_full().flex().justify_center().pb_4().child(
+                    coluna().flex().flex_col().gap_2().children(aviso).child(
+                        div()
+                            .w_full()
+                            .min_w_0()
+                            .p_2()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .rounded_xl()
+                            .bg(tema::elevado())
+                            .border_1()
+                            .border_color(borda_do_compositor)
+                            .child(div().w_full().min_w_0().child(sessao.compositor.clone()))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        texto_pequeno("Enter envia · Shift+Enter quebra a linha", tema::texto_apagado())
+                                            .flex_1()
+                                            .min_w_0()
+                                            .truncate()
+                                            .pl_2(),
+                                    )
+                                    .child(acao.flex_none().rounded_full()),
+                            ),
+                    ),
+                ),
             )
     }
 
@@ -1228,14 +1283,7 @@ impl Janela {
             .flex()
             .flex_col()
             .child(
-                div()
-                    .p_3()
-                    .truncate()
-                    .border_b_1()
-                    .border_color(tema::divisoria())
-                    .text_color(tema::texto_forte())
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .child(titulo),
+                div().py(px(14.)).px_4().truncate().text_color(tema::texto_forte()).font_weight(gpui::FontWeight::SEMIBOLD).child(titulo),
             )
             .child(
                 div().id("formulario-de-bot").flex_1().min_h_0().overflow_y_scroll().p_4().child(
@@ -1307,7 +1355,10 @@ impl Render for Janela {
             Tela::Sessao(sessao) => {
                 let central = match &sessao.formulario {
                     Some(formulario) => self.desenhar_formulario(formulario, cx),
-                    None => self.desenhar_conversa(sessao, cx),
+                    None => {
+                        let com_o_teclado = sessao.compositor.focus_handle(cx).is_focused(window);
+                        self.desenhar_conversa(sessao, com_o_teclado, cx)
+                    }
                 };
                 div().size_full().flex().child(self.desenhar_lateral(sessao, cx)).child(central)
             }
@@ -1533,7 +1584,7 @@ mod testes {
         });
 
         // Desparear volta ao começo, esvazia o cofre, e o servidor passa a recusar o token.
-        janela.update(&mut cx, |janela, cx| janela.desparear(cx));
+        clicar(&mut cx, "desparear");
         cx.run_until_parked();
         janela.read_with(&cx, |janela, _| assert!(aberta(janela).is_none()));
         assert_eq!(cofre.valor(), None);

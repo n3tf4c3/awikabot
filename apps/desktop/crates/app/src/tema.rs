@@ -197,6 +197,10 @@ pub const TAMANHO_DO_TEXTO: f32 = 13.0;
 pub const TAMANHO_PEQUENO: f32 = 11.5;
 /// Altura de linha da interface: 1,35 vezes o texto.
 pub const ALTURA_DA_LINHA: f32 = 18.0;
+/// Largura da lateral com a lista de bots.
+pub const LARGURA_DA_LATERAL: f32 = 248.0;
+/// Largura máxima da coluna da conversa e do compositor; numa janela larga, sobra margem dos lados.
+pub const LARGURA_DA_CONVERSA: f32 = 760.0;
 
 #[cfg(test)]
 mod testes {
