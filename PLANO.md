@@ -692,7 +692,7 @@ Não coberto ainda: a linha do pedido resolvido no app de desktop de verdade dep
 ## Decisões em aberto
 
 - Assinatura de cada pessoa ou chave de API no uso contínuo: depende da leitura dos termos acima. A prova usou a assinatura.
-- Subdomínio do túnel. O domínio `awikabot.com` já está registrado na Cloudflare; a ligação do túnel fica para depois.
+- Túnel: o subdomínio foi escolhido em 26/11, `api.awikabot.com`, e o serviço do túnel está no compose (`docs/tunel.md`). O túnel foi criado no painel e visto em 26/11 com um servidor num Docker local: saúde, pareamento e fluxo de eventos passam pelo endereço público. Falta ligá-lo ao servidor do Pi e ver o app conversar por ele.
 - App de desktop: quem confere a versão de Mac, e quando a etapa 6 começa. Ver "Etapa 6: plano do app de desktop".
 
 ## Referência: OpenMausBot em 2026-11-23
