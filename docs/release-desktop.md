@@ -146,7 +146,7 @@ Roda as etapas 5 e 6 de verdade contra um `gh` de mentira, com pacote e evidênc
 powershell -ExecutionPolicy Bypass -File apps/desktop/distribuicao/windows/testes/testar-ver-atualizacao.ps1
 ```
 
-Testa, sem abrir o Sandbox, o que a conferência depois de publicar decide: o julgamento de um histórico escrito no teste, primeiro a atualização inteira e depois um defeito por vez; de quem a evidência diz que foram os cliques, pelas anotações do roteiro; e as recusas da pasta de `-Anterior`, que o QA também usa. Também faz parte das conferências do candidato. Não cobre o Sandbox nem os cliques: mudou o roteiro que roda lá dentro, roda o `ver-atualizacao.ps1 -Clicar`.
+Testa, sem abrir o Sandbox, o que a conferência depois de publicar decide: o julgamento de um histórico escrito no teste, primeiro a atualização inteira e depois um defeito por vez; de quem a evidência diz que foram os cliques, pelas anotações do roteiro; e as recusas da pasta de `-Anterior`, que o QA também usa. Testa ainda a guarda dos dois roteiros que rodam dentro do Sandbox, o do QA e o desta conferência: lê cada roteiro, sem executá-lo, e confere que a primeira instrução dele é a guarda e que nada roda antes dela; depois roda só essa instrução, num processo que se vê como outra conta e como a do Sandbox, e ela tem de parar na primeira e seguir na segunda. Também faz parte das conferências do candidato. Não cobre o Sandbox nem os cliques: mudou o roteiro que roda lá dentro, roda o `ver-atualizacao.ps1 -Clicar`.
 
 ## O que o roteiro não cobre
 

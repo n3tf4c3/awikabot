@@ -14,6 +14,10 @@ param(
     # atualiza para o pacote, como acontece com quem já tem o app.
     [switch]$ComAnterior
 )
+# Guarda: só roda na conta do Windows Sandbox. Chamado por engano noutro computador, para aqui,
+# antes de instalar qualquer coisa e de chegar ao desligamento do fim. É a primeira instrução do
+# roteiro, e o teste confere isso (Get-ProblemasDaGuardaDoSandbox, em comum.ps1).
+if ($env:USERNAME -ne 'WDAGUtilityAccount') { throw 'este roteiro so roda dentro do Windows Sandbox: ele instala o app e desliga a maquina no fim' }
 $ErrorActionPreference = 'Stop'
 $entrada = 'C:\qa\entrada'
 $saida = 'C:\qa\saida'

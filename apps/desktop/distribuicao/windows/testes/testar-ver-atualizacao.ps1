@@ -1,6 +1,7 @@
 # Teste do que a conferência depois de publicar (ver-atualizacao.ps1) decide sem o Sandbox: o
 # julgamento do histórico, de quem a evidência diz que foram os cliques, e as recusas da versão
-# anterior, que o QA também usa.
+# anterior, que o QA também usa. E da guarda que abre os dois roteiros de dentro do Sandbox, o
+# desta conferência e o do QA: eles começam por ela, e ela para fora da conta do Sandbox.
 #
 #   powershell -ExecutionPolicy Bypass -File apps/desktop/distribuicao/windows/testes/testar-ver-atualizacao.ps1
 #
@@ -170,6 +171,73 @@ try {
     Esperar-Recusa 'anterior: sem o instalador' 'falta o instalador da versao anterior' { Resolve-VersaoAnterior (Montar-Anterior $de { param($m, $p) Remove-Item -LiteralPath (Join-Path $p $m.arquivo) }) $para $false }
     Esperar-Recusa 'anterior: instalador trocado' 'nao e o do manifesto dela' { Resolve-VersaoAnterior (Montar-Anterior $de { param($m, $p) Add-Content -LiteralPath (Join-Path $p $m.arquivo) -Value 'x' }) $para $false }
     Esperar-Recusa 'anterior: instalador sem assinatura, com o Smart App Control ligado' 'nao tem assinatura valida' { Resolve-VersaoAnterior (Montar-Anterior) $para $true }
+
+    # --- A guarda dos roteiros que rodam dentro do Sandbox ---
+    # Os roteiros de verdade são só lidos e analisados. O que roda aqui é a primeira instrução de
+    # cada um, sozinha, e só depois de o analisador dizer que ela é um `if` com um `throw`.
+    $recusa = 'so roda dentro do Windows Sandbox'
+    # Roda só a guarda, num processo à parte que se vê como a conta dada. 0: seguiu. 3: parou.
+    function Rodar-SoAGuarda([string]$guarda, [string]$conta) {
+        $comando = "try { $guarda; exit 0 } catch { [Console]::Out.Write(`"`$_`"); exit 3 }"
+        $inicio = New-Object Diagnostics.ProcessStartInfo
+        $inicio.FileName = 'powershell.exe'
+        $inicio.Arguments = '-NoProfile -NonInteractive -EncodedCommand ' + [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($comando))
+        $inicio.UseShellExecute = $false
+        $inicio.CreateNoWindow = $true
+        $inicio.RedirectStandardOutput = $true
+        $inicio.EnvironmentVariables['USERNAME'] = $conta
+        $processo = [Diagnostics.Process]::Start($inicio)
+        $dito = $processo.StandardOutput.ReadToEnd()
+        $processo.WaitForExit()
+        return [pscustomobject]@{ codigo = $processo.ExitCode; dito = $dito }
+    }
+    foreach ($nome in 'qa-sandbox-dentro.ps1', 'ver-atualizacao-dentro.ps1') {
+        $roteiro = Join-Path $PSScriptRoot "..\$nome"
+        $problemas = @(Get-ProblemasDaGuardaDoSandbox $roteiro)
+        Anotar-Caso "guarda: o $nome comeca por ela" $problemas
+        if ($problemas.Count -gt 0) { continue }
+        $guarda = Get-TextoDaGuardaDoSandbox $roteiro
+
+        $fora = Rodar-SoAGuarda $guarda 'pessoa'
+        $motivos = @()
+        if ($fora.codigo -ne 3) { $motivos += "fora do Sandbox a guarda saiu com o codigo $($fora.codigo), e nao parou" }
+        if ($fora.dito.IndexOf($recusa, [StringComparison]::Ordinal) -lt 0) { $motivos += "a recusa nao diz por que: '$($fora.dito)'" }
+        Anotar-Caso "guarda: fora do Sandbox, o $nome para" $motivos
+
+        $dentro = Rodar-SoAGuarda $guarda $script:ContaDoSandbox
+        $motivos = @()
+        if ($dentro.codigo -ne 0) { $motivos += "na conta do Sandbox a guarda saiu com o codigo $($dentro.codigo): '$($dentro.dito)'" }
+        Anotar-Caso "guarda: na conta do Sandbox, o $nome segue" $motivos
+    }
+
+    # O analisador, contra roteiros de mentira: o certo passa, e cada defeito é apontado. São
+    # arquivos de uma linha ou duas, numa pasta temporária, que ninguém executa.
+    $certa = "if (`$env:USERNAME -ne 'WDAGUtilityAccount') { throw 'fora do Sandbox' }"
+    function Roteiro-DeMentira([string]$texto) {
+        $arquivo = Join-Path $area ("roteiro-" + [guid]::NewGuid().ToString('N') + '.ps1')
+        Write-TextoSemBom $arquivo $texto
+        return $arquivo
+    }
+    function Esperar-Problema([string]$caso, [string]$trecho, [string]$texto) {
+        $problemas = @(Get-ProblemasDaGuardaDoSandbox (Roteiro-DeMentira $texto))
+        $motivos = @()
+        if ($problemas.Count -eq 0) { $motivos += 'nenhum problema apontado' }
+        elseif (($problemas -join ' | ').IndexOf($trecho, [StringComparison]::Ordinal) -lt 0) { $motivos += "apontou outra coisa: $($problemas -join ' | ')" }
+        Anotar-Caso $caso $motivos
+    }
+    Anotar-Caso 'analisador: roteiro que comeca pela guarda passa' @(Get-ProblemasDaGuardaDoSandbox (Roteiro-DeMentira "param([switch]`$X, [int]`$N = 3)`n# comentario`n$certa`n'segue'"))
+    Esperar-Problema 'analisador: roteiro sem guarda' 'a primeira instrucao do roteiro nao e a guarda' "param([switch]`$X)`n`$ErrorActionPreference = 'Stop'`n'segue'"
+    Esperar-Problema 'analisador: guarda depois de outra instrucao' 'a primeira instrucao do roteiro nao e a guarda' "`$ErrorActionPreference = 'Stop'`n$certa"
+    Esperar-Problema 'analisador: roteiro vazio' 'o roteiro nao tem instrucao nenhuma' "# so um comentario`n"
+    Esperar-Problema 'analisador: guarda com senao' 'a guarda tem mais de um ramo' "if (`$env:USERNAME -ne 'WDAGUtilityAccount') { throw 'fora do Sandbox' } else { 'segue' }"
+    Esperar-Problema 'analisador: guarda que so avisa' 'a guarda nao para o roteiro com um throw' "if (`$env:USERNAME -ne 'WDAGUtilityAccount') { Write-Warning 'fora do Sandbox' }"
+    Esperar-Problema 'analisador: guarda com mais que o throw' 'a guarda nao para o roteiro com um throw' "if (`$env:USERNAME -ne 'WDAGUtilityAccount') { 'antes'; throw 'fora do Sandbox' }"
+    Esperar-Problema 'analisador: guarda com outra conta' 'a guarda nao compara a conta com a do Sandbox' "if (`$env:USERNAME -ne 'Administrador') { throw 'fora do Sandbox' }"
+    Esperar-Problema 'analisador: guarda com a comparacao invertida' 'a guarda nao compara a conta com a do Sandbox' "if (`$env:USERNAME -eq 'WDAGUtilityAccount') { throw 'fora do Sandbox' }"
+    Esperar-Problema 'analisador: mensagem que roda codigo' 'a mensagem da guarda nao e um texto fixo' "if (`$env:USERNAME -ne 'WDAGUtilityAccount') { throw `"fora: `$(Get-Date)`" }"
+    Esperar-Problema 'analisador: parametro cujo valor padrao roda codigo' 'o valor padrao de um parametro roda codigo antes da guarda' "param(`$Quando = (Get-Date))`n$certa"
+    Esperar-Problema 'analisador: bloco que roda antes' 'ha um bloco que rodaria antes da guarda' "begin { 'antes' }`nend { $certa }"
+    Esperar-Problema 'analisador: roteiro que nao se deixa analisar' 'o roteiro nao se deixa analisar' "if (`$env:USERNAME -ne 'WDAGUtilityAccount') { throw 'fora do Sandbox'"
 } finally {
     Remove-Item -LiteralPath $area -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
 }

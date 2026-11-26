@@ -22,6 +22,10 @@ param(
     # desenho dessa tela, mede-se de novo na captura `1-aviso.png` de uma rodada com -AteAConsulta.
     [int]$DeslocamentoDoBotao = 172
 )
+# Guarda: só roda na conta do Windows Sandbox. Chamado por engano noutro computador, para aqui,
+# antes de instalar qualquer coisa e de chegar ao desligamento do fim. É a primeira instrução do
+# roteiro, e o teste confere isso (Get-ProblemasDaGuardaDoSandbox, em comum.ps1).
+if ($env:USERNAME -ne 'WDAGUtilityAccount') { throw 'este roteiro so roda dentro do Windows Sandbox: ele instala o app e desliga a maquina no fim' }
 $ErrorActionPreference = 'Stop'
 $entrada = 'C:\ver\entrada'
 $saida = 'C:\ver\saida'

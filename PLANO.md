@@ -653,6 +653,18 @@ Em 26/11 saiu a versão 0.1.3, de `9cc0fe8`. É a primeira desde a 0.1.0 que mud
 
 Desta vez a segunda rodada de QA esperou o Sandbox da primeira fechar antes de começar, e passou na primeira tentativa. Logo depois da aprovação, o release ainda aparecia como rascunho no GitHub, com a etiqueta já criada: o comando do titular estava terminando. A leitura que vale é a de depois de ele dizer "PUBLICADO".
 
+Ainda em 26/11, os dois roteiros que rodam dentro do Sandbox ganharam uma guarda. Eles instalam o app e desligam a máquina no fim, e até então nada os impedia de rodar por engano no computador de trabalho; a verificação de segurança tinha deixado isso como sugestão. Agora a primeira instrução de cada um para fora da conta do Sandbox.
+
+| Verificação | Resultado |
+|---|---|
+| Teste da conferência da atualização | 60 de 60 casos: os 41 de antes e 19 da guarda. O teste lê os dois roteiros sem executá-los e confere que começam pela guarda; roda só essa instrução, que para como outra conta e segue como a do Sandbox; e passa o analisador por roteiros de mentira, um defeito por vez. |
+| O analisador contra os roteiros de antes | Aponta os dois como sem guarda. |
+| Teste dos scripts de publicação | 57 de 57, como antes: o arquivo comum mudou. |
+| QA no Sandbox, com a guarda | 17 de 17 passos, com o pacote assinado da 0.1.3, sem rede. |
+| Conferência da atualização no Sandbox, com a guarda | 6 de 6 passos, da 0.1.2 para a 0.1.3, com os cliques do roteiro. |
+
+Não coberto: nenhum dos dois roteiros foi rodado fora do Sandbox para provar a recusa, de propósito; a prova é o teste. A guarda confere o nome da conta, e não mais que isso: é uma rede para o engano, não uma barreira.
+
 Não coberto ainda: a linha do pedido resolvido no app de desktop de verdade depois de reabrir, que é o motivo da 0.1.3 e só tem o teste da janela; o ícone novo no atalho, no instalador e no aviso do sistema, que nenhuma conferência olha; os cliques do roteiro em outra escala de tela, em outro tamanho de janela e no tema escuro, e o painel da lateral da conversa, com o app pareado; a conferência de revogação com o computador sem rede; a recusa do roteiro do instalador diante de outra versão do Inno Setup. No Sandbox a conta é administradora, e a instalação sem privilégios é conferida pelo lugar dos arquivos e do registro, não com um usuário comum. A assinatura e a publicação só rodaram neste PC; a CI monta o pacote sem assinatura no Windows a cada PR.
 
 ### Decisões que são do titular
