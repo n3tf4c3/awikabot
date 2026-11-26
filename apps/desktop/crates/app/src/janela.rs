@@ -11,8 +11,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use awikabot_cliente::api::{Api, Credencial, ErroApi};
 use awikabot_cliente::aprovacoes::{Aprovacoes, Item, Situacao, intercalar, rotulo_do_desfecho, situacao_do_bot};
+use awikabot_cliente::catalogo::{
+    Opcao, ROTULO_OUTRO_MODELO, modelo_marcado, motores_para_criar, nome_do_motor, opcoes_de_esforco, opcoes_de_modelo,
+    texto_ao_escolher_outro, trocar_motor,
+};
 use awikabot_cliente::contrato::{
-    Aprovacao, AprovacaoEstado, Bot, DecisaoAprovacao, DecisaoAprovacaoDecisao, Evento, Mensagem, MensagemEstado, MensagemPapel,
+    Aprovacao, AprovacaoEstado, Bot, Catalogo, DecisaoAprovacao, DecisaoAprovacaoDecisao, Evento, Mensagem, MensagemEstado, MensagemPapel,
     PedidoPareamento, PedidoTurno, RespostaPareamento, VERSAO_PROTOCOLO, limites,
 };
 use awikabot_cliente::conversa::{Conversa, Efeito};
@@ -105,6 +109,10 @@ struct Formulario {
     nome: Entity<CampoDeTexto>,
     modelo: Entity<CampoDeTexto>,
     instrucoes: Entity<CampoDeTexto>,
+    /// Escolhido na lista ao criar; na edição, o do bot, que não muda.
+    motor: String,
+    /// Escolhido na lista; vazio é o padrão do motor.
+    esforco: String,
     erros: ErrosBot,
     ocupado: bool,
     aviso: Option<SharedString>,
@@ -125,6 +133,9 @@ struct SessaoAberta {
     /// O pedido de parar a resposta já saiu e ainda não voltou.
     parando: bool,
     formulario: Option<Formulario>,
+    /// O catálogo de motores, buscado ao abrir o formulário. `None` enquanto não chega, ou quando o
+    /// servidor é anterior a ele: o formulário segue com o "Auto", o "Outro" e o motor padrão.
+    catalogo: Option<Catalogo>,
     compositor: Entity<CampoDeTexto>,
     conexao: Option<Conexao>,
     aviso: Option<SharedString>,
@@ -358,6 +369,7 @@ impl Janela {
             decidindo: HashSet::new(),
             parando: false,
             formulario: None,
+            catalogo: None,
             compositor,
             conexao: None,
             aviso: iniciada.is_err().then(|| "Não foi possível acompanhar o servidor em tempo real.".into()),
@@ -674,16 +686,91 @@ impl Janela {
             [&nome, &modelo].map(|campo| cx.subscribe(campo, |janela: &mut Self, _, _: &Confirmado, cx| janela.salvar_bot(cx))).into();
         self.foco_pendente = Some(nome.focus_handle(cx));
         let Tela::Sessao(sessao) = &mut self.tela else { return };
+        let credencial = sessao.credencial.clone();
         sessao.formulario = Some(Formulario {
             bot,
             nome,
             modelo,
             instrucoes,
+            motor: campos.motor,
+            esforco: campos.esforco,
             erros: ErrosBot::default(),
             ocupado: false,
             aviso: None,
             _assinaturas: assinaturas,
         });
+        self.carregar_catalogo(&credencial, cx);
+        cx.notify();
+    }
+
+    /// Busca o catálogo de novo a cada formulário: um servidor atualizado pode ter mudado as listas.
+    fn carregar_catalogo(&mut self, credencial: &Credencial, cx: &mut Context<Self>) {
+        let (do_pedido, da_resposta) = (credencial.clone(), credencial.clone());
+        self.em_segundo_plano(
+            cx,
+            move |api| api.catalogo(&do_pedido),
+            move |janela, resposta, cx| match resposta {
+                Ok(catalogo) => {
+                    if let Some(sessao) = janela.sessao_de(&da_resposta) {
+                        sessao.catalogo = Some(catalogo);
+                        cx.notify();
+                    }
+                }
+                Err(ErroApi::NaoAutenticado) => {
+                    janela.conferir::<Catalogo>(&da_resposta, Err(ErroApi::NaoAutenticado), cx);
+                }
+                // Sem catálogo o formulário funciona: um servidor anterior à rota responde 404.
+                Err(_) => {}
+            },
+        );
+    }
+
+    /// Um item da lista de modelos: o campo fica com o modelo dele, e "Auto" o esvazia.
+    fn escolher_modelo(&mut self, valor: &str, cx: &mut Context<Self>) {
+        let Tela::Sessao(sessao) = &mut self.tela else { return };
+        let Some(formulario) = &mut sessao.formulario else { return };
+        formulario.modelo.update(cx, |campo, cx| campo.definir(valor, cx));
+        cx.notify();
+    }
+
+    /// "Outro": o teclado vai ao campo do modelo, que perde o modelo da lista, se era um.
+    fn escolher_outro_modelo(&mut self, cx: &mut Context<Self>) {
+        let Tela::Sessao(sessao) = &mut self.tela else { return };
+        let Some(formulario) = &mut sessao.formulario else { return };
+        let opcoes = opcoes_de_modelo(sessao.catalogo.as_ref(), &formulario.motor);
+        if let Some(texto) = texto_ao_escolher_outro(formulario.modelo.read(cx).texto(), &opcoes) {
+            formulario.modelo.update(cx, |campo, cx| campo.definir(&texto, cx));
+        }
+        self.foco_pendente = Some(formulario.modelo.focus_handle(cx));
+        cx.notify();
+    }
+
+    /// Só ao criar: o motor de um bot não muda.
+    fn escolher_motor(&mut self, motor: &str, cx: &mut Context<Self>) {
+        let Tela::Sessao(sessao) = &mut self.tela else { return };
+        let Some(formulario) = &mut sessao.formulario else { return };
+        if formulario.bot.is_some() {
+            return;
+        }
+        let atuais = CamposBot {
+            modelo: formulario.modelo.read(cx).texto().to_owned(),
+            motor: formulario.motor.clone(),
+            esforco: formulario.esforco.clone(),
+            ..CamposBot::default()
+        };
+        let trocados = trocar_motor(sessao.catalogo.as_ref(), &atuais, motor);
+        if trocados.modelo != atuais.modelo {
+            formulario.modelo.update(cx, |campo, cx| campo.definir(&trocados.modelo, cx));
+        }
+        formulario.motor = trocados.motor;
+        formulario.esforco = trocados.esforco;
+        cx.notify();
+    }
+
+    fn escolher_esforco(&mut self, valor: &str, cx: &mut Context<Self>) {
+        let Tela::Sessao(sessao) = &mut self.tela else { return };
+        let Some(formulario) = &mut sessao.formulario else { return };
+        formulario.esforco = valor.to_owned();
         cx.notify();
     }
 
@@ -713,6 +800,8 @@ impl Janela {
             nome: formulario.nome.read(cx).texto().to_owned(),
             instrucoes: formulario.instrucoes.read(cx).texto().to_owned(),
             modelo: formulario.modelo.read(cx).texto().to_owned(),
+            motor: formulario.motor.clone(),
+            esforco: formulario.esforco.clone(),
         };
         formulario.aviso = None;
         let entrada = match validar_bot(&campos) {
@@ -1215,7 +1304,69 @@ impl Janela {
             )
     }
 
-    fn desenhar_formulario(&self, formulario: &Formulario, cx: &mut Context<Self>) -> gpui::Div {
+    /// Uma lista de escolha única, em botões: o marcado tem a cor de destaque. Cada item tem o nome de
+    /// teste `{lista}-{valor}`, com `vazio` no lugar do valor vazio ("Auto" e "Padrão").
+    fn lista_do_formulario(
+        &self,
+        lista: &'static str,
+        opcoes: Vec<Opcao>,
+        marcado: Option<&str>,
+        escolher: fn(&mut Self, &str, &mut Context<Self>),
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        div().flex().flex_wrap().gap_2().children(opcoes.into_iter().enumerate().map(|(indice, opcao)| {
+            let seletor = format!("{lista}-{}", if opcao.valor.is_empty() { "vazio" } else { opcao.valor.as_str() });
+            let principal = marcado == Some(opcao.valor.as_str());
+            let valor = opcao.valor;
+            botao((lista, indice), opcao.rotulo, principal)
+                .debug_selector(move || seletor)
+                .on_click(cx.listener(move |janela, _, _, cx| escolher(janela, &valor, cx)))
+        }))
+    }
+
+    fn desenhar_formulario(&self, formulario: &Formulario, catalogo: Option<&Catalogo>, cx: &mut Context<Self>) -> gpui::Div {
+        let texto_do_modelo = formulario.modelo.read(cx).texto().to_owned();
+        let opcoes_do_modelo = opcoes_de_modelo(catalogo, &formulario.motor);
+        let marcado = modelo_marcado(&texto_do_modelo, &opcoes_do_modelo).map(str::to_owned);
+        let lista_de_modelos = self.lista_do_formulario("modelo", opcoes_do_modelo, marcado.as_deref(), Self::escolher_modelo, cx).child(
+            botao("modelo-outro", ROTULO_OUTRO_MODELO, marcado.is_none())
+                .debug_selector(|| "modelo-outro".into())
+                .on_click(cx.listener(|janela, _, _, cx| janela.escolher_outro_modelo(cx))),
+        );
+        let escolha_do_motor = match &formulario.bot {
+            None => {
+                self.lista_do_formulario("motor", motores_para_criar(catalogo), Some(formulario.motor.as_str()), Self::escolher_motor, cx)
+            }
+            Some(_) => div()
+                .text_color(tema::texto_forte())
+                .debug_selector(|| "motor-do-bot".into())
+                .child(nome_do_motor(catalogo, &formulario.motor)),
+        };
+        let motor = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(rotulo_do_campo("Motor"))
+            .child(escolha_do_motor)
+            .child(texto_pequeno("Escolhido na criação: a conversa fica guardada no motor, e ele não muda.", tema::texto_apagado()))
+            .children(formulario.erros.motor.clone().map(|erro| texto_pequeno(erro, tema::estado_de_erro())));
+        let opcoes_do_esforco = opcoes_de_esforco(catalogo, &formulario.motor, &formulario.esforco);
+        let esforco = (opcoes_do_esforco.len() > 1).then(|| {
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(rotulo_do_campo("Esforço"))
+                .child(self.lista_do_formulario(
+                    "esforco",
+                    opcoes_do_esforco,
+                    Some(formulario.esforco.as_str()),
+                    Self::escolher_esforco,
+                    cx,
+                ))
+                .child(texto_pequeno("Quanto o modelo pensa antes de responder. Padrão deixa o motor decidir.", tema::texto_apagado()))
+                .children(formulario.erros.esforco.clone().map(|erro| texto_pequeno(erro, tema::estado_de_erro())))
+        });
         let titulo: SharedString = match &formulario.bot {
             Some(bot) => format!("Editar {}", bot.nome).into(),
             None => "Novo bot".into(),
@@ -1246,12 +1397,15 @@ impl Janela {
                         .flex_col()
                         .gap_3()
                         .child(campo_do_formulario("Nome", &formulario.nome, None, formulario.erros.nome.as_ref()))
+                        .child(motor)
+                        .child(div().flex().flex_col().gap_1().child(rotulo_do_campo("Modelo")).child(lista_de_modelos))
                         .child(campo_do_formulario(
-                            "Modelo",
+                            "Nome do modelo",
                             &formulario.modelo,
-                            Some("Em branco, o bot usa o modelo padrão do motor."),
+                            Some("Auto, ou o campo em branco, usa o modelo padrão do motor. Para um modelo fora da lista, digite aqui."),
                             formulario.erros.modelo.as_ref(),
                         ))
+                        .children(esforco)
                         .child(campo_do_formulario(
                             "Instruções",
                             &formulario.instrucoes,
@@ -1306,7 +1460,7 @@ impl Render for Janela {
             Tela::Pareamento(tela) => self.desenhar_pareamento(tela, cx),
             Tela::Sessao(sessao) => {
                 let central = match &sessao.formulario {
-                    Some(formulario) => self.desenhar_formulario(formulario, cx),
+                    Some(formulario) => self.desenhar_formulario(formulario, sessao.catalogo.as_ref(), cx),
                     None => self.desenhar_conversa(sessao, cx),
                 };
                 div().size_full().flex().child(self.desenhar_lateral(sessao, cx)).child(central)
@@ -1445,7 +1599,7 @@ mod testes {
 
     fn criar_bot_pela_api(sessao: &Sessao, nome: &str) -> Bot {
         Api::new()
-            .criar_bot(&sessao.credencial(), &BotEntrada { nome: nome.into(), instrucoes: None, modelo: None })
+            .criar_bot(&sessao.credencial(), &BotEntrada { nome: nome.into(), instrucoes: None, modelo: None, motor: None, esforco: None })
             .expect("criar bot pela API")
     }
 
@@ -1819,6 +1973,79 @@ mod testes {
         cx.simulate_keystrokes(&format!("{}-a backspace enter", campo::tecla_principal()));
         esperar_fora(&mut cx, "modelo de volta ao padrão no servidor", || listar()[0].modelo.is_none());
         esperar(&mut cx, &janela, "formulário fechado", |janela| aberta(janela).is_some_and(|sessao| sessao.formulario.is_none()));
+    }
+
+    fn com_catalogo(janela: &Janela) -> bool {
+        aberta(janela).is_some_and(|sessao| sessao.catalogo.is_some())
+    }
+
+    fn formulario_fechado(janela: &Janela) -> bool {
+        aberta(janela).is_some_and(|sessao| sessao.formulario.is_none())
+    }
+
+    #[gpui::test]
+    fn cria_e_edita_um_bot_pelas_listas_de_motor_modelo_e_esforco(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let servidor = ServidorDeTeste::subir();
+        let guardada = parear_pela_api(&servidor, "Computador de teste");
+        let (janela, mut cx) = abrir(&cofre_com(&guardada), cx);
+        esperar(&mut cx, &janela, "sessão conectada", conectada);
+        let listar = || Api::new().listar_bots(&guardada.credencial()).expect("listar").bots;
+
+        // O formulário busca o catálogo e mostra as listas: o motor, "Auto" no topo dos modelos e "Padrão" nos esforços.
+        clicar(&mut cx, "novo-bot");
+        esperar(&mut cx, &janela, "catálogo carregado", com_catalogo);
+        for seletor in ["motor-claude-code", "modelo-vazio", "modelo-opus", "modelo-outro", "esforco-vazio", "esforco-high"] {
+            assert!(na_tela(&mut cx, seletor), "falta na tela: {seletor}");
+        }
+        cx.simulate_input("Scout");
+        clicar(&mut cx, "motor-claude-code");
+        clicar(&mut cx, "modelo-opus");
+        clicar(&mut cx, "esforco-high");
+        janela.read_with(&cx, |janela, cx| {
+            let formulario = aberta(janela).and_then(|sessao| sessao.formulario.as_ref()).expect("formulário aberto");
+            assert_eq!(
+                (formulario.modelo.read(cx).texto(), formulario.motor.as_str(), formulario.esforco.as_str()),
+                ("opus", "claude-code", "high")
+            );
+        });
+        clicar(&mut cx, "salvar-bot");
+        esperar(&mut cx, &janela, "bot criado e formulário fechado", |janela| {
+            formulario_fechado(janela) && aberta(janela).is_some_and(|sessao| sessao.bots.len() == 1)
+        });
+        let criado = listar().remove(0);
+        assert_eq!(
+            (criado.nome.as_str(), criado.motor.as_str(), criado.modelo.as_deref(), criado.esforco.as_deref()),
+            ("Scout", "claude-code", Some("opus"), Some("high"))
+        );
+
+        // Na edição o motor só aparece. "Auto" e "Padrão" devolvem o bot aos padrões do motor.
+        clicar(&mut cx, "editar-bot");
+        assert!(na_tela(&mut cx, "motor-do-bot"));
+        assert!(!na_tela(&mut cx, "motor-claude-code"), "o motor não se escolhe na edição");
+        clicar(&mut cx, "modelo-vazio");
+        clicar(&mut cx, "esforco-vazio");
+        clicar(&mut cx, "salvar-bot");
+        esperar_fora(&mut cx, "modelo e esforço de volta ao padrão no servidor", || {
+            let bot = listar().remove(0);
+            bot.modelo.is_none() && bot.esforco.is_none()
+        });
+        assert_eq!(listar()[0].motor, "claude-code");
+        esperar(&mut cx, &janela, "formulário fechado", formulario_fechado);
+
+        // "Outro" esvazia o campo que tinha um modelo da lista e leva o teclado a ele; um modelo fora da
+        // lista é aceito, e Enter no campo salva.
+        clicar(&mut cx, "editar-bot");
+        clicar(&mut cx, "modelo-sonnet");
+        clicar(&mut cx, "modelo-outro");
+        janela.read_with(&cx, |janela, cx| {
+            let formulario = aberta(janela).and_then(|sessao| sessao.formulario.as_ref()).expect("formulário aberto");
+            assert_eq!(formulario.modelo.read(cx).texto(), "");
+        });
+        cx.simulate_input("claude-modelo-novo");
+        cx.simulate_keystrokes("enter");
+        esperar_fora(&mut cx, "modelo fora da lista no servidor", || listar()[0].modelo.as_deref() == Some("claude-modelo-novo"));
+        esperar(&mut cx, &janela, "formulário fechado", formulario_fechado);
     }
 
     #[gpui::test]

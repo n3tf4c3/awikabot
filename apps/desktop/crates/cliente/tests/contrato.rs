@@ -11,9 +11,11 @@ use std::time::{Duration, Instant};
 
 use awikabot_cliente::api::{Api, Credencial, ErroApi};
 use awikabot_cliente::aprovacoes::{Aprovacoes, Situacao, situacao_do_bot};
+use awikabot_cliente::catalogo::{Opcao, modelo_marcado, motores_para_criar, opcoes_de_esforco, opcoes_de_modelo};
 use awikabot_cliente::contrato::{
-    Aprovacao, AprovacaoEstado, Bot, BotEdicao, BotEntrada, DecisaoAprovacao, DecisaoAprovacaoDecisao, Evento, Mensagem, MensagemEstado,
-    MensagemPapel, PedidoPareamento, PedidoTurno, SaudeStatus, VERSAO_PROTOCOLO,
+    Aprovacao, AprovacaoEstado, Bot, BotEdicao, BotEntrada, DecisaoAprovacao, DecisaoAprovacaoDecisao, Evento, MOTOR_PADRAO, Mensagem,
+    MensagemEstado, MensagemPapel, MotorDoCatalogoFamilia, MotorDoCatalogoPapeis, PedidoPareamento, PedidoTurno, SaudeStatus,
+    VERSAO_PROTOCOLO,
 };
 use awikabot_cliente::fluxo::{Conexao, FimDoFluxo, Sinal, seguir};
 use awikabot_cliente::formulario_bot::{CamposBot, campos_do_bot, edicao_do_bot, validar_bot};
@@ -70,7 +72,10 @@ fn cliente_em_rust_contra_o_servidor() {
     // Bots.
     assert!(api.listar_bots(&credencial).expect("lista vazia").bots.is_empty());
     let bot = api
-        .criar_bot(&credencial, &BotEntrada { nome: "Scout".into(), instrucoes: Some("Seja breve.".into()), modelo: None })
+        .criar_bot(
+            &credencial,
+            &BotEntrada { nome: "Scout".into(), instrucoes: Some("Seja breve.".into()), modelo: None, motor: None, esforco: None },
+        )
         .expect("criar bot");
     assert_eq!((bot.nome.as_str(), bot.instrucoes.as_str(), bot.modelo.as_deref(), bot.turno_ativo), ("Scout", "Seja breve.", None, false));
     let salvo = esperar(&sinais, "evento do bot salvo", |sinal| match sinal {
@@ -191,7 +196,7 @@ impl Aparelho {
     }
 
     fn criar_bot(&self, nome: &str) -> Bot {
-        let entrada = BotEntrada { nome: nome.into(), instrucoes: Some("Seja breve.".into()), modelo: None };
+        let entrada = BotEntrada { nome: nome.into(), instrucoes: Some("Seja breve.".into()), modelo: None, motor: None, esforco: None };
         let bot = self.api.criar_bot(&self.credencial, &entrada).expect("criar bot");
         assert_eq!(self.bot_salvo(), bot);
         bot
@@ -256,7 +261,7 @@ fn editar_bot_contra_o_servidor() {
     let campos = |bot: &Bot| (bot.nome.clone(), bot.instrucoes.clone(), bot.modelo.clone());
 
     // Só o nome: o resto fica como estava, e o evento do fluxo traz o bot como a resposta.
-    let so_o_nome = BotEdicao { nome: Some("Batedor".into()), instrucoes: None, modelo: None };
+    let so_o_nome = BotEdicao { nome: Some("Batedor".into()), instrucoes: None, modelo: None, esforco: None };
     let renomeado = api.editar_bot(credencial, &bot.id, &so_o_nome).expect("editar o nome");
     assert_eq!(campos(&renomeado), ("Batedor".into(), "Seja breve.".into(), None));
     assert_eq!((renomeado.id.as_str(), renomeado.criado_em, renomeado.turno_ativo), (bot.id.as_str(), bot.criado_em, false));
@@ -264,13 +269,14 @@ fn editar_bot_contra_o_servidor() {
     assert_eq!(aparelho.bot_salvo(), renomeado);
 
     // Instruções e modelo juntos.
-    let com_modelo = BotEdicao { nome: None, instrucoes: Some("Responda em uma linha.".into()), modelo: Some(Some("modelo-x".into())) };
+    let com_modelo =
+        BotEdicao { nome: None, instrucoes: Some("Responda em uma linha.".into()), modelo: Some(Some("modelo-x".into())), esforco: None };
     let editado = api.editar_bot(credencial, &bot.id, &com_modelo).expect("editar instruções e modelo");
     assert_eq!(campos(&editado), ("Batedor".into(), "Responda em uma linha.".into(), Some("modelo-x".into())));
     assert_eq!(aparelho.bot_salvo(), editado);
 
     // `Some(None)` vai como `null`: o bot volta ao modelo padrão do motor.
-    let sem_modelo = BotEdicao { nome: None, instrucoes: None, modelo: Some(None) };
+    let sem_modelo = BotEdicao { nome: None, instrucoes: None, modelo: Some(None), esforco: None };
     let no_padrao = api.editar_bot(credencial, &bot.id, &sem_modelo).expect("tirar o modelo");
     assert_eq!(campos(&no_padrao), ("Batedor".into(), "Responda em uma linha.".into(), None));
     assert_eq!(aparelho.bot_salvo(), no_padrao);
@@ -278,7 +284,12 @@ fn editar_bot_contra_o_servidor() {
 
     // O caminho da janela: o formulário aberto com o bot, mexido, validado e reduzido ao que mudou.
     assert_eq!(edicao_do_bot(&no_padrao, &validar_bot(&campos_do_bot(&no_padrao)).expect("o bot do servidor é válido")), None);
-    let digitado = CamposBot { nome: "  Scout 😀 ".into(), instrucoes: String::new(), modelo: " familia.modelo:4.5[1m] ".into() };
+    let digitado = CamposBot {
+        nome: "  Scout 😀 ".into(),
+        instrucoes: String::new(),
+        modelo: " familia.modelo:4.5[1m] ".into(),
+        ..CamposBot::default()
+    };
     let entrada = validar_bot(&digitado).expect("formulário válido");
     let edicao = edicao_do_bot(&no_padrao, &entrada).expect("os três campos mudaram");
     let do_formulario = api.editar_bot(credencial, &bot.id, &edicao).expect("editar pelo formulário");
@@ -292,17 +303,75 @@ fn editar_bot_contra_o_servidor() {
     let edicao = edicao_do_bot(&do_formulario, &validar_bot(&no_limite).expect("nome no limite")).expect("o nome mudou");
     assert_eq!(api.editar_bot(credencial, &bot.id, &edicao).expect("nome no limite").nome, "😀".repeat(60));
     assert!(validar_bot(&CamposBot { nome: "😀".repeat(61), ..no_limite }).is_err());
-    let acima = BotEdicao { nome: Some("😀".repeat(61)), instrucoes: None, modelo: None };
+    let acima = BotEdicao { nome: Some("😀".repeat(61)), instrucoes: None, modelo: None, esforco: None };
     assert_eq!(api.editar_bot(credencial, &bot.id, &acima), Err(recusa(400, "dados_invalidos")));
 
     // Recusas: o que o servidor não aceita, e o que nem sai do cliente.
-    let opcao_de_linha_de_comando = BotEdicao { nome: None, instrucoes: None, modelo: Some(Some("--flag".into())) };
+    let opcao_de_linha_de_comando = BotEdicao { nome: None, instrucoes: None, modelo: Some(Some("--flag".into())), esforco: None };
     assert_eq!(api.editar_bot(credencial, &bot.id, &opcao_de_linha_de_comando), Err(recusa(400, "dados_invalidos")));
-    let vazia = BotEdicao { nome: None, instrucoes: None, modelo: None };
+    let vazia = BotEdicao { nome: None, instrucoes: None, modelo: None, esforco: None };
     assert_eq!(api.editar_bot(credencial, &bot.id, &vazia), Err(recusa(400, "dados_invalidos")));
     assert_eq!(api.editar_bot(credencial, ID_QUE_NAO_EXISTE, &so_o_nome), Err(recusa(404, "nao_encontrado")));
     assert_eq!(api.editar_bot(credencial, "../dispositivo", &so_o_nome), Err(ErroApi::IdInvalido));
     assert_eq!(api.editar_bot(&aparelho.token_errado(), &bot.id, &so_o_nome), Err(ErroApi::NaoAutenticado));
+}
+
+#[test]
+fn catalogo_e_motor_do_bot_contra_o_servidor() {
+    let servidor = ServidorDeTeste::subir();
+    let aparelho = Aparelho::parear(&servidor);
+    let (api, credencial) = (&aparelho.api, &aparelho.credencial);
+
+    // O catálogo que o formulário usa: o Claude Code pronto, com "Auto" no topo dos modelos.
+    let catalogo = api.catalogo(credencial).expect("catálogo");
+    let claude = catalogo.motores.iter().find(|motor| motor.id == MOTOR_PADRAO).expect("o motor padrão está no catálogo");
+    assert_eq!(
+        (claude.familia, claude.pronto, claude.papeis.as_slice()),
+        (MotorDoCatalogoFamilia::Agente, true, &[MotorDoCatalogoPapeis::Worker][..])
+    );
+    assert_eq!(motores_para_criar(Some(&catalogo)), vec![Opcao { valor: MOTOR_PADRAO.into(), rotulo: "Claude Code".into() }]);
+    let modelos: Vec<String> = opcoes_de_modelo(Some(&catalogo), MOTOR_PADRAO).into_iter().map(|opcao| opcao.valor).collect();
+    assert_eq!(modelos, ["", "fable", "opus", "sonnet", "haiku"]);
+    let esforcos: Vec<String> = opcoes_de_esforco(Some(&catalogo), MOTOR_PADRAO, "").into_iter().map(|opcao| opcao.valor).collect();
+    assert_eq!(esforcos, ["", "low", "medium", "high", "xhigh", "max"]);
+    assert_eq!(api.catalogo(&aparelho.token_errado()), Err(ErroApi::NaoAutenticado));
+
+    // Criado pelas listas: o motor, um modelo sugerido e um esforço chegam ao servidor como foram escolhidos.
+    let campos = CamposBot { nome: "Scout".into(), modelo: "opus".into(), esforco: "high".into(), ..CamposBot::default() };
+    let bot = api.criar_bot(credencial, &validar_bot(&campos).expect("formulário válido")).expect("criar pelas listas");
+    assert_eq!((bot.motor.as_str(), bot.modelo.as_deref(), bot.esforco.as_deref()), (MOTOR_PADRAO, Some("opus"), Some("high")));
+    assert_eq!(aparelho.bot_salvo(), bot);
+    assert_eq!(modelo_marcado(&campos_do_bot(&bot).modelo, &opcoes_de_modelo(Some(&catalogo), &bot.motor)), Some("opus"));
+
+    // Um modelo fora da lista é aceito, se passar no formato; na lista, ele é o "Outro".
+    let fora = CamposBot { nome: "Outro".into(), modelo: "claude-modelo-novo[1m]".into(), ..CamposBot::default() };
+    let outro = api.criar_bot(credencial, &validar_bot(&fora).expect("formulário válido")).expect("modelo fora da lista");
+    assert_eq!(outro.modelo.as_deref(), Some("claude-modelo-novo[1m]"));
+    assert_eq!(modelo_marcado(&campos_do_bot(&outro).modelo, &opcoes_de_modelo(Some(&catalogo), &outro.motor)), None);
+    aparelho.bot_salvo();
+
+    // O pedido de um cliente anterior ao motor, sem os campos novos: o motor padrão e o esforço padrão.
+    let antigo = api
+        .criar_bot(credencial, &BotEntrada { nome: "Antigo".into(), instrucoes: None, modelo: None, motor: None, esforco: None })
+        .expect("criar sem motor");
+    assert_eq!((antigo.motor.as_str(), antigo.esforco.as_deref()), (MOTOR_PADRAO, None));
+    aparelho.bot_salvo();
+
+    // Motor que o servidor não roda e esforço que o motor não lista são recusados.
+    let codex = BotEntrada { motor: Some("codex".into()), ..validar_bot(&campos).expect("válido") };
+    assert_eq!(api.criar_bot(credencial, &codex), Err(recusa(400, "dados_invalidos")));
+    let turbo = BotEntrada { esforco: Some("turbo".into()), ..validar_bot(&campos).expect("válido") };
+    assert_eq!(api.criar_bot(credencial, &turbo), Err(recusa(400, "dados_invalidos")));
+
+    // A edição muda o esforço e volta ao padrão com nulo; o motor fica o da criação.
+    let baixo = BotEdicao { nome: None, instrucoes: None, modelo: None, esforco: Some(Some("low".into())) };
+    assert_eq!(api.editar_bot(credencial, &bot.id, &baixo).expect("esforço baixo").esforco.as_deref(), Some("low"));
+    aparelho.bot_salvo();
+    let padrao = BotEdicao { nome: None, instrucoes: None, modelo: None, esforco: Some(None) };
+    let no_padrao = api.editar_bot(credencial, &bot.id, &padrao).expect("esforço padrão");
+    assert_eq!((no_padrao.esforco.as_deref(), no_padrao.motor.as_str()), (None, MOTOR_PADRAO));
+    let invalido = BotEdicao { nome: None, instrucoes: None, modelo: None, esforco: Some(Some("turbo".into())) };
+    assert_eq!(api.editar_bot(credencial, &bot.id, &invalido), Err(recusa(400, "dados_invalidos")));
 }
 
 #[test]

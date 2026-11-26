@@ -113,7 +113,7 @@ describe('configuração do motor', () => {
 
 describe('chamada do motor', () => {
   const gancho = { comando: 'node server.mjs gancho', porta: 8791, token: 'token-do-turno' };
-  const pedido = { instrucoes: 'Seja breve.', modelo: 'claude-opus-5-5', sessao: 'sessao-1', gancho };
+  const pedido = { instrucoes: 'Seja breve.', modelo: 'claude-opus-5-5', esforco: 'high', sessao: 'sessao-1', gancho };
 
   it('nunca lê a configuração deixada na pasta do bot', () => {
     for (const ganchoGerenciado of [true, false]) {
@@ -141,6 +141,12 @@ describe('chamada do motor', () => {
     expect(args.filter((arg) => arg !== '-p' && !/^--[a-z-]+(=|$)/.test(arg))).toEqual([]);
     expect(args).toContain('--append-system-prompt=Seja breve.');
     expect(args).toContain('--resume=sessao-1');
+    expect(args).toContain('--effort=high');
+  });
+
+  it('sem modelo nem esforço, deixa o padrão do motor', () => {
+    const { args } = prepararChamada({ ...pedido, modelo: null, esforco: null }, { ambiente: {}, ganchoGerenciado: true });
+    expect(args.some((arg) => arg.startsWith('--model') || arg.startsWith('--effort'))).toBe(false);
   });
 });
 

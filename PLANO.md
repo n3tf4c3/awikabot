@@ -97,7 +97,7 @@ Um bot executa comandos, então o servidor equivale a um terminal remoto no Pi.
 5. Revisão de segurança e distribuição por TestFlight e teste interno da Play.
 6. App de desktop para Windows e Mac, em Rust com GPUI. No Windows, as versões 0.1.0 a 0.1.3 foram publicadas entre 24 e 26/11; o Mac ainda não tem pacote. Ver "Etapa 6: plano do app de desktop".
    Verificar: os fluxos 1 a 5 percorridos no Windows e num Mac, com o app instalado pelo pacote assinado.
-7. Papéis, motores e decisores: mais de um motor, escolhido em cada bot; equipes em que um bot orquestra e outros executam; e modelos de decisão que respondem a perguntas fechadas. Em 26/11 rodou o passo 1, a prova dos motores, no Docker local; o resto não está feito. Ver "Etapa 7: plano dos papéis, dos motores e dos decisores" e "Etapa 7, passo 1: resultado da prova".
+7. Papéis, motores e decisores: mais de um motor, escolhido em cada bot; equipes em que um bot orquestra e outros executam; e modelos de decisão que respondem a perguntas fechadas. Em 26/11 rodou o passo 1, a prova dos motores, no Docker local, e foi feito o passo 2, o catálogo e o motor por bot; o resto não está feito. Ver "Etapa 7: plano dos papéis, dos motores e dos decisores", "Etapa 7, passo 1: resultado da prova" e "Etapa 7, passo 2: resultado do catálogo e do motor por bot".
    Verificar: um pedido feito a uma equipe, no aparelho, com dois motores diferentes, cada ação aprovada pela pessoa e a entrega conferida por um decisor.
 
 ## Etapa 0: resultado (2026-11-23)
@@ -913,6 +913,27 @@ O que isto pede do servidor, no passo da equipe:
 - o Antigravity inteiro, e o que o Google faz com as consultas feitas por chave de API.
 
 No PC da prova, o antivírus abre o TLS de `chatgpt.com` também no tráfego dos contêineres, e o login do Codex só passou depois de o contêiner aceitar o certificado dele (`CODEX_CA_CERTIFICATE`). É coisa da máquina de desenvolvimento, descrita no `LEIAME.md` do kit.
+
+## Etapa 7, passo 2: resultado do catálogo e do motor por bot (2026-11-26)
+
+O servidor passou a dizer quais motores conhece, e cada bot passou a guardar o seu. A rota `GET /v1/catalogo`, com token, entrega cada motor com a família, os modelos sugeridos, os esforços, os papéis e se está pronto. Por ora o catálogo tem só o Claude Code, pronto, no papel de worker, com os apelidos `fable`, `opus`, `sonnet` e `haiku` e os esforços de baixo a máximo. O motor simulado continua só de teste e não aparece nele.
+
+O bot ganhou dois campos, os dois opcionais no contrato: `motor`, gravado na criação e que a edição não muda, com o Claude Code por padrão; e `esforco`, com o padrão do motor quando nulo. A migração 3 põe os dois na tabela, e todo bot de antes fica no Claude Code, sem esforço. O modelo fora da lista continua aceito se passar no formato; o motor e o esforço, não: o servidor recusa o que não sabe rodar.
+
+O esforço entrou porque o binário fixado na imagem aceita a opção. O `claude` 2.1.330 para Windows, baixado do npm e rodado sem login numa pasta temporária, lista `--effort <level>` com `low`, `medium`, `high`, `xhigh` e `max`; `--effort=high` passa sem aviso e um valor fora da lista é ignorado com um aviso. O servidor passa `--effort=<valor>` só quando o bot tem esforço. O binário de Linux arm64, que é o da imagem, não foi rodado.
+
+Os dois apps ganharam as listas no formulário de bot: o motor, só ao criar; o modelo, com "Auto" no topo, os sugeridos e "Outro", para digitar; e o esforço, com "Padrão" no topo, que só aparece quando o motor tem esforços. No celular, o campo de texto do modelo só aparece no "Outro". No desktop, ele fica à vista e a lista o preenche. Sem catálogo, num servidor anterior à rota, o formulário fica com "Auto", "Outro" e o motor padrão. A lógica das listas está em helper puro nos dois lados, com teste, e a regra do formulário cobre o motor e o esforço contra a mesma tabela, `packages/core/casos/bot-entrada.json`, que passou de 133 para 161 casos.
+
+| Verificação | Resultado |
+|---|---|
+| Suíte (lint, tipos e testes) | Passa: 59 testes no `core`, 235 no servidor e 750 no celular. O servidor confere a rota do catálogo contra o esquema e a lista das rotas protegidas, a criação com e sem motor, o modelo fora da lista, a recusa do motor e do esforço desconhecidos, e a edição que muda o esforço e ignora o motor. |
+| Bot antigo, sem `motor` | Igual, por teste (`bots.test.ts`): um banco da versão 2, aberto por esta, mantém o bot com os mesmos campos, no Claude Code, sem esforço, e o turno dele leva ao motor o mesmo modelo, a mesma sessão e nenhum esforço. O contrato lê o bot de um servidor anterior como bot do motor padrão, no TypeScript e no Rust gerado. |
+| Cliente do celular contra o servidor | `contrato-app.test.ts` busca o catálogo, cria o bot com o motor, o modelo e o esforço que vieram dele, e edita de volta aos padrões. |
+| `pnpm verificar` | 27 de 27, com três conferências novas em F2: o catálogo com o motor padrão pronto; o bot criado sem motor no motor padrão; o modelo fora do catálogo aceito e o motor fixo na edição. |
+| Desktop no Windows (rustfmt, clippy e testes) | Passa: 143 testes do cliente e 78 da janela. O cliente, contra o servidor, busca o catálogo, cria pelas listas, cria sem os campos novos, recebe a recusa do motor e do esforço desconhecidos e edita o esforço. A janela clica no motor, num modelo, num esforço, em "Auto", em "Padrão" e em "Outro", e confere no servidor o que ficou gravado. |
+| Chamada do motor | `--effort=high` vai na forma `--nome=valor`; sem esforço nem modelo, nenhuma das duas opções vai (`gancho.test.ts`). |
+
+Não coberto: as listas vistas num aparelho e no app de desktop de verdade, inclusive a prova visual, que não passa pelo formulário; o motor real com um esforço escolhido; o binário de Linux arm64 da imagem rodado com `--effort`; o formulário da janela diante de um servidor sem a rota do catálogo, coberto só pela lógica das listas; o desktop num Mac, que fica para a CI. O desktop 0.1.3 ignora os campos novos: quem o usa cria bots no motor padrão, sem esforço, e a edição feita nele não mexe no esforço. Nenhum teste novo foi rodado contra o código sem a mudança.
 
 ## Riscos
 

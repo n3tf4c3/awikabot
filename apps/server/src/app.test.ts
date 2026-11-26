@@ -7,6 +7,7 @@ import { serve } from '@hono/node-server';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   EsquemaBot,
+  EsquemaCatalogo,
   EsquemaErro,
   EsquemaEvento,
   EsquemaListaBots,
@@ -206,6 +207,7 @@ describe('autenticação', () => {
       ['DELETE', '/v1/dispositivo'],
       ['GET', '/v1/aprovacoes'],
       ['POST', '/v1/aprovacoes/abcdefgh12345678'],
+      ['GET', '/v1/catalogo'],
       ['GET', '/v1/bots'],
       ['POST', '/v1/bots'],
       ['PATCH', '/v1/bots/abcdefgh12345678'],
@@ -239,7 +241,7 @@ describe('bots (F2)', () => {
   it('não expõe a sessão do motor', async () => {
     const criado = await ambiente.pedir('/v1/bots', { token, corpo: { nome: 'Scout' } });
     expect(Object.keys((await criado.json()) as object).sort()).toEqual(
-      ['atualizadoEm', 'criadoEm', 'id', 'instrucoes', 'modelo', 'nome', 'turnoAtivo'].sort(),
+      ['atualizadoEm', 'criadoEm', 'esforco', 'id', 'instrucoes', 'modelo', 'motor', 'nome', 'turnoAtivo'].sort(),
     );
   });
 
@@ -253,6 +255,57 @@ describe('bots (F2)', () => {
     expect(await erroDe(resposta)).toBe('dados_invalidos');
   });
 
+  it('cria no motor padrão, com o esforço padrão, quando o pedido não diz', async () => {
+    const criado = await ambiente.pedir('/v1/bots', { token, corpo: { nome: 'Scout' } });
+    expect(EsquemaBot.parse(await criado.json())).toMatchObject({ motor: 'claude-code', esforco: null, modelo: null });
+  });
+
+  it('grava o motor, o modelo e o esforço escolhidos nas listas', async () => {
+    const criado = await ambiente.pedir('/v1/bots', {
+      token,
+      corpo: { nome: 'Scout', motor: 'claude-code', modelo: 'opus', esforco: 'high' },
+    });
+    expect(criado.status).toBe(201);
+    const bot = EsquemaBot.parse(await criado.json());
+    expect(bot).toMatchObject({ motor: 'claude-code', modelo: 'opus', esforco: 'high' });
+    const lista = EsquemaListaBots.parse(await (await ambiente.pedir('/v1/bots', { token })).json());
+    expect(lista.bots.map((item) => [item.motor, item.modelo, item.esforco])).toEqual([['claude-code', 'opus', 'high']]);
+  });
+
+  it('aceita um modelo fora do catálogo, se passar no formato', async () => {
+    const criado = await ambiente.pedir('/v1/bots', { token, corpo: { nome: 'Scout', modelo: 'claude-modelo-que-nao-existe[1m]' } });
+    expect(criado.status).toBe(201);
+    expect(EsquemaBot.parse(await criado.json()).modelo).toBe('claude-modelo-que-nao-existe[1m]');
+  });
+
+  it.each([
+    ['motor fora do catálogo', { nome: 'Scout', motor: 'codex' }],
+    ['esforço que o motor não lista', { nome: 'Scout', esforco: 'turbo' }],
+    ['motor fora do formato', { nome: 'Scout', motor: 'Claude Code' }],
+    ['esforço com cara de opção', { nome: 'Scout', esforco: '--x' }],
+  ])('recusa criação com %s', async (_caso, corpo) => {
+    const resposta = await ambiente.pedir('/v1/bots', { token, corpo });
+    expect(resposta.status).toBe(400);
+    expect(await erroDe(resposta)).toBe('dados_invalidos');
+    expect(EsquemaListaBots.parse(await (await ambiente.pedir('/v1/bots', { token })).json()).bots).toEqual([]);
+  });
+
+  it('a edição muda o esforço, confere com o motor do bot e nunca muda o motor', async () => {
+    const criado = EsquemaBot.parse(await (await ambiente.pedir('/v1/bots', { token, corpo: { nome: 'Scout' } })).json());
+    const editar = (corpo: unknown) => ambiente.pedir(`/v1/bots/${criado.id}`, { token, metodo: 'PATCH', corpo });
+
+    expect(EsquemaBot.parse(await (await editar({ esforco: 'low' })).json()).esforco).toBe('low');
+    const recusado = await editar({ esforco: 'turbo' });
+    expect(recusado.status).toBe(400);
+    expect(await erroDe(recusado)).toBe('dados_invalidos');
+    expect(EsquemaBot.parse(await (await editar({ esforco: null })).json()).esforco).toBeNull();
+
+    // O motor vindo numa edição é ignorado; sozinho, faz uma edição vazia.
+    const comMotor = EsquemaBot.parse(await (await editar({ nome: 'Scout 2', motor: 'outro' })).json());
+    expect(comMotor).toMatchObject({ nome: 'Scout 2', motor: 'claude-code' });
+    expect((await editar({ motor: 'outro' })).status).toBe(400);
+  });
+
   it('responde 400 a JSON quebrado e 404 a bot inexistente', async () => {
     const quebrado = await ambiente.app.request('/v1/bots', {
       method: 'POST',
@@ -264,6 +317,20 @@ describe('bots (F2)', () => {
 
     const inexistente = await ambiente.pedir('/v1/bots/abcdefgh12345678', { token, metodo: 'PATCH', corpo: { nome: 'X' } });
     expect(inexistente.status).toBe(404);
+  });
+});
+
+describe('catálogo (F2)', () => {
+  it('entrega os motores conhecidos, conferidos contra o esquema', async () => {
+    const resposta = await ambiente.pedir('/v1/catalogo', { token });
+    expect(resposta.status).toBe(200);
+    const catalogo = EsquemaCatalogo.parse(await resposta.json());
+    const claude = catalogo.motores.find((motor) => motor.id === 'claude-code');
+    expect(claude).toMatchObject({ familia: 'agente', pronto: true, papeis: ['worker'] });
+    expect(claude?.modelos.map((modelo) => modelo.id)).toEqual(['fable', 'opus', 'sonnet', 'haiku']);
+    expect(claude?.esforcos.map((esforco) => esforco.id)).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+    // O motor simulado é só de teste: nunca aparece para a pessoa escolher.
+    expect(catalogo.motores.map((motor) => motor.id)).not.toContain('simulado');
   });
 });
 

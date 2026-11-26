@@ -92,6 +92,7 @@ export class GestorDeTurnos {
       texto,
       instrucoes: bot.instrucoes,
       modelo: bot.modelo,
+      esforco: bot.esforco,
       sessao: bot.sessaoMotor,
       gancho: ligacao && token ? { comando: ligacao.comando, porta: ligacao.porta, token } : null,
       aoTexto: (trecho) => {

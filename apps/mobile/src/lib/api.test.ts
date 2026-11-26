@@ -21,6 +21,8 @@ const bot: Bot = {
   nome: 'Ajudante',
   instrucoes: '',
   modelo: null,
+  motor: 'claude-code',
+  esforco: null,
   criadoEm: 1,
   atualizadoEm: 2,
   turnoAtivo: false,
@@ -123,10 +125,10 @@ describe('pedidos autenticados', () => {
 
   it('criarBot faz POST com a entrada e aceita 201', async () => {
     const { api, chamados } = montar(() => ({ status: 201, corpo: bot }));
-    await expect(api.criarBot({ nome: 'Ajudante', instrucoes: '', modelo: null })).resolves.toEqual(bot);
+    await expect(api.criarBot({ nome: 'Ajudante', instrucoes: '', modelo: null, motor: 'claude-code', esforco: null })).resolves.toEqual(bot);
     expect(chamados[0]?.url).toBe(`${SERVIDOR}/v1/bots`);
     expect(chamados[0]?.pedido.method).toBe('POST');
-    expect(JSON.parse(chamados[0]?.pedido.body ?? '')).toEqual({ nome: 'Ajudante', instrucoes: '', modelo: null });
+    expect(JSON.parse(chamados[0]?.pedido.body ?? '')).toEqual({ nome: 'Ajudante', instrucoes: '', modelo: null, motor: 'claude-code', esforco: null });
   });
 
   it('editarBot faz PATCH no bot', async () => {

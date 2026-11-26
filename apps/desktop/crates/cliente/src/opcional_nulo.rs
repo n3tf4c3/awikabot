@@ -28,7 +28,7 @@ mod testes {
     use crate::contrato::BotEdicao;
 
     fn edicao(modelo: Option<Option<String>>) -> BotEdicao {
-        BotEdicao { nome: None, instrucoes: None, modelo }
+        BotEdicao { nome: None, instrucoes: None, modelo, esforco: None }
     }
 
     #[test]

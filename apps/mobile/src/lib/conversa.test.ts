@@ -375,7 +375,7 @@ describe('aplicarEvento: turnos e ressincronização', () => {
   });
 
   it('bot_salvo não mexe na conversa', () => {
-    const bot = { id: BOT, nome: 'x', instrucoes: '', modelo: null, criadoEm: 1, atualizadoEm: 2, turnoAtivo: false };
+    const bot = { id: BOT, nome: 'x', instrucoes: '', modelo: null, motor: 'claude-code', esforco: null, criadoEm: 1, atualizadoEm: 2, turnoAtivo: false };
     expect(aplicarEvento(emCurso, BOT, { tipo: 'bot_salvo', bot })).toBe(emCurso);
   });
 

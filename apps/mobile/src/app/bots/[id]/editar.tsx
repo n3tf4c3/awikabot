@@ -21,6 +21,7 @@ function Edicao({ bot, aoTerminar }: { bot: Bot; aoTerminar: () => void }) {
   return (
     <FormularioBot
       inicial={camposDoBot(original)}
+      motorFixo
       aoSalvar={async (entrada) => {
         const edicao = edicaoDoBot(original, entrada);
         if (edicao !== null) await operacoes.editarBot(original.id, edicao);

@@ -58,15 +58,22 @@ const MIGRACOES: string[] = [
 
   CREATE INDEX aprovacoes_pendentes ON aprovacoes (estado, criada_em);
   `,
+  // O motor de cada bot, escolhido na criação, e o esforço. Bot de antes é do Claude Code, com o
+  // esforço padrão: o mesmo que ele já rodava.
+  `
+  ALTER TABLE bots ADD COLUMN motor TEXT NOT NULL DEFAULT 'claude-code';
+  ALTER TABLE bots ADD COLUMN esforco TEXT;
+  `,
 ];
 
-export function abrirBanco(arquivo: string): Banco {
+/** `ate` aplica só as primeiras migrações: serve ao teste que abre um banco de uma versão anterior. */
+export function abrirBanco(arquivo: string, ate = MIGRACOES.length): Banco {
   if (arquivo !== ':memory:') mkdirSync(path.dirname(arquivo), { recursive: true });
   const banco = new DatabaseSync(arquivo);
   banco.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
 
   const { user_version: versao } = banco.prepare('PRAGMA user_version').get() as { user_version: number };
-  for (let i = versao; i < MIGRACOES.length; i += 1) {
+  for (let i = versao; i < ate; i += 1) {
     banco.exec('BEGIN');
     try {
       banco.exec(MIGRACOES[i] ?? '');

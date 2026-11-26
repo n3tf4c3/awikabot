@@ -99,9 +99,19 @@ describe('cliente do app contra o servidor', () => {
     // Conexão aberta sem ponto de retomada: o app pede uma carga inicial a si mesmo.
     await esperar(() => doTipo('ressincronizar').length === 1);
 
-    const bot = await api.criarBot({ nome: 'Scout', instrucoes: 'Seja breve.', modelo: null });
-    const editado = await api.editarBot(bot.id, { nome: 'Scout 2' });
-    expect(editado).toMatchObject({ id: bot.id, nome: 'Scout 2', instrucoes: 'Seja breve.' });
+    // O formulário monta as listas com o catálogo e cria o bot com o que a pessoa escolheu nelas.
+    const catalogo = await api.catalogo();
+    const motor = catalogo.motores.find((item) => item.pronto)!;
+    const bot = await api.criarBot({
+      nome: 'Scout',
+      instrucoes: 'Seja breve.',
+      modelo: motor.modelos[0]!.id,
+      motor: motor.id,
+      esforco: motor.esforcos[0]!.id,
+    });
+    expect(bot).toMatchObject({ motor: 'claude-code', modelo: 'fable', esforco: 'low' });
+    const editado = await api.editarBot(bot.id, { nome: 'Scout 2', modelo: null, esforco: null });
+    expect(editado).toMatchObject({ id: bot.id, nome: 'Scout 2', instrucoes: 'Seja breve.', motor: 'claude-code', modelo: null, esforco: null });
     expect((await api.listarBots()).bots.map((b) => b.nome)).toEqual(['Scout 2']);
     await esperar(() => doTipo('bot_salvo').length === 2);
   });

@@ -15,7 +15,7 @@ export function classificarFalha(saida: string): string {
  * da pessoa vai pela entrada padrão: nenhum valor vindo do app é lido como opção.
  */
 export function prepararChamada(
-  pedido: Pick<PedidoMotor, 'instrucoes' | 'modelo' | 'sessao' | 'gancho'>,
+  pedido: Pick<PedidoMotor, 'instrucoes' | 'modelo' | 'esforco' | 'sessao' | 'gancho'>,
   opcoes: { ambiente: Record<string, string>; ganchoGerenciado: boolean },
 ): { args: string[]; ambiente: Record<string, string> } {
   const args = ['-p', '--output-format=stream-json', '--verbose', '--include-partial-messages', '--permission-mode=default'];
@@ -24,6 +24,7 @@ export function prepararChamada(
   args.push('--setting-sources=user');
   if (pedido.instrucoes) args.push(`--append-system-prompt=${pedido.instrucoes}`);
   if (pedido.modelo) args.push(`--model=${pedido.modelo}`);
+  if (pedido.esforco) args.push(`--effort=${pedido.esforco}`);
   if (pedido.sessao) args.push(`--resume=${pedido.sessao}`);
 
   // Só o que `ambienteDoMotor` deixou passar: a configuração do servidor não chega ao bot.

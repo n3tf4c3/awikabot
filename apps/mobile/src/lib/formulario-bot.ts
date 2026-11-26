@@ -1,24 +1,34 @@
-import { EsquemaBotEntrada, LIMITES, type Bot, type BotEdicao, type BotEntrada } from '@awikabot/core';
+import { EsquemaBotEntrada, LIMITES, MOTOR_PADRAO, type Bot, type BotEdicao, type BotEntrada } from '@awikabot/core';
 
-/** O formulário do bot como a pessoa digita: tudo texto, modelo vazio quer dizer "padrão do motor". */
+/**
+ * O formulário do bot como a pessoa o preenche. O nome, as instruções e o modelo são texto
+ * digitado; o modelo também pode vir da lista do catálogo. O motor e o esforço vêm de listas.
+ * Modelo vazio é o "Auto" e esforço vazio é o "Padrão": nos dois casos, o padrão do motor.
+ */
 export interface CamposBot {
   nome: string;
   instrucoes: string;
   modelo: string;
+  motor: string;
+  esforco: string;
 }
 
 export type ErrosBot = Partial<Record<keyof CamposBot, string>>;
 
-export const CAMPOS_BOT_VAZIOS: CamposBot = { nome: '', instrucoes: '', modelo: '' };
+export const CAMPOS_BOT_VAZIOS: CamposBot = { nome: '', instrucoes: '', modelo: '', motor: MOTOR_PADRAO, esforco: '' };
 
 const MENSAGENS: Readonly<Record<keyof CamposBot, string>> = {
   nome: `Informe um nome com até ${LIMITES.nomeBot} caracteres.`,
   instrucoes: `As instruções têm no máximo ${LIMITES.instrucoes} caracteres.`,
   modelo: `Use até ${LIMITES.modelo} caracteres, começando por letra ou número: letras, números, ponto, hífen, sublinhado, dois-pontos e colchetes.`,
+  motor: 'Escolha um motor da lista.',
+  esforco: 'Escolha um esforço da lista.',
 };
 
+const CAMPOS: readonly (keyof CamposBot)[] = ['nome', 'instrucoes', 'modelo', 'motor', 'esforco'];
+
 export function camposDoBot(bot: Bot): CamposBot {
-  return { nome: bot.nome, instrucoes: bot.instrucoes, modelo: bot.modelo ?? '' };
+  return { nome: bot.nome, instrucoes: bot.instrucoes, modelo: bot.modelo ?? '', motor: bot.motor, esforco: bot.esforco ?? '' };
 }
 
 /** Valida com o esquema do contrato e devolve a entrada pronta para o servidor, ou o erro de cada campo. */
@@ -28,21 +38,24 @@ export function validarBot(campos: CamposBot): { ok: true; entrada: BotEntrada }
     nome: campos.nome,
     instrucoes: campos.instrucoes,
     modelo: modelo === '' ? null : modelo,
+    motor: campos.motor,
+    esforco: campos.esforco === '' ? null : campos.esforco,
   });
   if (lido.success) return { ok: true, entrada: lido.data };
   const erros: ErrosBot = {};
   for (const problema of lido.error.issues) {
-    const campo = problema.path[0];
-    if (campo === 'nome' || campo === 'instrucoes' || campo === 'modelo') erros[campo] = MENSAGENS[campo];
+    const campo = CAMPOS.find((nome) => nome === problema.path[0]);
+    if (campo !== undefined) erros[campo] = MENSAGENS[campo];
   }
   return { ok: false, erros };
 }
 
-/** Só os campos que mudaram em relação ao bot, para o `PATCH`. `null` quando nada mudou. */
+/** Só os campos que mudaram em relação ao bot, para o `PATCH`. `null` quando nada mudou. O motor nunca vai: é da criação. */
 export function edicaoDoBot(bot: Bot, entrada: BotEntrada): BotEdicao | null {
   const edicao: BotEdicao = {};
   if (entrada.nome !== bot.nome) edicao.nome = entrada.nome;
   if (entrada.instrucoes !== bot.instrucoes) edicao.instrucoes = entrada.instrucoes;
   if (entrada.modelo !== bot.modelo) edicao.modelo = entrada.modelo;
+  if (entrada.esforco !== bot.esforco) edicao.esforco = entrada.esforco;
   return Object.keys(edicao).length > 0 ? edicao : null;
 }

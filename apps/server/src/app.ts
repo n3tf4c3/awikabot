@@ -18,6 +18,7 @@ import type { ZodType } from 'zod';
 import type { GestorDeAprovacoes } from './aprovacoes';
 import type { Banco } from './banco';
 import { criarBot, editarBot, listarBots, obterBot, paraContrato } from './bots';
+import { CATALOGO, esforcoValido, motorDoCatalogo, motorParaCriarBot } from './catalogo';
 import { listarMensagens } from './conversa';
 import { autenticar, dispositivoAtivo, parear, revogar, type LimitadorDeTentativas } from './dispositivos';
 import type { Barramento, EventoNumerado } from './eventos';
@@ -127,6 +128,9 @@ export function criarApp(deps: Dependencias): Hono<Ambiente> {
     return c.body(null, 204);
   });
 
+  // O que o app oferece nas listas do formulário. O modelo é sugestão; o motor e o esforço, não.
+  app.get('/v1/catalogo', (c) => c.json(CATALOGO));
+
   app.get('/v1/bots', (c) =>
     c.json({ bots: listarBots(deps.banco).map((bot) => paraContrato(bot, deps.turnos.ativo(bot.id))) }),
   );
@@ -134,6 +138,9 @@ export function criarApp(deps: Dependencias): Hono<Ambiente> {
   app.post('/v1/bots', async (c) => {
     const corpo = await lerCorpo(c, EsquemaBotEntrada);
     if ('resposta' in corpo) return corpo.resposta;
+    // Um modelo fora da lista do catálogo vale; um motor ou um esforço que o servidor não sabe rodar, não.
+    const motor = motorParaCriarBot(corpo.dados.motor);
+    if (!motor || !esforcoValido(motor, corpo.dados.esforco)) return c.json({ erro: 'dados_invalidos' }, 400);
     const bot = paraContrato(criarBot(deps.banco, corpo.dados), false);
     deps.barramento.publicar({ tipo: 'bot_salvo', bot });
     return c.json(bot, 201);
@@ -142,7 +149,15 @@ export function criarApp(deps: Dependencias): Hono<Ambiente> {
   app.patch('/v1/bots/:id', async (c) => {
     const corpo = await lerCorpo(c, EsquemaBotEdicao);
     if ('resposta' in corpo) return corpo.resposta;
-    const editado = editarBot(deps.banco, c.req.param('id'), corpo.dados);
+    const atual = obterBot(deps.banco, c.req.param('id'));
+    if (!atual) return c.json({ erro: 'nao_encontrado' }, 404);
+    // O esforço é conferido contra o motor do bot, que a edição não muda. Voltar ao padrão sempre vale.
+    const motor = motorDoCatalogo(atual.motor);
+    const esforco = corpo.dados.esforco;
+    if (esforco !== undefined && esforco !== null && !(motor && esforcoValido(motor, esforco))) {
+      return c.json({ erro: 'dados_invalidos' }, 400);
+    }
+    const editado = editarBot(deps.banco, atual.id, corpo.dados);
     if (!editado) return c.json({ erro: 'nao_encontrado' }, 404);
     const bot = paraContrato(editado, deps.turnos.ativo(editado.id));
     deps.barramento.publicar({ tipo: 'bot_salvo', bot });
