@@ -3,7 +3,7 @@
 // gestor de aprovações é trocado: aqui ele responde na hora, no lugar da pessoa.
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { GestorDeAprovacoes } from './aprovacoes';
 import { criarAppDoGancho, Ganchos } from './gancho';
 import { despacharPorMotor, type PedidoMotor, type ResultadoMotor } from './motor';
-import { argumentosDoCodex, classificarFalhaDoCodex, criarMotorCodex, instrucoesDoTurno, ORIENTACAO_DO_AMBIENTE } from './motor-codex';
+import { argumentosDoCodex, classificarFalhaDoCodex, criarMotorCodex, instrucoesDoTurno, ORIENTACAO_DO_AMBIENTE, prepararCasaDoCodex } from './motor-codex';
 
 const MENTIRA = fileURLToPath(new URL('./codex-de-mentira.ts', import.meta.url));
 const raiz = mkdtempSync(path.join(os.tmpdir(), 'awika-codex-'));
@@ -224,6 +224,20 @@ describe('motor do Codex', () => {
   it('sem o binário, o turno falha e diz isso', async () => {
     const { resultado } = await turno('eco oi', { binario: path.join(raiz, 'nao-existe') });
     expect(resultado).toEqual({ estado: 'falhou', texto: 'O Codex não iniciou neste servidor.', sessao: null });
+  });
+});
+
+describe('prepararCasaDoCodex', () => {
+  it('cria a pasta do Codex que falta, só para o dono, e não mexe sem CODEX_HOME', () => {
+    const casa = path.join(raiz, 'volume-antigo', 'codex');
+    expect(existsSync(casa)).toBe(false);
+    prepararCasaDoCodex({ PATH: '/usr/bin' });
+    expect(existsSync(casa)).toBe(false);
+    criarMotorCodex({ binario: 'nao-usado', ambiente: { CODEX_HOME: casa }, configuracaoGerenciada: true });
+    expect(statSync(casa).isDirectory()).toBe(true);
+    if (process.platform !== 'win32') expect(statSync(casa).mode & 0o777).toBe(0o700);
+    // De novo, com a pasta já lá, não falha.
+    prepararCasaDoCodex({ CODEX_HOME: casa });
   });
 });
 

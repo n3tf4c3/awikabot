@@ -17,9 +17,9 @@ export const MOTOR_CODEX = 'codex';
  *
  * O Codex tem a versão 0.172.0 fixada na imagem. Os modelos são os mais novos de cada linha que
  * esse binário listou para a conta da prova em 26/11; os esforços, os que todos esses modelos
- * aceitam (`ultra` fica de fora: o `gpt-6-luna` não o tem). Fica fora de "pronto" até o runbook
- * de motor real passar com ele no Pi; até lá, só um servidor que o põe em `AWIKA_MOTORES_EM_PROVA`
- * cria bot nele.
+ * aceitam (`ultra` fica de fora: o `gpt-6-luna` não o tem). Ficou pronto em 26/11, depois de o
+ * runbook de motor real passar com ele no Pi. Um motor novo entra com `pronto: false` até isso, e
+ * só um servidor que o põe em `AWIKA_MOTORES_EM_PROVA` cria bot nele.
  */
 export const CATALOGO: Catalogo = {
   motores: [
@@ -61,7 +61,7 @@ export const CATALOGO: Catalogo = {
         { id: 'max', nome: 'Máximo' },
       ],
       papeis: ['worker'],
-      pronto: false,
+      pronto: true,
     },
   ],
 };

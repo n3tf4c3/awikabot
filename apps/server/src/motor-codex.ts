@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { configuracaoDoCodexPorOpcao } from './configuracao-codex';
 import { executarGancho } from './gancho';
@@ -148,6 +149,21 @@ function dentroDaPasta(pasta: string, alvo: string): boolean {
   return real === base || real.startsWith(base + path.sep);
 }
 
+/**
+ * Cria a pasta do Codex (`CODEX_HOME`) se ela não existe. O Codex recusa partir sem ela, inclusive
+ * no login, e o volume de um servidor anterior ao Codex não a tem: a imagem só a criaria num volume
+ * novo. Só o dono a lê, porque é ali que fica o login.
+ */
+export function prepararCasaDoCodex(ambiente: Record<string, string>): void {
+  const casa = ambiente.CODEX_HOME;
+  if (!casa) return;
+  try {
+    mkdirSync(casa, { recursive: true, mode: 0o700 });
+  } catch (erro) {
+    console.error(`motor codex: não criou a pasta do Codex: ${erro instanceof Error ? erro.message : 'erro desconhecido'}`);
+  }
+}
+
 export function criarMotorCodex(opcoes: {
   /** O executável e o que vem antes de `app-server`: nos testes, o Node e um Codex de mentira. */
   binario: string;
@@ -157,6 +173,8 @@ export function criarMotorCodex(opcoes: {
   configuracaoGerenciada: boolean;
   prazoDaParadaMs?: number;
 }): Motor {
+  // Na partida do servidor, antes de qualquer login ou turno.
+  prepararCasaDoCodex(opcoes.ambiente);
   return (pedido) => {
     const unix = process.platform !== 'win32';
     const filho = spawn(opcoes.binario, [...(opcoes.prefixo ?? []), ...argumentosDoCodex(opcoes.configuracaoGerenciada)], {

@@ -88,18 +88,20 @@ describe('motor e esforço gravados', () => {
 });
 
 describe('catálogo', () => {
-  it('passa no esquema do contrato, com o Claude Code pronto e o Codex em prova', () => {
+  it('passa no esquema do contrato, com o Claude Code e o Codex prontos', () => {
     expect(EsquemaCatalogo.parse(CATALOGO)).toEqual(CATALOGO);
     expect(motorParaCriarBot(MOTOR_PADRAO)?.nome).toBe('Claude Code');
     expect(CATALOGO.motores.map((motor) => [motor.id, motor.pronto])).toEqual([
       [MOTOR_PADRAO, true],
-      [MOTOR_CODEX, false],
+      [MOTOR_CODEX, true],
     ]);
   });
 
-  it('cria bot no Codex só no servidor que o põe em prova', () => {
-    expect(motorParaCriarBot(MOTOR_CODEX)).toBeNull();
-    expect(motorParaCriarBot(MOTOR_CODEX, CATALOGO, [MOTOR_CODEX])?.nome).toBe('Codex');
+  it('cria bot num motor não pronto só no servidor que o põe em prova', () => {
+    const catalogo = { motores: CATALOGO.motores.map((motor) => (motor.id === MOTOR_CODEX ? { ...motor, pronto: false } : motor)) };
+    expect(motorParaCriarBot(MOTOR_CODEX)?.nome).toBe('Codex');
+    expect(motorParaCriarBot(MOTOR_CODEX, catalogo)).toBeNull();
+    expect(motorParaCriarBot(MOTOR_CODEX, catalogo, [MOTOR_CODEX])?.nome).toBe('Codex');
     expect(motorParaCriarBot('desconhecido', CATALOGO, ['desconhecido'])).toBeNull();
   });
 
