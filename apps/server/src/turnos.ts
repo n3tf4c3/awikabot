@@ -88,6 +88,7 @@ export class GestorDeTurnos {
     this.parciais.set(resposta.id, '');
     let gravadoEm = Date.now();
     const turno = this.motor({
+      motor: bot.motor,
       pasta,
       texto,
       instrucoes: bot.instrucoes,

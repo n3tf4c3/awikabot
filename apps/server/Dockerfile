@@ -22,19 +22,21 @@ RUN pnpm --filter @awikabot/server build
 
 FROM node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54
 
-# O motor: o Claude Code como a Anthropic publica, em versão fixa e sem modificação.
+# Os motores: o Claude Code como a Anthropic publica e o Codex como a OpenAI publica, cada um em
+# versão fixa e sem modificação. O driver de cada um é testado contra a versão daqui.
 ARG CLAUDE_CODE_VERSION=2.1.330
+ARG CODEX_VERSION=0.172.0
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates git \
  && rm -rf /var/lib/apt/lists/* \
- && npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
+ && npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} @openai/codex@${CODEX_VERSION} \
  && npm cache clean --force \
  && useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin awikabot \
  && mkdir /data \
  && chown awikabot:awikabot /data
 
-# /data é o volume: banco, pastas de trabalho dos bots, login e conversas do motor.
-# O resto do sistema de arquivos é somente leitura; a versão do motor não muda sozinha.
+# /data é o volume: banco, pastas de trabalho dos bots, login e conversas de cada motor.
+# O resto do sistema de arquivos é somente leitura; a versão dos motores não muda sozinha.
 ENV NODE_ENV=production \
     AWIKA_HOST=0.0.0.0 \
     AWIKA_PORTA=8790 \
@@ -42,6 +44,7 @@ ENV NODE_ENV=production \
     AWIKA_GANCHO=gerenciado \
     HOME=/data \
     CLAUDE_CONFIG_DIR=/data/claude \
+    CODEX_HOME=/data/codex \
     DISABLE_AUTOUPDATER=1 \
     SHELL=/bin/bash
 
@@ -50,6 +53,11 @@ COPY --from=build /repo/apps/server/dist/server.mjs /app/server.mjs
 # um bot grave consegue desligá-lo, e ganchos de outras origens ficam bloqueados.
 RUN mkdir -p /etc/claude-code \
  && node /app/server.mjs configuracao-do-motor > /etc/claude-code/managed-settings.json
+# A configuração do Codex mora no mesmo lugar: sem ela, o bot dele pesquisaria na web e usaria os
+# conectores da conta sem cartão. Os requisitos impedem afrouxar a caixa de areia e a aprovação.
+RUN mkdir -p /etc/codex \
+ && node /app/server.mjs configuracao-do-codex configuracao > /etc/codex/managed_config.toml \
+ && node /app/server.mjs configuracao-do-codex requisitos > /etc/codex/requirements.toml
 USER awikabot
 VOLUME /data
 EXPOSE 8790

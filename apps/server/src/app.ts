@@ -31,6 +31,8 @@ export interface Dependencias {
   turnos: GestorDeTurnos;
   aprovacoes: GestorDeAprovacoes;
   limitador: LimitadorDeTentativas;
+  /** Motores ainda não prontos em que este servidor aceita criar bot (`AWIKA_MOTORES_EM_PROVA`). */
+  motoresEmProva?: readonly string[];
   /** Intervalo do sinal de vida do fluxo de eventos. Menor nos testes. */
   intervaloPingMs?: number;
 }
@@ -139,7 +141,7 @@ export function criarApp(deps: Dependencias): Hono<Ambiente> {
     const corpo = await lerCorpo(c, EsquemaBotEntrada);
     if ('resposta' in corpo) return corpo.resposta;
     // Um modelo fora da lista do catálogo vale; um motor ou um esforço que o servidor não sabe rodar, não.
-    const motor = motorParaCriarBot(corpo.dados.motor);
+    const motor = motorParaCriarBot(corpo.dados.motor, CATALOGO, deps.motoresEmProva ?? []);
     if (!motor || !esforcoValido(motor, corpo.dados.esforco)) return c.json({ erro: 'dados_invalidos' }, 400);
     const bot = paraContrato(criarBot(deps.banco, corpo.dados), false);
     deps.barramento.publicar({ tipo: 'bot_salvo', bot });

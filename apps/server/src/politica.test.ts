@@ -156,3 +156,40 @@ describe('gravação', () => {
     expect(acao('Write', { file_path: 'atalho-de-gravacao/novo.txt', content: 'x' })).toBe('negar');
   });
 });
+
+// O driver do Codex traduz cada pedido para estas ferramentas (`motor-codex.ts`): o comando vem com
+// a pasta em que roda, e a edição vem como diff, que também apaga e move arquivos.
+describe('pedidos do Codex', () => {
+  it('o comando mostra a pasta em que roda quando ela não é a do bot', () => {
+    expect(avaliarFerramenta('Bash', { command: "/bin/bash -lc 'ls'", cwd: pasta }, pasta)).toEqual({ acao: 'perguntar', resumo: "/bin/bash -lc 'ls'" });
+    expect(avaliarFerramenta('Bash', { command: "/bin/bash -lc 'ls'", cwd: fora }, pasta)).toEqual({
+      acao: 'perguntar',
+      resumo: `/bin/bash -lc 'ls'\n\n(na pasta ${fora})`,
+    });
+  });
+
+  it('a gravação mostra o diff, e apagar e mover dizem o que fazem', () => {
+    expect(avaliarFerramenta('Write', { file_path: 'novo.txt', diff: 'linha nova\n' }, pasta)).toEqual({
+      acao: 'perguntar',
+      resumo: 'Gravar o arquivo novo.txt\n\nlinha nova\n',
+    });
+    expect(avaliarFerramenta('Edit', { file_path: 'notas.txt', diff: '-oi\n', apagar: true }, pasta)).toEqual({
+      acao: 'perguntar',
+      resumo: 'Apagar o arquivo notas.txt\n\n-oi\n',
+    });
+    expect(avaliarFerramenta('Edit', { file_path: 'notas.txt', diff: '', mover_para: 'sub/notas.txt' }, pasta)).toEqual({
+      acao: 'perguntar',
+      resumo: 'Mover o arquivo notas.txt para sub/notas.txt\n\n',
+    });
+  });
+
+  it.each([
+    ['mover para fora da pasta', { file_path: 'notas.txt', diff: '', mover_para: path.join(fora, 'notas.txt') }, 'o bot só grava arquivos na própria pasta de trabalho'],
+    ['mover sem destino legível', { file_path: 'notas.txt', diff: '', mover_para: 42 }, 'o bot só grava arquivos na própria pasta de trabalho'],
+    ['mover para a configuração do Codex', { file_path: 'notas.txt', diff: '', mover_para: '.codex/config.toml' }, 'o bot não altera a configuração do motor'],
+    ['gravar na configuração do Codex', { file_path: '.codex/config.toml', diff: 'x' }, 'o bot não altera a configuração do motor'],
+    ['gravar na configuração do Codex com outra caixa', { file_path: 'sub/.Codex/hooks.json', diff: 'x' }, 'o bot não altera a configuração do motor'],
+  ])('nega %s, sem perguntar', (_caso, entrada, motivo) => {
+    expect(avaliarFerramenta('Edit', entrada, pasta)).toEqual({ acao: 'negar', motivo });
+  });
+});

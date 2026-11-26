@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { motorDoCatalogo } from './catalogo';
 
 const EsquemaEnv = z
   .object({
@@ -10,18 +11,35 @@ const EsquemaEnv = z
     AWIKA_PORTA_GANCHO: z.coerce.number().int().min(1).max(65535).default(8791),
     /** Pasta do banco e das pastas de trabalho dos bots. */
     AWIKA_DADOS: z.string().min(1).default('./dados'),
+    /**
+     * `claude-code`: cada bot roda no motor gravado nele. `simulado`: todos rodam no motor de teste.
+     * O nome do valor padrão é de antes do motor por bot, e fica para não mudar a configuração de quem já roda.
+     */
     AWIKA_MOTOR: z.enum(['claude-code', 'simulado']).default('claude-code'),
     AWIKA_CLAUDE_BIN: z.string().min(1).default('claude'),
+    AWIKA_CODEX_BIN: z.string().min(1).default('codex'),
+    /**
+     * Motores do catálogo ainda não prontos em que este servidor aceita criar bot, separados por
+     * vírgula. Serve ao runbook de um motor novo; o catálogo continua dizendo que ele não está pronto.
+     */
+    AWIKA_MOTORES_EM_PROVA: z
+      .string()
+      .default('')
+      .transform((lista) => lista.split(',').map((nome) => nome.trim()).filter((nome) => nome !== ''))
+      .pipe(z.array(z.string().regex(/^[a-z][a-z0-9-]{0,39}$/))),
     AWIKA_TURNOS_SIMULTANEOS: z.coerce.number().int().min(1).max(16).default(4),
     /**
-     * Por onde o gancho de aprovação entra no motor. `gerenciado`: pela configuração gerenciada
-     * do Claude Code, que a imagem instala e o bot não alcança. `opcao`: pela linha de comando.
+     * Por onde o gancho de aprovação e a configuração entram no motor. `gerenciado`: pela
+     * configuração gerenciada do Claude Code e do Codex, que a imagem instala e o bot não alcança.
+     * `opcao`: pela linha de comando.
      */
     AWIKA_GANCHO: z.enum(['opcao', 'gerenciado']).default('opcao'),
   })
   // O motor simulado só existe para teste; em produção ele derruba a partida.
   .refine((env) => !(env.NODE_ENV === 'production' && env.AWIKA_MOTOR === 'simulado'), { path: ['AWIKA_MOTOR'] })
-  .refine((env) => env.AWIKA_PORTA !== env.AWIKA_PORTA_GANCHO, { path: ['AWIKA_PORTA_GANCHO'] });
+  .refine((env) => env.AWIKA_PORTA !== env.AWIKA_PORTA_GANCHO, { path: ['AWIKA_PORTA_GANCHO'] })
+  // Só um motor que o catálogo conhece pode estar em prova.
+  .refine((env) => env.AWIKA_MOTORES_EM_PROVA.every((motor) => motorDoCatalogo(motor) !== null), { path: ['AWIKA_MOTORES_EM_PROVA'] });
 
 export type Env = z.infer<typeof EsquemaEnv>;
 
@@ -38,8 +56,9 @@ export class EnvInvalida extends Error {
 
 /**
  * O que o motor precisa herdar do servidor para rodar: sistema, idioma, proxy e as variáveis
- * do próprio Claude Code. Nada mais passa, para que um segredo posto no ambiente do servidor
- * não chegue aos bots sem alguém decidir isso aqui.
+ * do próprio motor (`ANTHROPIC_` e `CLAUDE_` para o Claude Code; `CODEX_` e `OPENAI_` para o
+ * Codex). Nada mais passa, para que um segredo posto no ambiente do servidor não chegue aos bots
+ * sem alguém decidir isso aqui, nem o de um motor aos bots do outro.
  */
 const NOMES_DO_MOTOR = new Set([
   'PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LANGUAGE', 'TZ', 'TERM', 'TMPDIR', 'TEMP', 'TMP',
@@ -48,14 +67,18 @@ const NOMES_DO_MOTOR = new Set([
   'SYSTEMROOT', 'WINDIR', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'PATHEXT', 'COMSPEC', 'HOMEDRIVE', 'HOMEPATH',
   'PROGRAMFILES', 'PROGRAMDATA',
 ]);
-const PREFIXOS_DO_MOTOR = ['ANTHROPIC_', 'CLAUDE_', 'LC_'];
+const PREFIXOS_DE_CADA_MOTOR = { 'claude-code': ['ANTHROPIC_', 'CLAUDE_'], codex: ['CODEX_', 'OPENAI_'] } as const;
+const PREFIXOS_DE_TODOS = ['LC_'];
 
-export function ambienteDoMotor(origem: Record<string, string | undefined>): Record<string, string> {
+export type MotorReal = keyof typeof PREFIXOS_DE_CADA_MOTOR;
+
+export function ambienteDoMotor(origem: Record<string, string | undefined>, motor: MotorReal = 'claude-code'): Record<string, string> {
+  const prefixos = [...PREFIXOS_DE_TODOS, ...PREFIXOS_DE_CADA_MOTOR[motor]];
   const saida: Record<string, string> = {};
   for (const [nome, valor] of Object.entries(origem)) {
     if (valor === undefined) continue;
     const maiusculo = nome.toUpperCase();
-    if (NOMES_DO_MOTOR.has(maiusculo) || PREFIXOS_DO_MOTOR.some((prefixo) => maiusculo.startsWith(prefixo))) saida[nome] = valor;
+    if (NOMES_DO_MOTOR.has(maiusculo) || prefixos.some((prefixo) => maiusculo.startsWith(prefixo))) saida[nome] = valor;
   }
   return saida;
 }

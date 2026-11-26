@@ -6,8 +6,8 @@
 # Gera awikabot-<data>.tar e o .sha256 dele, com:
 #   - o banco, copiado inteiro e coerente pelo comando `backup` do servidor;
 #   - as pastas de trabalho dos bots;
-#   - as conversas do motor, para os bots lembrarem depois de restaurados.
-# O login do motor nunca entra no arquivo.
+#   - as conversas de cada motor (Claude Code e Codex), para os bots lembrarem depois de restaurados.
+# O login dos motores nunca entra no arquivo: nem claude/.credentials.json nem codex/auth.json.
 #
 # O arquivo leva conversas e arquivos dos bots: cifre antes de tirá-lo do host.
 set -eu
@@ -37,7 +37,7 @@ trap limpar EXIT
 compose exec -T server node /app/server.mjs backup "/data/$copia" </dev/null
 
 itens=$copia
-for pasta in trabalho claude/projects; do
+for pasta in trabalho claude/projects codex/sessions; do
   if compose exec -T server test -d "/data/$pasta" </dev/null; then itens="$itens $pasta"; fi
 done
 

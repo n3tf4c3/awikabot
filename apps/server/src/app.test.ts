@@ -31,7 +31,7 @@ afterAll(() => {
   rmSync(pastaTemporaria, { recursive: true, force: true });
 });
 
-function montar(opcoes: { atrasoMs?: number; limite?: number; intervaloPingMs?: number } = {}) {
+function montar(opcoes: { atrasoMs?: number; limite?: number; intervaloPingMs?: number; motoresEmProva?: string[] } = {}) {
   const banco = abrirBanco(':memory:');
   const barramento = new Barramento();
   const turnos = new GestorDeTurnos({
@@ -49,6 +49,7 @@ function montar(opcoes: { atrasoMs?: number; limite?: number; intervaloPingMs?: 
     aprovacoes: new GestorDeAprovacoes({ banco, barramento }),
     limitador: new LimitadorDeTentativas(),
     intervaloPingMs: opcoes.intervaloPingMs ?? 40,
+    motoresEmProva: opcoes.motoresEmProva,
   });
 
   const pedir = (caminho: string, opcoesPedido: { metodo?: string; corpo?: unknown; token?: string | null } = {}) => {
@@ -279,7 +280,8 @@ describe('bots (F2)', () => {
   });
 
   it.each([
-    ['motor fora do catálogo', { nome: 'Scout', motor: 'codex' }],
+    ['motor fora do catálogo', { nome: 'Scout', motor: 'antigravity' }],
+    ['motor que ainda não está pronto', { nome: 'Scout', motor: 'codex' }],
     ['esforço que o motor não lista', { nome: 'Scout', esforco: 'turbo' }],
     ['motor fora do formato', { nome: 'Scout', motor: 'Claude Code' }],
     ['esforço com cara de opção', { nome: 'Scout', esforco: '--x' }],
@@ -288,6 +290,16 @@ describe('bots (F2)', () => {
     expect(resposta.status).toBe(400);
     expect(await erroDe(resposta)).toBe('dados_invalidos');
     expect(EsquemaListaBots.parse(await (await ambiente.pedir('/v1/bots', { token })).json()).bots).toEqual([]);
+  });
+
+  it('cria no Codex só no servidor que o põe em prova, com o esforço da lista dele', async () => {
+    const emProva = montar({ motoresEmProva: ['codex'] });
+    const { token: outro } = await emProva.parearAparelho();
+    const criado = await emProva.pedir('/v1/bots', { token: outro, corpo: { nome: 'Codex', motor: 'codex', modelo: 'gpt-6-luna', esforco: 'max' } });
+    expect(criado.status).toBe(201);
+    expect(EsquemaBot.parse(await criado.json())).toMatchObject({ motor: 'codex', modelo: 'gpt-6-luna', esforco: 'max' });
+    const ultra = await emProva.pedir('/v1/bots', { token: outro, corpo: { nome: 'Codex', motor: 'codex', esforco: 'ultra' } });
+    expect(ultra.status).toBe(400);
   });
 
   it('a edição muda o esforço, confere com o motor do bot e nunca muda o motor', async () => {
@@ -329,6 +341,8 @@ describe('catálogo (F2)', () => {
     expect(claude).toMatchObject({ familia: 'agente', pronto: true, papeis: ['worker'] });
     expect(claude?.modelos.map((modelo) => modelo.id)).toEqual(['fable', 'opus', 'sonnet', 'haiku']);
     expect(claude?.esforcos.map((esforco) => esforco.id)).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+    // O Codex aparece, mas não pronto: os apps não o oferecem até o runbook passar com ele.
+    expect(catalogo.motores.find((motor) => motor.id === 'codex')).toMatchObject({ familia: 'agente', pronto: false, papeis: ['worker'] });
     // O motor simulado é só de teste: nunca aparece para a pessoa escolher.
     expect(catalogo.motores.map((motor) => motor.id)).not.toContain('simulado');
   });

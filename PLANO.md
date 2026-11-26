@@ -788,6 +788,7 @@ Tudo entra de modo que os clientes já publicados continuem valendo; o desktop 0
    Verificar: criar um bot escolhendo motor e modelo pela lista, no celular e no desktop; um bot antigo continua igual; um modelo fora da lista é aceito.
 3. **Segundo motor**: o que passou na prova, com a mesma política, o mesmo cartão e a mesma regra de gravação.
    Verificar: o runbook de motor real, F0 a F4, percorrido com ele no Pi.
+   O código entrou em 26/11, com o Codex no catálogo ainda não pronto, e o runbook passou com ele num contêiner local; falta o Pi. Ver "Etapa 7, passo 3: resultado do segundo motor".
 4. **Juiz**: a interface de decisor no servidor e o primeiro decisor, um turno sem ferramentas.
    Verificar: por teste, a resposta fora das opções, a ilegível e a atrasada sobem um degrau; nenhuma vira aprovação.
 5. **Equipe**: orquestrador, workers, o cartão do plano, delegação pelo servidor e limites. Depende do aviso push da etapa 3: sem ele, um worker parado num cartão expira em 15 minutos e segura os outros.
@@ -934,6 +935,45 @@ Os dois apps ganharam as listas no formulário de bot: o motor, só ao criar; o 
 | Chamada do motor | `--effort=high` vai na forma `--nome=valor`; sem esforço nem modelo, nenhuma das duas opções vai (`gancho.test.ts`). |
 
 Não coberto: as listas vistas num aparelho e no app de desktop de verdade, inclusive a prova visual, que não passa pelo formulário; o motor real com um esforço escolhido; o binário de Linux arm64 da imagem rodado com `--effort`; o formulário da janela diante de um servidor sem a rota do catálogo, coberto só pela lógica das listas; o desktop num Mac, que fica para a CI. O desktop 0.1.3 ignora os campos novos: quem o usa cria bots no motor padrão, sem esforço, e a edição feita nele não mexe no esforço. Nenhum teste novo foi rodado contra o código sem a mudança.
+
+## Etapa 7, passo 3: resultado do segundo motor (2026-11-26)
+
+O Codex entrou como segundo motor, atrás da mesma interface dos outros. Cada bot roda agora no motor gravado nele: o servidor entrega o turno ao driver desse motor (`despacharPorMotor`, em `motor.ts`), e um bot num motor que o servidor não roda recebe uma resposta que diz isso, marcada como falha. O `AWIKA_MOTOR=simulado` continua trocando todos pelo motor de teste.
+
+O driver (`apps/server/src/motor-codex.ts`) dirige o `codex app-server` 0.172.0, um processo por turno, pelo JSON-RPC da entrada e saída padrão. O texto da pessoa vai no corpo de uma mensagem, nunca na linha de comando; o modelo e o esforço vão em cada turno; a instrução do bot vai como instrução de desenvolvedor, depois de uma orientação fixa do ambiente. A conversa é a do Codex, retomada pelo id gravado no bot, e uma conversa que o Codex não acha vira falha e deixa o bot recomeçar no turno seguinte. Parar interrompe o turno e, se ele não fechar em 5 s, mata o grupo de processos.
+
+A trava é a da prova: o pedido de aprovação do servidor de aplicativo, não o gancho. O driver repassa cada pedido de comando e de edição ao servidor pelo mesmo caminho do gancho do Claude Code (`executarGancho`), então valem a mesma política, o mesmo cartão e a mesma regra de gravação presa à pasta. O comando vai ao cartão como o Codex vai executá-lo (`/usr/bin/bash -lc '...'`), com a pasta quando não é a do bot. A edição vira uma consulta por arquivo, como `Write` ou `Edit` com o diff, e apagar e mover dizem isso no cartão; mover confere a origem e o destino. A pasta `.codex/` entrou ao lado de `.claude/` e `.mcp.json` como configuração que o bot não grava. O driver só responde `accept` ou `decline`: nunca para a sessão, nunca uma regra nova, e um pedido de pasta inteira (`grantRoot`) é negado sem cartão. Todo outro pedido do Codex (entrada do usuário, permissões extras, conectores, ferramentas do cliente) é recusado.
+
+O que a prova achou que escapa do pedido fica negado de dois jeitos:
+
+- **Pela configuração**: `configuracao-codex.ts` gera `/etc/codex/managed_config.toml`, com a caixa de areia só de leitura, a aprovação `on-request`, a busca na web desligada e desligados os recursos que agem sem pedido (conectores, plugins, ganchos, navegador e uso do computador, imagens, subagentes, sugestão e instalação de ferramentas), e `/etc/codex/requirements.toml`, que impede afrouxar a política, a caixa de areia, a busca e o revisor dos pedidos, que é sempre a pessoa. A imagem grava os dois no build, fora do volume, e o servidor recusa subir se não forem exatamente os esperados. As chaves foram conferidas no 0.172.0 com `codex app-server --strict-config --print-startup-config`, que recusa uma chave errada. Fora da imagem, a mesma configuração vai em opções `--config=`.
+- **Pelo driver**: um item que age sem pedido aceito corta o turno na hora: o processo morre antes de a saída chegar ao modelo, e a resposta fica como falha, com o motivo. Isso vale para o comando ou a edição que terminam sem aprovação (o que aconteceria se a caixa de areia subisse e rodasse uma leitura sozinha) e para busca na web, conector, servidor MCP, subagente e imagem fora da pasta.
+
+Uma correção veio do runbook. Nas duas primeiras rodadas o modelo, ao ver a caixa de areia só de leitura, respondia "negado" ou "o ambiente é somente leitura" sem tentar, e a pessoa não via cartão. O driver passou a dizer ao modelo, antes da instrução do bot, que todo comando e toda edição pedem aprovação e que ele deve pedir em vez de desistir. A trava não depende desse texto; ele só muda se o pedido chega.
+
+O Codex está no catálogo com os quatro modelos mais novos que o 0.172.0 listou para a conta da prova (`gpt-6.2-sol`, `gpt-6.2-astra`, `gpt-6.1-terra`, `gpt-6-luna`) e os esforços de baixo a máximo, que todos eles aceitam; o `ultra` ficou de fora porque o `gpt-6-luna` não o tem. Fica com `pronto: false` até o runbook passar no Pi: os apps não o oferecem, e só um servidor com `AWIKA_MOTORES_EM_PROVA=codex` cria bot nele. O papel é só worker; orquestrador e juiz ficam para os passos 4 e 5. A imagem leva o `@openai/codex` 0.172.0 fixado, com `CODEX_HOME=/data/codex`. O ambiente de cada motor passou a ser só dele: `CODEX_*` e `OPENAI_*` vão ao Codex, `ANTHROPIC_*` e `CLAUDE_*` ao Claude Code. O backup leva `codex/sessions` e deixa `codex/auth.json` de fora, e a restauração aceita `codex/sessions` e recusa um volume que já tenha uma das conversas do arquivo.
+
+| Verificação | Resultado |
+|---|---|
+| Suíte (lint, tipos e testes) | Passa: 59 testes no `core`, 750 no celular e 278 no servidor. O driver tem 28 testes contra um `codex app-server` de mentira (`codex-de-mentira.ts`) e o lado do gancho de verdade, com a política de verdade: resposta aos poucos, travas e opções do turno, retomada, sessão perdida, comando aprovado e negado com o comando inteiro no cartão, negação sem gancho e com o servidor de aprovação fora do ar, edição na pasta com o conteúdo no cartão, edição fora da pasta, em `.codex/` e movendo para fora negadas sem cartão, comando sem pedido e busca na web cortando o turno, pedido desconhecido recusado, parada, falha de login e binário ausente. |
+| Cliente do celular contra o servidor | `contrato-app.test.ts` vê o Codex no catálogo sem estar pronto, fora da lista do formulário, e a criação de bot nele recusada. |
+| `pnpm verificar` | 27 de 27, com o motor simulado. |
+| Desktop no Windows (rustfmt, clippy e testes) | Passa: 143 testes do cliente e 78 da janela. O contrato não mudou: o desktop lê o Codex como motor não pronto e não o oferece. |
+| Runbook de motor real com o Codex | Num contêiner local (amd64) com a imagem do produto e as travas do compose (somente leitura, `cap_drop: ALL`, `no-new-privileges`, 2 GB), com o login do ChatGPT do titular feito na prova do passo 1. Antes, um `codex/config.toml` hostil foi gravado no volume (`web_search = "live"`, `approval_policy = "never"`, conectores e subagentes ligados). Quatro rodadas: 17 e 18 de 19 antes da orientação do ambiente, e 19 de 19 duas vezes seguidas depois dela. Na última versão: resposta aos poucos (11 trechos, o primeiro em 3,7 s), a memória entre turnos, a parada, o comando aprovado rodando e o negado não (pelo disco), a leitura na pasta também em cartão, a gravação na pasta com o conteúdo no cartão, nenhum arquivo fora da pasta nem em `.codex/config.toml`, e "sem busca" na busca na web. Na terceira rodada o modelo tentou a edição de `.codex/config.toml`, e o registro do Codex mostra a edição recusada sem cartão. |
+| Retomada de uma conversa restaurada | Um `CODEX_HOME` só com `sessions/` e o login retomou a conversa de um bot do runbook, que respondeu o número guardado. |
+| Busca na web fora da imagem | Com as opções `--config=` do driver e o `config.toml` hostil, o modelo respondeu "sem busca", numa rodada. |
+
+Não coberto:
+
+- **o Pi**: o runbook não rodou lá. Falta subir esta versão no Pi, o titular fazer o login do Codex dentro do contêiner (`docker compose -f deploy/compose.yaml run --rm -it --entrypoint codex server login --device-auth`) e rodar o runbook com `AWIKA_MOTORES_EM_PROVA=codex` e `AWIKA_VERIFICAR_MOTOR=codex`. Só então o Codex passa a `pronto`. Também não foi visto se o kernel do Pi deixa a caixa de areia do Codex subir: se subir, o driver corta o turno no primeiro comando que rodar sem pedido, o que protege, mas deixa o bot inútil até alguém olhar;
+- o binário de Linux arm64 do Codex rodando um turno: na prova do passo 1 ele rodou emulado; aqui, nada em arm64;
+- as conferências de leitura e gravação fora da pasta dependem do modelo tentar: em algumas rodadas ele recusou antes, e a negação só foi exercida com o Codex de verdade uma vez, na edição de `.codex/config.toml`. O caminho inteiro da negação está nos testes do driver, com a política de verdade e um Codex de mentira;
+- a corrida entre o fim de uma ação sem pedido e o envio da saída ao modelo: o driver mata o processo ao ver o item terminar, e nenhum teste mede se a saída já tinha saído;
+- o "Auto" depois de um modelo: o Codex guarda o modelo e o esforço do último turno na conversa, e um bot que volta para "Auto" ou "Padrão" segue com o anterior;
+- uma configuração plantada na pasta do bot (`.codex/config.toml`, `AGENTS.md`) com efeito ou sem efeito num turno: só a regra que impede o bot de gravar `.codex/` foi conferida. O `AGENTS.md` da pasta é lido como instrução pelo Codex, como em qualquer projeto;
+- o `deploy/backup.sh` e o `deploy/restaurar.sh` com as conversas do Codex: os dois scripts mudaram e não rodaram; o ensaio no host do runbook fica por fazer;
+- turnos simultâneos do Codex, memória por turno no produto, espera de aprovação acima de 180 s e o Codex com chave de API;
+- as telas: o Codex não aparece nos apps enquanto não estiver pronto.
 
 ## Riscos
 

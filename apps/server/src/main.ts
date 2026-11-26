@@ -1,6 +1,7 @@
 import type { Server } from 'node:http';
 import path from 'node:path';
 import { serve } from '@hono/node-server';
+import { MOTOR_PADRAO } from '@awikabot/core';
 import pacote from '../package.json' with { type: 'json' };
 import { criarApp } from './app';
 import { expirarPendentesNaPartida, GestorDeAprovacoes } from './aprovacoes';
@@ -10,9 +11,13 @@ import { marcarInterrompidas } from './conversa';
 import { criarCodigo, LimitadorDeTentativas, listarDispositivos, revogar } from './dispositivos';
 import { ambienteDoMotor, EnvInvalida, lerEnv, lerEnvDoGancho, type Env } from './env';
 import { Barramento } from './eventos';
+import { MOTOR_CODEX } from './catalogo';
+import { codexGerenciadoInstalado, configuracaoDoCodexToml, requisitosDoCodexToml } from './configuracao-codex';
 import { configuracaoGerenciada, gerenciadaInstalada } from './configuracao-motor';
 import { criarAppDoGancho, executarGancho, Ganchos } from './gancho';
+import { despacharPorMotor } from './motor';
 import { criarMotorClaudeCode } from './motor-claude-code';
+import { criarMotorCodex } from './motor-codex';
 import { criarMotorSimulado } from './motor-simulado';
 import { conferirSaude, registrarProcesso } from './saude';
 import { GestorDeTurnos } from './turnos';
@@ -40,13 +45,25 @@ function servir(env: Env, banco: Banco): void {
     console.error('AWIKA_GANCHO=gerenciado, mas a configuração gerenciada do motor não está instalada como esperado.');
     process.exit(1);
   }
+  if (ganchoGerenciado && env.AWIKA_MOTOR === 'claude-code' && !codexGerenciadoInstalado()) {
+    // Sem a configuração do Codex em /etc/codex, o bot dele pesquisaria na web e usaria os conectores da conta sem cartão.
+    console.error('AWIKA_GANCHO=gerenciado, mas a configuração gerenciada do Codex não está instalada como esperado.');
+    process.exit(1);
+  }
   const interrompidas = marcarInterrompidas(banco);
   expirarPendentesNaPartida(banco);
 
   const barramento = new Barramento();
   const aprovacoes = new GestorDeAprovacoes({ banco, barramento });
   const ganchos = new Ganchos();
-  const motor = env.AWIKA_MOTOR === 'simulado' ? criarMotorSimulado() : criarMotorClaudeCode({ binario: env.AWIKA_CLAUDE_BIN, ambiente: ambienteDoMotor(process.env), ganchoGerenciado });
+  // Cada bot roda no motor gravado nele. O simulado, só de teste, responde por todos.
+  const motor =
+    env.AWIKA_MOTOR === 'simulado'
+      ? criarMotorSimulado()
+      : despacharPorMotor({
+          [MOTOR_PADRAO]: criarMotorClaudeCode({ binario: env.AWIKA_CLAUDE_BIN, ambiente: ambienteDoMotor(process.env, 'claude-code'), ganchoGerenciado }),
+          [MOTOR_CODEX]: criarMotorCodex({ binario: env.AWIKA_CODEX_BIN, ambiente: ambienteDoMotor(process.env, 'codex'), configuracaoGerenciada: ganchoGerenciado }),
+        });
   const turnos = new GestorDeTurnos({
     banco,
     motor,
@@ -60,7 +77,15 @@ function servir(env: Env, banco: Banco): void {
       porta: env.AWIKA_PORTA_GANCHO,
     },
   });
-  const app = criarApp({ versao: pacote.version, banco, barramento, turnos, aprovacoes, limitador: new LimitadorDeTentativas() });
+  const app = criarApp({
+    versao: pacote.version,
+    banco,
+    barramento,
+    turnos,
+    aprovacoes,
+    limitador: new LimitadorDeTentativas(),
+    motoresEmProva: env.AWIKA_MOTORES_EM_PROVA,
+  });
 
   // O gancho do motor fala com o servidor por uma porta só de loopback, fora da API pública.
   const servidorDoGancho = serve({
@@ -70,7 +95,8 @@ function servir(env: Env, banco: Banco): void {
   }) as Server;
 
   const servidor = serve({ fetch: app.fetch, hostname: env.AWIKA_HOST, port: env.AWIKA_PORTA }, () => {
-    console.log(`awikabot ${pacote.version} ouvindo em ${env.AWIKA_HOST}:${env.AWIKA_PORTA}, motor ${env.AWIKA_MOTOR}`);
+    console.log(`awikabot ${pacote.version} ouvindo em ${env.AWIKA_HOST}:${env.AWIKA_PORTA}, motor ${env.AWIKA_MOTOR === 'simulado' ? 'simulado' : 'de cada bot'}`);
+    if (env.AWIKA_MOTORES_EM_PROVA.length > 0) console.log(`Motores em prova, que aceitam bot novo: ${env.AWIKA_MOTORES_EM_PROVA.join(', ')}`);
     if (interrompidas > 0) console.log(`${interrompidas} turno(s) interrompido(s) na última parada foram marcados como falha.`);
   }) as Server;
   // A vigia da saúde precisa saber qual processo derrubar se o servidor travar.
@@ -98,7 +124,7 @@ function servir(env: Env, banco: Banco): void {
 
 const formatarInstante = (instante: number | null): string => (instante === null ? '-' : new Date(instante).toISOString());
 
-const USO = 'Uso: servir | parear | dispositivos | revogar <id> | backup <arquivo> | saude | configuracao-do-motor';
+const USO = 'Uso: servir | parear | dispositivos | revogar <id> | backup <arquivo> | saude | configuracao-do-motor | configuracao-do-codex <configuracao|requisitos>';
 
 function copiarBanco(banco: Banco, destino: string | undefined): void {
   if (!destino) {
@@ -162,6 +188,14 @@ if (comando === 'gancho') {
 } else if (comando === 'configuracao-do-motor') {
   // Usado no build da imagem: imprime a configuração gerenciada do motor, com o gancho deste programa.
   console.log(JSON.stringify(configuracaoGerenciada(comandoDoGancho()), null, 2));
+} else if (comando === 'configuracao-do-codex') {
+  // Usado no build da imagem: imprime /etc/codex/managed_config.toml ou /etc/codex/requirements.toml.
+  if (argumento === 'configuracao') process.stdout.write(configuracaoDoCodexToml());
+  else if (argumento === 'requisitos') process.stdout.write(requisitosDoCodexToml());
+  else {
+    console.error(USO);
+    process.exitCode = 64;
+  }
 } else if (comando === 'saude') {
   // Chamado pelo health check da imagem. Não abre o banco: pergunta ao servidor que está no ar.
   const env = lerEnvOuSair();

@@ -36,14 +36,15 @@ function dentroDaPasta(pasta: string, alvo: string): boolean {
 }
 
 /**
- * Arquivos que o motor lê como configuração na pasta de trabalho: neles cabem ganchos e
- * comandos que rodariam nos turnos seguintes sem passar por aprovação.
+ * Arquivos que um motor lê como configuração na pasta de trabalho: neles cabem ganchos e
+ * comandos que rodariam nos turnos seguintes sem passar por aprovação. `.claude/` e `.mcp.json`
+ * são do Claude Code; `.codex/` é do Codex.
  */
 function ehConfiguracaoDoMotor(pasta: string, alvo: string): boolean {
   const base = caminhoReal(path.resolve(pasta));
   const real = caminhoReal(path.resolve(base, alvo));
   const partes = path.relative(base, real).split(path.sep).map((parte) => parte.toLowerCase());
-  return partes.includes('.claude') || partes.at(-1) === '.mcp.json';
+  return partes.includes('.claude') || partes.includes('.codex') || partes.at(-1) === '.mcp.json';
 }
 
 /** Padrão de busca que não sai da pasta: relativo e sem subir de nível. */
@@ -71,6 +72,8 @@ function descreverTroca(troca: unknown): string | null {
 
 /** O que vai ser gravado, para o cartão não mostrar só o nome do arquivo. */
 function conteudoDaGravacao(ferramenta: string, entrada: Record<string, unknown>): string | null {
+  // O Codex descreve toda gravação por um diff; num arquivo novo, é o conteúdo inteiro.
+  if (typeof entrada.diff === 'string') return entrada.diff;
   if (ferramenta === 'Write') return typeof entrada.content === 'string' ? entrada.content : null;
   if (ferramenta === 'NotebookEdit') return typeof entrada.new_source === 'string' ? entrada.new_source : null;
   const trocas = Array.isArray(entrada.edits) ? entrada.edits : [entrada];
@@ -78,16 +81,30 @@ function conteudoDaGravacao(ferramenta: string, entrada: Record<string, unknown>
   return descritas.length > 0 ? descritas.join('\n\n') : null;
 }
 
-function resumir(ferramenta: string, entrada: Record<string, unknown>): string {
+function tituloDaGravacao(ferramenta: string, entrada: Record<string, unknown>, arquivo: string | null): string {
+  const nome = arquivo ?? '(sem nome)';
+  // `apagar` e `mover_para` vêm do Codex, que apaga e renomeia arquivos pela mesma ferramenta.
+  if (entrada.apagar === true) return `Apagar o arquivo ${nome}`;
+  const destino = texto(entrada.mover_para);
+  if (destino !== null) return `Mover o arquivo ${nome} para ${destino}`;
+  return `${ferramenta === 'Write' ? 'Gravar' : 'Alterar'} o arquivo ${nome}`;
+}
+
+function resumir(ferramenta: string, entrada: Record<string, unknown>, pastaDoBot: string): string {
   const arquivo = texto(entrada.file_path) ?? texto(entrada.notebook_path);
   switch (ferramenta) {
-    case 'Bash':
-      return cortar(texto(entrada.command) ?? JSON.stringify(entrada));
+    case 'Bash': {
+      const comando = texto(entrada.command) ?? JSON.stringify(entrada);
+      // O Codex diz em que pasta o comando roda; fora da pasta do bot, o cartão avisa.
+      const pasta = texto(entrada.cwd);
+      const fora = pasta !== null && path.resolve(pastaDoBot, pasta) !== path.resolve(pastaDoBot);
+      return cortar(fora ? `${comando}\n\n(na pasta ${pasta})` : comando);
+    }
     case 'Write':
     case 'Edit':
     case 'MultiEdit':
     case 'NotebookEdit': {
-      const titulo = `${ferramenta === 'Write' ? 'Gravar' : 'Alterar'} o arquivo ${arquivo ?? '(sem nome)'}`;
+      const titulo = tituloDaGravacao(ferramenta, entrada, arquivo);
       const conteudo = conteudoDaGravacao(ferramenta, entrada);
       return cortar(conteudo === null ? titulo : `${titulo}\n\n${conteudo}`);
     }
@@ -127,9 +144,16 @@ export function avaliarFerramenta(ferramenta: string, entrada: Record<string, un
   if (DE_ESCRITA.has(ferramenta)) {
     // Sem um caminho legível não dá para saber onde a gravação cai: não vai nem para a pessoa.
     const alvo = texto(entrada.file_path) ?? texto(entrada.notebook_path);
-    if (alvo === null || !dentroDaPasta(pastaDoBot, alvo)) return { acao: 'negar', motivo: GRAVACAO_FORA_DA_PASTA };
-    if (ehConfiguracaoDoMotor(pastaDoBot, alvo)) return { acao: 'negar', motivo: CONFIGURACAO_DO_MOTOR };
+    if (alvo === null) return { acao: 'negar', motivo: GRAVACAO_FORA_DA_PASTA };
+    // Um arquivo movido grava em dois lugares, e os dois ficam presos à pasta do bot.
+    const destino = entrada.mover_para;
+    if (destino !== undefined && destino !== null && texto(destino) === null) return { acao: 'negar', motivo: GRAVACAO_FORA_DA_PASTA };
+    for (const caminho of [alvo, texto(destino)]) {
+      if (caminho === null) continue;
+      if (!dentroDaPasta(pastaDoBot, caminho)) return { acao: 'negar', motivo: GRAVACAO_FORA_DA_PASTA };
+      if (ehConfiguracaoDoMotor(pastaDoBot, caminho)) return { acao: 'negar', motivo: CONFIGURACAO_DO_MOTOR };
+    }
   }
 
-  return { acao: 'perguntar', resumo: resumir(ferramenta, entrada) };
+  return { acao: 'perguntar', resumo: resumir(ferramenta, entrada, pastaDoBot) };
 }

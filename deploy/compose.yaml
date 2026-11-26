@@ -5,6 +5,8 @@
 #
 # Login do motor, feito uma vez pela pessoa dona da conta:
 #   docker compose -f deploy/compose.yaml run --rm -it --entrypoint claude server auth login
+# Login do Codex, só para quem usa bots nele, também pela pessoa dona da conta:
+#   docker compose -f deploy/compose.yaml run --rm -it --entrypoint codex server login --device-auth
 # Código para parear um aparelho:
 #   docker compose -f deploy/compose.yaml exec server node /app/server.mjs parear
 # Backup e restauração: deploy/backup.sh e deploy/restaurar.sh.
