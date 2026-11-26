@@ -157,6 +157,8 @@ pub struct Janela {
     avisados: HashSet<String>,
     /// O aviso de versão nova. Não existe onde não há pacote para baixar.
     atualizacao: Option<Entity<PainelDeAtualizacao>>,
+    /// O painel de detalhes, à direita da conversa, está aberto. Só aparece se a janela couber.
+    detalhes_abertos: bool,
     _observadores: [Subscription; 2],
 }
 
@@ -215,6 +217,7 @@ impl Janela {
             na_frente: window.is_window_active(),
             avisados: HashSet::new(),
             atualizacao: atualizacao.map(|configuracao| cx.new(|cx| PainelDeAtualizacao::new(configuracao, cx))),
+            detalhes_abertos: true,
             _observadores: observadores,
         };
         // Quem já pareou este computador abre direto na conversa. Se o token não valer mais, o
@@ -1163,7 +1166,13 @@ impl Janela {
             .child(texto_pequeno("Sem resposta, o pedido expira e a ação não roda.", tema::texto_apagado()))
     }
 
-    fn desenhar_conversa(&self, sessao: &SessaoAberta, compositor_com_o_teclado: bool, cx: &mut Context<Self>) -> gpui::Div {
+    fn desenhar_conversa(
+        &self,
+        sessao: &SessaoAberta,
+        compositor_com_o_teclado: bool,
+        cabem_detalhes: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
         let bot = sessao.selecionado.as_ref().and_then(|id| sessao.bots.iter().find(|bot| &bot.id == id));
         let Some(bot) = bot else {
             return div()
@@ -1222,7 +1231,18 @@ impl Janela {
                         botao("editar-bot", "Editar", false)
                             .debug_selector(|| "editar-bot".into())
                             .on_click(cx.listener(|janela, _, _, cx| janela.editar_selecionado(cx))),
-                    ),
+                    )
+                    // Numa janela estreita o painel não cabe, e o botão some junto.
+                    .when(cabem_detalhes, |cabecalho| {
+                        cabecalho.child(
+                            botao("alternar-detalhes", if self.detalhes_abertos { "Ocultar detalhes" } else { "Detalhes" }, false)
+                                .debug_selector(|| "alternar-detalhes".into())
+                                .on_click(cx.listener(|janela, _, _, cx| {
+                                    janela.detalhes_abertos = !janela.detalhes_abertos;
+                                    cx.notify();
+                                })),
+                        )
+                    }),
             )
             .child(
                 div()
@@ -1267,6 +1287,112 @@ impl Janela {
                             ),
                     ),
                 ),
+            )
+    }
+
+    /// O painel à direita da conversa: o bot aberto e os pedidos que esperam a pessoa, de todos
+    /// os bots. O pedido aqui só leva à conversa dele; aprovar e negar ficam no cartão, que mostra
+    /// o pedido inteiro.
+    fn desenhar_detalhes(&self, sessao: &SessaoAberta, cx: &mut Context<Self>) -> gpui::Div {
+        let secao = |titulo: &'static str| div().flex().flex_col().gap_2().child(texto_pequeno(titulo, tema::texto_secundario()));
+        let item = |rotulo: &'static str, valor: gpui::Div| div().flex().flex_col().gap_0p5().child(rotulo_do_campo(rotulo)).child(valor);
+
+        let bot = sessao.selecionado.as_ref().and_then(|id| sessao.bots.iter().find(|bot| &bot.id == id));
+        let do_bot = bot.map(|bot| {
+            let situacao = situacao_do_bot(bot, &sessao.aprovacoes).map_or("parado", Situacao::rotulo);
+            let modelo = match &bot.modelo {
+                Some(modelo) => div().min_w_0().truncate().child(modelo.clone()),
+                None => div().text_color(tema::texto_apagado()).child("Padrão do motor"),
+            };
+            let instrucoes = if bot.instrucoes.is_empty() {
+                div().text_color(tema::texto_apagado()).child("Sem instruções")
+            } else {
+                div().child(
+                    div().id("instrucoes-do-bot").max_h(px(160.)).overflow_y_scroll().whitespace_normal().child(bot.instrucoes.clone()),
+                )
+            };
+            secao("Bot")
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(tema::texto_forte())
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .child(bot.nome.clone()),
+                )
+                .child(item("Situação", div().child(situacao)))
+                .child(item("Modelo", modelo))
+                .child(item("Instruções", instrucoes))
+        });
+
+        let pendentes = sessao.aprovacoes.pendentes();
+        let titulo_dos_pedidos: SharedString = match pendentes.len() {
+            0 => "Pedidos pendentes".into(),
+            quantos => format!("Pedidos pendentes ({quantos})").into(),
+        };
+        let linhas = pendentes.iter().enumerate().map(|(indice, aprovacao)| {
+            let nome = sessao.bots.iter().find(|bot| bot.id == aprovacao.bot_id).map_or("Bot", |bot| bot.nome.as_str());
+            let (credencial, bot_id) = (sessao.credencial.clone(), aprovacao.bot_id.clone());
+            div()
+                .id(("pendente", indice))
+                .debug_selector(|| "pendente".into())
+                .p_2()
+                .flex()
+                .flex_col()
+                .gap_0p5()
+                .rounded_md()
+                .cursor_pointer()
+                .bg(tema::elevado())
+                .border_1()
+                .border_color(tema::divisoria())
+                .hover(|estilo| estilo.bg(tema::sob_o_mouse()))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(div().flex_1().min_w_0().truncate().text_color(tema::texto_forte()).child(nome.to_owned()))
+                        .child(texto_pequeno(aprovacao.ferramenta.clone(), tema::estado_de_aviso()).flex_none()),
+                )
+                .child(texto_pequeno(aprovacao.resumo.clone(), tema::texto_secundario()).min_w_0().truncate())
+                .on_click(cx.listener(move |janela, _, _, cx| janela.escolher_na_lista(&credencial, bot_id.clone(), cx)))
+        });
+        let linhas: Vec<_> = linhas.collect();
+        let pedidos = if linhas.is_empty() {
+            secao("Pedidos pendentes").child(texto_pequeno("Nenhum pedido esperando.", tema::texto_apagado()))
+        } else {
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(texto_pequeno(titulo_dos_pedidos, tema::texto_secundario()))
+                .children(linhas)
+                .child(texto_pequeno("Aprovar e negar ficam no cartão, na conversa.", tema::texto_apagado()))
+        };
+
+        div()
+            .w(px(tema::LARGURA_DOS_DETALHES))
+            .flex_none()
+            .h_full()
+            .flex()
+            .flex_col()
+            .bg(tema::painel())
+            .border_l_1()
+            .border_color(tema::divisoria())
+            .child(div().py(px(14.)).px_4().text_color(tema::texto_forte()).font_weight(gpui::FontWeight::SEMIBOLD).child("Detalhes"))
+            .child(
+                div()
+                    .id("detalhes")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .px_4()
+                    .pb_4()
+                    .flex()
+                    .flex_col()
+                    .gap_5()
+                    .children(do_bot)
+                    .child(pedidos),
             )
     }
 
@@ -1353,14 +1479,16 @@ impl Render for Janela {
         let conteudo = match &self.tela {
             Tela::Pareamento(tela) => self.desenhar_pareamento(tela, cx),
             Tela::Sessao(sessao) => {
-                let central = match &sessao.formulario {
-                    Some(formulario) => self.desenhar_formulario(formulario, cx),
+                let cabem_detalhes = window.viewport_size().width >= px(tema::JANELA_MINIMA_COM_DETALHES);
+                let (central, detalhes) = match &sessao.formulario {
+                    Some(formulario) => (self.desenhar_formulario(formulario, cx), None),
                     None => {
                         let com_o_teclado = sessao.compositor.focus_handle(cx).is_focused(window);
-                        self.desenhar_conversa(sessao, com_o_teclado, cx)
+                        let detalhes = (cabem_detalhes && self.detalhes_abertos).then(|| self.desenhar_detalhes(sessao, cx));
+                        (self.desenhar_conversa(sessao, com_o_teclado, cabem_detalhes, cx), detalhes)
                     }
                 };
-                div().size_full().flex().child(self.desenhar_lateral(sessao, cx)).child(central)
+                div().size_full().flex().child(self.desenhar_lateral(sessao, cx)).child(central).children(detalhes)
             }
         };
         div()
@@ -2113,6 +2241,56 @@ mod testes {
                 && estados_dos_pedidos(janela) == [AprovacaoEstado::Pendente]
         });
         assert!(na_tela(&mut cx, "aprovar"));
+    }
+
+    #[gpui::test]
+    fn o_painel_de_detalhes_lista_o_pedido_de_outro_bot_leva_a_conversa_dele_e_pode_ser_fechado(cx: &mut TestAppContext) {
+        let (_servidor, guardada, primeiro, janela, mut cx) = abrir_com_bot(cx, "Scout");
+        assert!(na_tela(&mut cx, "alternar-detalhes"), "a janela de teste cabe o painel");
+        assert!(!na_tela(&mut cx, "pendente"));
+
+        let segundo = criar_bot_pela_api(&guardada, "Vigia");
+        Api::new()
+            .enviar_turno(&guardada.credencial(), &segundo.id, &PedidoTurno { texto: "!comando cat /etc/hostname".into() })
+            .expect("turno");
+        esperar(&mut cx, &janela, "pedido do segundo bot conhecido", |janela| {
+            aberta(janela).is_some_and(|sessao| sessao.bots.len() == 2 && sessao.aprovacoes.tem_pendente(&segundo.id))
+        });
+        janela.read_with(&cx, |janela, _| {
+            assert_eq!(aberta(janela).and_then(|sessao| sessao.selecionado.as_deref()), Some(primeiro.id.as_str()));
+        });
+        // O pedido aparece no painel, sem botão de decidir: a decisão é no cartão.
+        assert!(na_tela(&mut cx, "pendente"));
+        assert!(!na_tela(&mut cx, "aprovar"));
+
+        clicar(&mut cx, "pendente");
+        esperar(&mut cx, &janela, "conversa do segundo bot aberta, com o cartão", |janela| {
+            aberta(janela).is_some_and(|sessao| sessao.selecionado.as_deref() == Some(segundo.id.as_str()))
+                && estados_dos_pedidos(janela) == [AprovacaoEstado::Pendente]
+        });
+        assert!(na_tela(&mut cx, "aprovar"));
+
+        // Fechado, o painel some com o pedido; aberto de novo, volta.
+        clicar(&mut cx, "alternar-detalhes");
+        assert!(!na_tela(&mut cx, "pendente"));
+        janela.read_with(&cx, |janela, _| assert!(!janela.detalhes_abertos));
+        clicar(&mut cx, "alternar-detalhes");
+        assert!(na_tela(&mut cx, "pendente"));
+
+        // Decidido no cartão, o pedido sai do painel.
+        clicar(&mut cx, "negar");
+        esperar(&mut cx, &janela, "pedido negado", |janela| estados_dos_pedidos(janela) == [AprovacaoEstado::Negada]);
+        assert!(!na_tela(&mut cx, "pendente"));
+    }
+
+    #[gpui::test]
+    fn numa_janela_estreita_o_painel_de_detalhes_e_o_botao_dele_somem(cx: &mut TestAppContext) {
+        let (_servidor, _guardada, _bot, _janela, mut cx) = abrir_com_bot(cx, "Scout");
+        assert!(na_tela(&mut cx, "alternar-detalhes"));
+        cx.simulate_resize(gpui::size(px(tema::JANELA_MINIMA_COM_DETALHES - 1.), px(600.)));
+        cx.run_until_parked();
+        assert!(!na_tela(&mut cx, "alternar-detalhes"));
+        assert!(na_tela(&mut cx, "enviar"), "a conversa continua na tela");
     }
 
     #[gpui::test]

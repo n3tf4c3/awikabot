@@ -201,6 +201,10 @@ pub const ALTURA_DA_LINHA: f32 = 18.0;
 pub const LARGURA_DA_LATERAL: f32 = 248.0;
 /// Largura máxima da coluna da conversa e do compositor; numa janela larga, sobra margem dos lados.
 pub const LARGURA_DA_CONVERSA: f32 = 760.0;
+/// Largura do painel de detalhes, à direita da conversa.
+pub const LARGURA_DOS_DETALHES: f32 = 260.0;
+/// Abaixo desta largura de janela o painel de detalhes some, para a conversa não ficar espremida.
+pub const JANELA_MINIMA_COM_DETALHES: f32 = 900.0;
 
 #[cfg(test)]
 mod testes {

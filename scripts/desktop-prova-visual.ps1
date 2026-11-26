@@ -140,7 +140,7 @@ $novoBot = @(124, 23)        # no alto da lateral
 $aprovar = @(311, 251)       # no cartão de aprovação de uma conversa nova: uma mensagem de uma linha, a resposta e o cartão
 $negar = @(383, 251)
 $segundoBot = @(120, 115)    # a segunda linha da lista de bots
-$parar = @(925, 640)         # no canto do cartão do compositor, no lugar do "Enviar"
+$parar = @(667, 640)         # no canto do cartão do compositor, no lugar do "Enviar", com o painel de detalhes aberto
 $desparear = @(120, 657)     # no pé da lateral
 
 try {

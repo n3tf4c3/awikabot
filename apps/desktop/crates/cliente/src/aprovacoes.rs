@@ -97,6 +97,14 @@ impl Aprovacoes {
         do_bot
     }
 
+    /// Os pedidos que esperam a pessoa, de todos os bots, do mais antigo para o mais novo: o que
+    /// expira primeiro vem antes.
+    pub fn pendentes(&self) -> Vec<&Aprovacao> {
+        let mut pendentes: Vec<&Aprovacao> = self.por_id.values().filter(|aprovacao| pendente(aprovacao)).collect();
+        pendentes.sort_by(|a, b| por_criacao(a, b));
+        pendentes
+    }
+
     pub fn tem_pendente(&self, bot_id: &str) -> bool {
         self.por_id.values().any(|aprovacao| aprovacao.bot_id == bot_id && pendente(aprovacao))
     }
@@ -532,6 +540,15 @@ mod testes {
     #[test]
     fn bot_com_turno_ativo_esta_respondendo() {
         assert_eq!(situacao_do_bot(&bot(true), &Aprovacoes::default()), Some(Situacao::Respondendo));
+    }
+
+    #[test]
+    fn pendentes_junta_os_bots_pela_ordem_de_criacao_e_deixa_os_resolvidos_de_fora() {
+        let estado = com([do_bot_b(aprovacao(3)), resolvida(2, Negada), aprovacao(4), do_bot_b(aprovacao(1)), resolvida(5, Aprovada)]);
+        let pendentes: Vec<(&str, &str)> =
+            estado.pendentes().iter().map(|aprovacao| (aprovacao.bot_id.as_str(), aprovacao.resumo.as_str())).collect();
+        assert_eq!(pendentes, [(BOT_B, "comando 1"), (BOT_B, "comando 3"), (BOT_A, "comando 4")]);
+        assert!(Aprovacoes::default().pendentes().is_empty());
     }
 
     #[test]
