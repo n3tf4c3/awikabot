@@ -95,7 +95,7 @@ Um bot executa comandos, então o servidor equivale a um terminal remoto no Pi.
 4. Concluída em 23/11, no lado do servidor. Robustez no Pi: retomada depois de queda, backup do banco e health check vigiado.
    Verificar: derrubar o contêiner no meio de um turno e conferir o fluxo 5 na volta; restaurar o backup num ambiente descartável.
 5. Revisão de segurança e distribuição por TestFlight e teste interno da Play.
-6. App de desktop para Windows e Mac, em Rust com GPUI. No Windows, as versões 0.1.0, 0.1.1 e 0.1.2 foram publicadas em 24 e 25/11; o Mac ainda não tem pacote. Ver "Etapa 6: plano do app de desktop".
+6. App de desktop para Windows e Mac, em Rust com GPUI. No Windows, as versões 0.1.0 a 0.1.3 foram publicadas entre 24 e 26/11; o Mac ainda não tem pacote. Ver "Etapa 6: plano do app de desktop".
    Verificar: os fluxos 1 a 5 percorridos no Windows e num Mac, com o app instalado pelo pacote assinado.
 
 ## Etapa 0: resultado (2026-11-23)
@@ -279,7 +279,7 @@ Agora a página de mensagens traz, num campo opcional, os pedidos já resolvidos
 | Desktop no Windows (rustfmt, clippy e testes) | Passa. O cliente, contra o servidor, recebe o pedido negado na página da conversa; a janela abre depois de o pedido ser resolvido e mostra a linha dele. |
 | Servidor que não manda o campo | A página vale sem ele, no celular e no desktop, por teste. |
 
-Não coberto: a linha vista num aparelho e no app de desktop de verdade depois de reabrir; o motor real; o desktop num Mac, que fica para a CI. O desktop publicado, 0.1.2, ignora o campo: quem o usa só vê os pedidos antigos numa versão nova.
+Não coberto: a linha vista num aparelho e no app de desktop de verdade depois de reabrir; o motor real; o desktop num Mac, que fica para a CI. O desktop 0.1.2 ignora o campo: quem o usa só vê os pedidos antigos a partir da 0.1.3, publicada em 26/11.
 
 ## Etapa 6: plano do app de desktop (2026-11-23)
 
@@ -639,7 +639,21 @@ Ainda em 25/11 saiu a versão 0.1.2, de `02c9d0b`. Fora o ícone, ela não muda 
 
 A segunda rodada de QA foi recusada na primeira tentativa: disparada logo depois do fim da primeira, achou o Sandbox ainda fechando. Refeita com ele fechado, passou; a tentativa recusada não grava evidência.
 
-Não coberto ainda: o ícone novo no atalho, no instalador e no aviso do sistema, que nenhuma conferência olha; os cliques do roteiro em outra escala de tela, em outro tamanho de janela e no tema escuro, e o painel da lateral da conversa, com o app pareado; a conferência de revogação com o computador sem rede; a recusa do roteiro do instalador diante de outra versão do Inno Setup. No Sandbox a conta é administradora, e a instalação sem privilégios é conferida pelo lugar dos arquivos e do registro, não com um usuário comum. A assinatura e a publicação só rodaram neste PC; a CI monta o pacote sem assinatura no Windows a cada PR.
+Em 26/11 saiu a versão 0.1.3, de `9cc0fe8`. É a primeira desde a 0.1.0 que muda o app: leva a quem já instalou a conversa com os pedidos de aprovação já resolvidos (ver "Pedidos resolvidos no histórico"). O roteiro rodou inteiro pela quarta vez.
+
+| Verificação | Resultado |
+|---|---|
+| Conferências do candidato, em `9cc0fe8` | 14 de 14 passos, sem mudança pendente. |
+| Verificação de segurança | Emitida de novo sobre `9cc0fe8`, e não reaproveitada: desde a 0.1.2 mudou código do servidor que responde a um aparelho pareado. Aprovada como gate, sem achado novo. Quem conferiu foi a mesma sessão que escreveu a mudança, e não houve teste dinâmico. |
+| Pacote assinado e conferência dos artefatos | Executável e instalador assinados com o mesmo certificado da 0.1.2; o app aceitou o pacote pela regra do atualizador. |
+| Sandbox, pacote assinado, partindo da 0.1.2 publicada | 26 de 26 passos nas duas rodadas, sem rede e com rede e marca de download, com o Smart App Control ligado. |
+| Rascunho no GitHub | Criado com os três arquivos, baixado de volta e comparado com os conferidos. |
+| Publicação | Feita pelo titular em 26/11. Lido no GitHub depois: o release é público, a etiqueta `desktop-v0.1.3` aponta para `9cc0fe8`, e os três arquivos têm os hashes da conferência dos artefatos. |
+| Atualização vista num app instalado, com `-Clicar` | 6 de 6 passos, sem ninguém na frente. A 0.1.2 instalada registrou a consulta, o roteiro clicou em "Baixar" e em "Instalar e reabrir", o executável e o registro passaram a 0.1.3 e o app reabriu em outro processo. As três capturas mostram "Versão 0.1.3 disponível", "Versão 0.1.3 baixada e conferida" com "Instalar e reabrir", e o app reaberto sem aviso. |
+
+Desta vez a segunda rodada de QA esperou o Sandbox da primeira fechar antes de começar, e passou na primeira tentativa. Logo depois da aprovação, o release ainda aparecia como rascunho no GitHub, com a etiqueta já criada: o comando do titular estava terminando. A leitura que vale é a de depois de ele dizer "PUBLICADO".
+
+Não coberto ainda: a linha do pedido resolvido no app de desktop de verdade depois de reabrir, que é o motivo da 0.1.3 e só tem o teste da janela; o ícone novo no atalho, no instalador e no aviso do sistema, que nenhuma conferência olha; os cliques do roteiro em outra escala de tela, em outro tamanho de janela e no tema escuro, e o painel da lateral da conversa, com o app pareado; a conferência de revogação com o computador sem rede; a recusa do roteiro do instalador diante de outra versão do Inno Setup. No Sandbox a conta é administradora, e a instalação sem privilégios é conferida pelo lugar dos arquivos e do registro, não com um usuário comum. A assinatura e a publicação só rodaram neste PC; a CI monta o pacote sem assinatura no Windows a cada PR.
 
 ### Decisões que são do titular
 
