@@ -476,6 +476,61 @@ function Get-AutoriaDosCliques {
     return 'o roteiro de dentro nao clicou; os cliques ficaram para uma pessoa'
 }
 
+# A conta em que o Windows Sandbox roda o comando de entrada, e portanto os roteiros de dentro.
+$script:ContaDoSandbox = 'WDAGUtilityAccount'
+
+# O que falta para um roteiro de dentro do Sandbox começar pela guarda que o impede de rodar em
+# outro computador. O arquivo é só lido e analisado, nunca executado: o roteiro instala o app e
+# desliga a máquina no fim. Devolve os problemas; nenhum quer dizer que a primeira instrução é a
+# guarda, com a conta do Sandbox, um `throw` e mais nada, e que nada do roteiro roda antes dela.
+function Get-ProblemasDaGuardaDoSandbox {
+    param([string]$Roteiro)
+    $simbolos = $null
+    $erros = $null
+    $arvore = [System.Management.Automation.Language.Parser]::ParseFile($Roteiro, [ref]$simbolos, [ref]$erros)
+    if ($erros.Count -gt 0) { return @("o roteiro nao se deixa analisar: $($erros[0].Message)") }
+
+    # O que roda antes da primeira instrução: outros blocos e o valor padrão de um parâmetro.
+    if ($arvore.BeginBlock -or $arvore.ProcessBlock -or $arvore.DynamicParamBlock) { 'ha um bloco que rodaria antes da guarda (begin, process ou dynamicparam)' }
+    if ($arvore.ParamBlock) {
+        $chamadas = @($arvore.ParamBlock.FindAll({
+                    param($no)
+                    $no -is [System.Management.Automation.Language.CommandAst] -or
+                    $no -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -or
+                    $no -is [System.Management.Automation.Language.ScriptBlockExpressionAst]
+                }, $true))
+        if ($chamadas.Count -gt 0) { 'o valor padrao de um parametro roda codigo antes da guarda' }
+    }
+
+    $primeira = if ($arvore.EndBlock) { $arvore.EndBlock.Statements | Select-Object -First 1 } else { $null }
+    if (-not $primeira) { 'o roteiro nao tem instrucao nenhuma'; return }
+    if ($primeira -isnot [System.Management.Automation.Language.IfStatementAst]) { 'a primeira instrucao do roteiro nao e a guarda'; return }
+    if ($primeira.Clauses.Count -ne 1 -or $primeira.ElseClause) { 'a guarda tem mais de um ramo' }
+
+    $condicao = ($primeira.Clauses[0].Item1.Extent.Text -replace '\s+', ' ').Trim()
+    $esperada = '$env:USERNAME -ne ' + "'$script:ContaDoSandbox'"
+    if ($condicao -cne $esperada) { "a guarda nao compara a conta com a do Sandbox: $condicao" }
+
+    $corpo = @($primeira.Clauses[0].Item2.Statements)
+    if ($corpo.Count -ne 1 -or $corpo[0] -isnot [System.Management.Automation.Language.ThrowStatementAst]) { 'a guarda nao para o roteiro com um throw, e so com ele'; return }
+    # A mensagem do throw é um texto fixo: nada dentro dela roda.
+    $mensagem = $corpo[0].Pipeline
+    $fixa = $mensagem -and $mensagem.PipelineElements.Count -eq 1 -and
+        $mensagem.PipelineElements[0] -is [System.Management.Automation.Language.CommandExpressionAst] -and
+        $mensagem.PipelineElements[0].Expression -is [System.Management.Automation.Language.StringConstantExpressionAst]
+    if (-not $fixa) { 'a mensagem da guarda nao e um texto fixo' }
+}
+
+# A guarda de um roteiro de dentro, como texto: a primeira instrução dele. Só para um roteiro que
+# passou por Get-ProblemasDaGuardaDoSandbox, que garante que esse texto é um `if` com um `throw`.
+function Get-TextoDaGuardaDoSandbox {
+    param([string]$Roteiro)
+    $simbolos = $null
+    $erros = $null
+    $arvore = [System.Management.Automation.Language.Parser]::ParseFile($Roteiro, [ref]$simbolos, [ref]$erros)
+    return $arvore.EndBlock.Statements[0].Extent.Text
+}
+
 # Os hashes dos arquivos de uma pasta batem com os que a conferência dos artefatos registrou?
 # Devolve um problema por arquivo que falta ou difere.
 function Get-ProblemasDosArquivos {
