@@ -83,6 +83,17 @@ export function revogar(banco: Banco, id: string, agora = Date.now()): boolean {
   return Number(resultado.changes) === 1;
 }
 
+/**
+ * Revoga todos os aparelhos e descarta os códigos de pareamento; devolve quantos estavam ativos. É o
+ * que a restauração roda antes de o servidor subir: o backup traz os aparelhos como estavam no dia
+ * da cópia, e um revogado depois dela voltaria a entrar. Não há registro das revogações fora do
+ * banco, então todos saem e cada aparelho pareia de novo.
+ */
+export function revogarTodos(banco: Banco, agora = Date.now()): number {
+  banco.prepare('DELETE FROM codigos_pareamento').run();
+  return Number(banco.prepare('UPDATE dispositivos SET revogado_em = ? WHERE revogado_em IS NULL').run(agora).changes);
+}
+
 /** Os oito grupos de um IPv6 já validado, sem zeros à esquerda, com o IPv4 do fim em dois grupos. */
 function gruposIpv6(endereco: string): string[] {
   let texto = endereco;

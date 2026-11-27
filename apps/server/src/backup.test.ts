@@ -7,7 +7,7 @@ import { BackupRecusado, fazerBackup } from './backup';
 import { abrirBanco } from './banco';
 import { criarBot, listarBots } from './bots';
 import { inserirMensagem, listarMensagens } from './conversa';
-import { autenticar, criarCodigo, parear, revogar } from './dispositivos';
+import { autenticar, criarCodigo, listarDispositivos, parear, revogar, revogarTodos } from './dispositivos';
 
 const pasta = mkdtempSync(path.join(os.tmpdir(), 'awikabot-backup-'));
 afterAll(() => {
@@ -52,6 +52,42 @@ describe('backup do banco', () => {
       expect(autenticar(banco, origem.tokenRevogado)).toBeNull();
       // O banco restaurado aceita escrita.
       expect(inserirMensagem(banco, { botId: origem.bot.id, papel: 'usuario', texto: 'nova', estado: 'completa' }).seq).toBe(3);
+    } finally {
+      banco.close();
+    }
+  });
+
+  // O backup traz os aparelhos como estavam no dia da cópia. Sem a revogação geral, que o
+  // `restaurar.sh` roda antes de o servidor subir, um aparelho revogado depois da cópia voltaria a entrar.
+  it('o aparelho revogado depois da cópia não entra no servidor restaurado', () => {
+    const origem = bancoComDados('revogado-depois');
+    const destino = path.join(pasta, 'copias', 'revogado-depois.db');
+    fazerBackup(origem.banco, destino);
+    // A revogação acontece na origem, depois da cópia: o arquivo ainda traz o aparelho como ativo.
+    const perdido = listarDispositivos(origem.banco).find((d) => d.nome === 'Celular')!;
+    expect(revogar(origem.banco, perdido.id)).toBe(true);
+    origem.banco.close();
+
+    const restaurado = path.join(pasta, 'restaurado-revogado-depois', 'awikabot.db');
+    mkdirSync(path.dirname(restaurado), { recursive: true });
+    copyFileSync(destino, restaurado);
+    const banco = abrirBanco(restaurado);
+    try {
+      const pendente = criarCodigo(banco);
+      expect(revogarTodos(banco)).toBe(1);
+
+      expect(autenticar(banco, origem.token)).toBeNull();
+      expect(autenticar(banco, origem.tokenRevogado)).toBeNull();
+      expect(listarDispositivos(banco).every((d) => d.revogadoEm !== null)).toBe(true);
+      // Um código emitido antes da restauração também não vale mais.
+      expect(parear(banco, normalizarCodigoPareamento(pendente), 'Com código antigo')).toBeNull();
+      // Os bots e as conversas ficam, e o aparelho legítimo volta com um pareamento novo.
+      expect(listarBots(banco)).toHaveLength(1);
+      const novo = parear(banco, normalizarCodigoPareamento(criarCodigo(banco)), 'Celular')!;
+      expect(autenticar(banco, novo.token)?.nome).toBe('Celular');
+      // O comando é para antes de o servidor subir: rodado de novo, revoga também quem pareou depois.
+      expect(revogarTodos(banco)).toBe(1);
+      expect(revogarTodos(banco)).toBe(0);
     } finally {
       banco.close();
     }

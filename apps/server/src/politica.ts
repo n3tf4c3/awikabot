@@ -18,6 +18,7 @@ const SEM_EFEITO = new Set(['TodoWrite']);
 const FORA_DA_PASTA = 'o bot só lê arquivos da própria pasta de trabalho';
 const GRAVACAO_FORA_DA_PASTA = 'o bot só grava arquivos na própria pasta de trabalho';
 const CONFIGURACAO_DO_MOTOR = 'o bot não altera a configuração do motor';
+const GRANDE_DEMAIS = 'a ação não cabe inteira no cartão de aprovação; divida-a em partes menores';
 
 /** Caminho com os atalhos resolvidos. Para o que ainda não existe, resolve a pasta mais próxima que existe. */
 function caminhoReal(caminho: string): string {
@@ -80,12 +81,6 @@ function padraoContido(padrao: string): boolean {
   );
 }
 
-function cortar(texto: string): string {
-  const limite = LIMITES.resumoAprovacao;
-  const aviso = '\n… (cortado)';
-  return texto.length <= limite ? texto : texto.slice(0, limite - aviso.length) + aviso;
-}
-
 function texto(valor: unknown): string | null {
   return typeof valor === 'string' && valor.length > 0 ? valor : null;
 }
@@ -118,6 +113,10 @@ function tituloDaGravacao(ferramenta: string, entrada: Record<string, unknown>, 
   return `${ferramenta === 'Write' ? 'Gravar' : 'Alterar'} o arquivo ${nome}`;
 }
 
+/**
+ * O que a pessoa lê no cartão antes de decidir, inteiro. Nada aqui é cortado: a aprovação libera a
+ * ação como o motor a pediu, então o que não cabe no cartão não chega a ser perguntado.
+ */
 function resumir(ferramenta: string, entrada: Record<string, unknown>, pastaDoBot: string): string {
   const arquivo = texto(entrada.file_path) ?? texto(entrada.notebook_path);
   switch (ferramenta) {
@@ -126,7 +125,7 @@ function resumir(ferramenta: string, entrada: Record<string, unknown>, pastaDoBo
       // O Codex diz em que pasta o comando roda; fora da pasta do bot, o cartão avisa.
       const pasta = texto(entrada.cwd);
       const fora = pasta !== null && path.resolve(pastaDoBot, pasta) !== path.resolve(pastaDoBot);
-      return cortar(fora ? `${comando}\n\n(na pasta ${pasta})` : comando);
+      return fora ? `${comando}\n\n(na pasta ${pasta})` : comando;
     }
     case 'Write':
     case 'Edit':
@@ -134,14 +133,14 @@ function resumir(ferramenta: string, entrada: Record<string, unknown>, pastaDoBo
     case 'NotebookEdit': {
       const titulo = tituloDaGravacao(ferramenta, entrada, arquivo);
       const conteudo = conteudoDaGravacao(ferramenta, entrada);
-      return cortar(conteudo === null ? titulo : `${titulo}\n\n${conteudo}`);
+      return conteudo === null ? titulo : `${titulo}\n\n${conteudo}`;
     }
     case 'WebFetch':
-      return cortar(`Abrir ${texto(entrada.url) ?? '(sem endereço)'}`);
+      return `Abrir ${texto(entrada.url) ?? '(sem endereço)'}`;
     case 'WebSearch':
-      return cortar(`Pesquisar na web: ${texto(entrada.query) ?? '(sem termo)'}`);
+      return `Pesquisar na web: ${texto(entrada.query) ?? '(sem termo)'}`;
     default:
-      return cortar(JSON.stringify(entrada));
+      return JSON.stringify(entrada);
   }
 }
 
@@ -163,7 +162,7 @@ export function avaliarFerramentaDoDecisor(ferramenta: string): Extract<Veredito
 /**
  * Decide sem a pessoa o que é seguro decidir: leitura dentro da pasta do bot passa; leitura e
  * gravação fora dela, e gravação na configuração do motor, são negadas. Todo o resto, inclusive
- * ferramenta desconhecida, vai para a pessoa.
+ * ferramenta desconhecida, vai para a pessoa, desde que caiba inteiro no cartão.
  */
 export function avaliarFerramenta(ferramenta: string, entrada: Record<string, unknown>, pastaDoBot: string): Veredito {
   if (SEM_EFEITO.has(ferramenta)) return { acao: 'permitir' };
@@ -198,5 +197,8 @@ export function avaliarFerramenta(ferramenta: string, entrada: Record<string, un
     }
   }
 
-  return { acao: 'perguntar', resumo: resumir(ferramenta, entrada, pastaDoBot) };
+  const resumo = resumir(ferramenta, entrada, pastaDoBot);
+  // O limite é o do contrato, na mesma medida dele. Um resumo cortado deixaria a pessoa aprovar a parte que não viu.
+  if (resumo.length > LIMITES.resumoAprovacao) return { acao: 'negar', motivo: GRANDE_DEMAIS };
+  return { acao: 'perguntar', resumo };
 }

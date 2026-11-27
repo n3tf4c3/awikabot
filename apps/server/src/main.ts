@@ -10,7 +10,7 @@ import { expirarPendentesNaPartida, GestorDeAprovacoes } from './aprovacoes';
 import { BackupRecusado, fazerBackup } from './backup';
 import { abrirBanco, type Banco } from './banco';
 import { marcarInterrompidas } from './conversa';
-import { criarCodigo, LimitadorDeTentativas, listarDispositivos, revogar } from './dispositivos';
+import { criarCodigo, LimitadorDeTentativas, listarDispositivos, revogar, revogarTodos } from './dispositivos';
 import { ambienteDoMotor, EnvInvalida, lerEnv, lerEnvDoGancho, lerPastaDoBot, type Env } from './env';
 import { Barramento } from './eventos';
 import { esforcoValido, MOTOR_ANTIGRAVITY, MOTOR_CODEX, motorDoCatalogo } from './catalogo';
@@ -210,7 +210,7 @@ async function julgar(env: Env, opcoes: string[]): Promise<void> {
 const formatarInstante =(instante: number | null): string => (instante === null ? '-' : new Date(instante).toISOString());
 
 const USO =
-  'Uso: servir | parear | dispositivos | revogar <id> | backup <arquivo> | saude | julgar [opções] | configuracao-do-motor | configuracao-do-codex <configuracao|requisitos>';
+  'Uso: servir | parear | dispositivos | revogar <id> | revogar-todos | backup <arquivo> | saude | julgar [opções] | configuracao-do-motor | configuracao-do-codex <configuracao|requisitos>';
 
 function copiarBanco(banco: Banco, destino: string | undefined): void {
   if (!destino) {
@@ -258,6 +258,12 @@ function administrar(env: Env, comando: string, argumento: string | undefined): 
         console.log('Aparelho revogado.');
       }
       break;
+    case 'revogar-todos': {
+      // Rodado pelo `deploy/restaurar.sh`, com o servidor parado, antes de o banco restaurado atender alguém.
+      const revogados = revogarTodos(banco);
+      console.log(`${revogados} aparelho(s) revogado(s). Nenhum aparelho entra até parear de novo (comando "parear").`);
+      break;
+    }
     case 'backup':
       copiarBanco(banco, argumento);
       break;

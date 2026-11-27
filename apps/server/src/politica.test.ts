@@ -111,20 +111,42 @@ describe('o que muda alguma coisa', () => {
     expect(acao('Bash', { command: `cat ${path.join(fora, 'segredo.txt')}` })).toBe('perguntar');
   });
 
-  it('corta o resumo no limite do contrato e avisa', () => {
-    const veredito = avaliarFerramenta('Bash', { command: 'x'.repeat(LIMITES.resumoAprovacao + 500) }, pasta);
-    expect(veredito.acao).toBe('perguntar');
-    if (veredito.acao !== 'perguntar') return;
-    expect(veredito.resumo).toHaveLength(LIMITES.resumoAprovacao);
-    expect(veredito.resumo.endsWith('… (cortado)')).toBe(true);
-  });
+  // A pessoa aprova o que leu. O cartão leva até `LIMITES.resumoAprovacao` caracteres, e a aprovação
+  // libera a ação inteira: o que não cabe inteiro no cartão não chega a ser perguntado.
+  describe('ação que não cabe inteira no cartão', () => {
+    const limite = LIMITES.resumoAprovacao;
+    const GRANDE_DEMAIS = { acao: 'negar', motivo: 'a ação não cabe inteira no cartão de aprovação; divida-a em partes menores' };
+    /** O texto que, somado ao começo fixo do resumo, dá o tamanho pedido. */
+    const ate = (tamanho: number, comeco: string): string => 'x'.repeat(tamanho - comeco.length);
 
-  it('corta um conteúdo longo de gravação, mantendo o nome do arquivo no começo', () => {
-    const veredito = avaliarFerramenta('Write', { file_path: 'a.txt', content: 'y'.repeat(LIMITES.resumoAprovacao * 2) }, pasta);
-    expect(veredito.acao).toBe('perguntar');
-    if (veredito.acao !== 'perguntar') return;
-    expect(veredito.resumo).toHaveLength(LIMITES.resumoAprovacao);
-    expect(veredito.resumo.startsWith('Gravar o arquivo a.txt\n\nyyy')).toBe(true);
+    it.each([
+      ['um comando', 'Bash', (n: number) => ({ command: ate(n, '') }), ''],
+      ['um comando do Codex, com o aviso da pasta', 'Bash', (n: number) => ({ command: ate(n, `\n\n(na pasta ${fora})`), cwd: fora }), ''],
+      ['uma gravação', 'Write', (n: number) => ({ file_path: 'a.txt', content: ate(n, 'Gravar o arquivo a.txt\n\n') }), 'Gravar o arquivo a.txt\n\n'],
+      ['uma troca de texto', 'Edit', (n: number) => ({ file_path: 'a.txt', old_string: 'um', new_string: ate(n, 'Alterar o arquivo a.txt\n\nSai:\num\nEntra:\n') }), 'Alterar o arquivo a.txt\n\nSai:\num\nEntra:\n'],
+      ['uma edição do Codex, em diff', 'Edit', (n: number) => ({ file_path: 'a.txt', diff: ate(n, 'Alterar o arquivo a.txt\n\n') }), 'Alterar o arquivo a.txt\n\n'],
+      ['uma célula de caderno', 'NotebookEdit', (n: number) => ({ notebook_path: 'n.ipynb', new_source: ate(n, 'Alterar o arquivo n.ipynb\n\n') }), 'Alterar o arquivo n.ipynb\n\n'],
+      ['um endereço', 'WebFetch', (n: number) => ({ url: ate(n, 'Abrir ') }), 'Abrir '],
+      ['uma ferramenta desconhecida', 'FerramentaNova', (n: number) => ({ a: ate(n, '{"a":""}') }), '{"a":"'],
+    ])('%s: no limite vai inteira para a pessoa; um caractere a mais é negado sem cartão', (_caso, ferramenta, entradaCom, comeco) => {
+      const noLimite = avaliarFerramenta(ferramenta, entradaCom(limite), pasta);
+      expect(noLimite.acao).toBe('perguntar');
+      if (noLimite.acao !== 'perguntar') return;
+      expect(noLimite.resumo).toHaveLength(limite);
+      expect(noLimite.resumo.startsWith(comeco)).toBe(true);
+      expect(noLimite.resumo).not.toContain('cortado');
+
+      expect(avaliarFerramenta(ferramenta, entradaCom(limite + 1), pasta)).toEqual(GRANDE_DEMAIS);
+    });
+
+    it('nega uma gravação longa em vez de mostrar só o começo dela', () => {
+      expect(avaliarFerramenta('Write', { file_path: 'a.txt', content: 'y'.repeat(limite * 2) }, pasta)).toEqual(GRANDE_DEMAIS);
+    });
+
+    it('o conteúdo conta em unidades do contrato: um emoji conta por dois', () => {
+      expect(acao('Bash', { command: '😀'.repeat(limite / 2) })).toBe('perguntar');
+      expect(avaliarFerramenta('Bash', { command: `${'😀'.repeat(limite / 2)}x` }, pasta)).toEqual(GRANDE_DEMAIS);
+    });
   });
 
   it('deixa passar a lista de tarefas do motor, que não toca em nada', () => {
