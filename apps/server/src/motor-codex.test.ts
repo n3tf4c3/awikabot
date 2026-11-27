@@ -58,14 +58,27 @@ let rodada = 0;
 /** Roda um turno e devolve o resultado, os trechos de texto e o que o Codex de mentira recebeu. */
 async function turno(
   texto: string,
-  opcoes: { sessao?: string | null; semGancho?: boolean; gancho?: { porta: number }; gerenciado?: boolean; binario?: string; parar?: number } = {},
-): Promise<{ resultado: ResultadoMotor; trechos: string[]; recebidas: Record<string, unknown>[]; argv: string[] }> {
+  opcoes: {
+    sessao?: string | null;
+    semGancho?: boolean;
+    gancho?: { porta: number };
+    gerenciado?: boolean;
+    binario?: string;
+    parar?: number;
+    /** Como a caixa de areia responde à prova da partida; sem isto, como na imagem: não sobe. */
+    caixa?: 'sobe' | 'outra';
+  } = {},
+): Promise<{ resultado: ResultadoMotor; trechos: string[]; recebidas: Record<string, unknown>[]; argv: string[]; prova: string[] | undefined }> {
   rodada += 1;
   const registro = path.join(raiz, `registro-${rodada}.jsonl`);
   const motor = criarMotorCodex({
     binario: opcoes.binario ?? process.execPath,
     prefixo: opcoes.binario ? [] : [MENTIRA],
-    ambiente: { ...process.env, CODEX_DE_MENTIRA_REGISTRO: registro } as Record<string, string>,
+    ambiente: {
+      ...process.env,
+      CODEX_DE_MENTIRA_REGISTRO: registro,
+      ...(opcoes.caixa ? { CODEX_DE_MENTIRA_CAIXA: opcoes.caixa } : {}),
+    } as Record<string, string>,
     configuracaoGerenciada: opcoes.gerenciado ?? false,
     prazoDaParadaMs: 3000,
   });
@@ -93,7 +106,8 @@ async function turno(
     // O processo nem subiu.
   }
   const argv = (linhas.find((linha) => 'argv' in linha)?.argv as string[] | undefined) ?? [];
-  return { resultado, trechos, recebidas: linhas.filter((linha) => !('argv' in linha)), argv };
+  const prova = linhas.find((linha) => 'sandbox' in linha)?.sandbox as string[] | undefined;
+  return { resultado, trechos, recebidas: linhas.filter((linha) => !('argv' in linha) && !('sandbox' in linha)), argv, prova };
 }
 
 const recebido = (recebidas: Record<string, unknown>[], metodo: string) =>
@@ -208,8 +222,21 @@ describe('motor do Codex', () => {
     cartoes.length = 0;
     const { resultado } = await turno(roteiro);
     expect(cartoes).toHaveLength(0);
-    expect(resultado.estado).toBe('falhou');
-    expect(resultado.texto).toBe(`[awikabot] Turno interrompido: o Codex executou ${acao} sem pedir aprovação.`);
+    expect(resultado).toEqual({ estado: 'falhou', texto: `[awikabot] Turno interrompido: o Codex executou ${acao} sem pedir aprovação.`, sessao: null });
+  });
+
+  it.each([
+    ['numa conversa nova', null],
+    ['numa conversa retomada', 'thread-antiga'],
+  ])('o turno cortado %s não deixa sessão para retomar: o que rodou sem pedido pode estar nela', async (_caso, sessao) => {
+    const { resultado, recebidas } = await turno('escapa', { sessao });
+    expect(recebido(recebidas, sessao === null ? 'thread/start' : 'thread/resume')).toBeDefined();
+    expect(resultado).toMatchObject({ estado: 'falhou', sessao: null });
+  });
+
+  it('o turno cortado por usar o que não tem cartão também não deixa sessão', async () => {
+    const { resultado } = await turno('busca', { sessao: 'thread-antiga' });
+    expect(resultado).toMatchObject({ estado: 'falhou', sessao: null });
   });
 
   it('a tentativa que a caixa de areia não deixou começar não corta o turno, e o pedido seguinte vai ao cartão', async () => {
@@ -247,9 +274,39 @@ describe('motor do Codex', () => {
     expect(resultado.sessao).toMatch(/^thread-/);
   });
 
-  it('sem o binário, o turno falha e diz isso', async () => {
+  it('sem o binário, o Codex fica desligado na partida e o turno diz isso', async () => {
     const { resultado } = await turno('eco oi', { binario: path.join(raiz, 'nao-existe') });
-    expect(resultado).toEqual({ estado: 'falhou', texto: 'O Codex não iniciou neste servidor.', sessao: null });
+    expect(resultado).toEqual({ estado: 'falhou', texto: 'O Codex está desligado neste servidor: ele não iniciou.', sessao: null });
+  });
+});
+
+// Com a caixa de areia de pé, o Codex roda sem pedido os comandos que só leem, em todo o disco, e o
+// corte chega depois. Na partida, o driver roda um comando nela pelo `codex sandbox`.
+describe('caixa de areia na partida', () => {
+  it('como na imagem, a caixa de areia não sobe e o Codex fica ligado; a prova roda com a configuração dos turnos', async () => {
+    const fora = await turno('eco oi');
+    expect(fora.resultado).toMatchObject({ estado: 'completa', texto: 'oi' });
+    expect(fora.prova?.slice(0, 2)).toEqual(['sandbox', '--config=approval_policy="on-request"']);
+    expect(fora.prova).toContain('--config=sandbox_mode="read-only"');
+    expect(fora.prova?.slice(fora.prova.indexOf('--'), -1)).toEqual(['--', process.execPath, '-e']);
+
+    // Na imagem, a configuração está em /etc/codex e não vai na linha de comando, também na prova.
+    const naImagem = await turno('eco oi', { gerenciado: true });
+    expect(naImagem.resultado).toMatchObject({ estado: 'completa' });
+    expect(naImagem.prova?.slice(0, 2)).toEqual(['sandbox', '--']);
+  });
+
+  it.each([
+    ['sobe, como fora do contêiner', 'sobe', 'a caixa de areia dele sobe aqui, e os comandos que só leem rodariam sem aprovação'],
+    ['falha com outra saída', 'outra', 'não deu para confirmar que a caixa de areia dele não sobe aqui'],
+  ] as const)('se a caixa de areia %s, o Codex fica desligado: nenhum turno sobe o processo, e a sessão do bot fica', async (_caso, caixa, motivo) => {
+    cartoes.length = 0;
+    const { resultado, trechos, recebidas, argv } = await turno('escapa', { caixa, sessao: 'thread-antiga' });
+    expect(resultado).toEqual({ estado: 'falhou', texto: `O Codex está desligado neste servidor: ${motivo}.`, sessao: 'thread-antiga' });
+    expect(trechos).toEqual([resultado.texto]);
+    expect(argv).toEqual([]);
+    expect(recebidas).toEqual([]);
+    expect(cartoes).toHaveLength(0);
   });
 });
 

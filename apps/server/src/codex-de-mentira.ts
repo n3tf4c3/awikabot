@@ -22,12 +22,13 @@
 // (ver `julgar`).
 //
 // Cada mensagem recebida vai, uma por linha, para o arquivo em CODEX_DE_MENTIRA_REGISTRO.
-import { appendFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { appendFileSync, writeSync } from 'node:fs';
 
 type Mensagem = { id?: number | string; method?: string; params?: Record<string, unknown>; result?: unknown; error?: unknown };
 
 const registro = process.env.CODEX_DE_MENTIRA_REGISTRO;
-if (registro) appendFileSync(registro, `${JSON.stringify({ argv: process.argv.slice(2) })}\n`);
+if (registro && process.argv[2] !== 'sandbox') appendFileSync(registro, `${JSON.stringify({ argv: process.argv.slice(2) })}\n`);
 
 const escrever = (mensagem: Mensagem): void => {
   process.stdout.write(`${JSON.stringify(mensagem)}\n`);
@@ -76,6 +77,19 @@ async function falar(texto: string, item = `msg-${turno}`): Promise<void> {
  */
 const CAIXA_QUE_NAO_SOBE =
   "bwrap: No permissions to create a new namespace, likely because the kernel does not allow non-privileged user namespaces. On e.g. debian this can be enabled with 'sysctl kernel.unprivileged_userns_clone=1'.\n";
+
+// `codex sandbox [opções] -- <comando>`: a prova que o driver roda ao ser criado. Por padrão, como
+// na imagem: a caixa de areia não sobe e o comando nem começa. Com CODEX_DE_MENTIRA_CAIXA=sobe, ela
+// sobe e o comando roda, como num Mac ou num Windows de desenvolvimento; com `outra`, sai com erro e
+// outra mensagem. As opções vão ao registro, separadas das do `app-server`.
+if (process.argv[2] === 'sandbox') {
+  if (registro) appendFileSync(registro, `${JSON.stringify({ sandbox: process.argv.slice(2) })}\n`);
+  const comando = process.argv.slice(process.argv.indexOf('--') + 1);
+  const caixa = process.env.CODEX_DE_MENTIRA_CAIXA;
+  if (caixa === 'sobe') process.exit(spawnSync(comando[0] ?? '', comando.slice(1), { stdio: 'inherit' }).status ?? 1);
+  writeSync(2, caixa === 'outra' ? 'bwrap: Creating new namespace failed: Operation not permitted\n' : CAIXA_QUE_NAO_SOBE);
+  process.exit(1);
+}
 
 /** Itens que agem sem pedido de aprovação, e como terminam. */
 const ESCAPES = {
