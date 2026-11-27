@@ -31,7 +31,15 @@ afterAll(() => {
   rmSync(pastaTemporaria, { recursive: true, force: true });
 });
 
-function montar(opcoes: { atrasoMs?: number; limite?: number; intervaloPingMs?: number; motoresEmProva?: string[] } = {}) {
+function montar(
+  opcoes: {
+    atrasoMs?: number;
+    limite?: number;
+    intervaloPingMs?: number;
+    motoresEmProva?: string[];
+    filaDeEventos?: { itens: number; caracteres: number };
+  } = {},
+) {
   const banco = abrirBanco(':memory:');
   const barramento = new Barramento();
   const turnos = new GestorDeTurnos({
@@ -50,6 +58,7 @@ function montar(opcoes: { atrasoMs?: number; limite?: number; intervaloPingMs?: 
     limitador: new LimitadorDeTentativas(),
     intervaloPingMs: opcoes.intervaloPingMs ?? 40,
     motoresEmProva: opcoes.motoresEmProva,
+    limitesDaFilaDeEventos: opcoes.filaDeEventos,
   });
 
   const pedir = (
@@ -460,6 +469,52 @@ describe('conversa (F3)', () => {
     const lista = EsquemaListaBots.parse(await (await ambiente.pedir('/v1/bots', { token })).json());
     expect(lista.bots[0]?.turnoAtivo).toBe(true);
     await ambiente.esperarFimDoTurno(botId);
+  });
+
+  it('o app que não lê o fluxo não faz o servidor acumular eventos sem teto: recebe o aviso para buscar tudo de novo', async () => {
+    ambiente = montar({ intervaloPingMs: 60_000, filaDeEventos: { itens: 5, caracteres: 1_000_000 } });
+    token = (await ambiente.parearAparelho()).token;
+    const botId = await criarBot();
+    const fluxo = await ambiente.pedir('/v1/eventos', { token });
+    expect(fluxo.status).toBe(200);
+
+    // Ninguém lê o corpo da resposta: a escrita do servidor fica parada, e os eventos continuam saindo.
+    const PUBLICADOS = 300;
+    const trecho = 'palavra '.repeat(50);
+    for (let i = 0; i < PUBLICADOS; i += 1) {
+      ambiente.barramento.publicar({ tipo: 'texto', botId, mensagemId: botId, posicao: i, trecho });
+    }
+    await new Promise((ok) => setTimeout(ok, 30));
+    ambiente.barramento.publicar({ tipo: 'turno_iniciado', botId, mensagemId: botId });
+    const ultimoId = ambiente.barramento.cursor();
+
+    // O app volta a ler.
+    const leitor = fluxo.body!.getReader();
+    const decodificador = new TextDecoder();
+    let recebido = '';
+    const prazo = Date.now() + 3000;
+    while (!recebido.includes(`id: ${ultimoId}\n`) && Date.now() < prazo) {
+      const parte = await leitor.read();
+      if (parte.done) break;
+      recebido += decodificador.decode(parte.value, { stream: true });
+    }
+    await leitor.cancel();
+
+    const eventos = recebido
+      .split('\n\n')
+      .filter((bloco) => bloco.includes('event: evento'))
+      .map((bloco) => ({
+        id: /^id: (.+)$/m.exec(bloco)?.[1] ?? '',
+        evento: EsquemaEvento.parse(JSON.parse(/^data: (.*)$/m.exec(bloco)?.[1] ?? 'null')),
+      }));
+    const tipos = eventos.map((item) => item.evento.tipo);
+    // Poucos trechos chegaram antes de a escrita parar; o resto virou um aviso só, e não trezentos eventos.
+    expect(tipos.filter((tipo) => tipo === 'ressincronizar')).toHaveLength(1);
+    expect(tipos.filter((tipo) => tipo === 'texto').length).toBeLessThan(20);
+    // O que veio depois do aviso chega, e o ponto de retomada do app fica no último evento.
+    expect(eventos.at(-1)).toEqual({ id: ultimoId, evento: { tipo: 'turno_iniciado', botId, mensagemId: botId } });
+    const numeros = eventos.map((item) => Number(item.id.split('-')[1]));
+    expect([...numeros].sort((a, b) => a - b)).toEqual(numeros);
   });
 
   it('recusa turno novo com 503 depois de o servidor começar a sair', async () => {

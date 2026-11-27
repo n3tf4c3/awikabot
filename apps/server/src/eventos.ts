@@ -63,3 +63,76 @@ export class Barramento {
     return this.recentes.filter((recente) => recente.seq > seq);
   }
 }
+
+/** Quanto a fila de um assinante guarda enquanto a escrita para ele está parada. */
+export interface LimitesDaFila {
+  itens: number;
+  /** Soma do tamanho dos eventos já prontos para escrever, em caracteres. */
+  caracteres: number;
+}
+
+export const LIMITES_DA_FILA_DE_EVENTOS: LimitesDaFila = { itens: 1000, caracteres: 2_000_000 };
+
+/** Um evento pronto para escrever no fluxo. */
+export interface EventoParaEscrever {
+  id: string;
+  dados: string;
+}
+
+/**
+ * A fila de um assinante do fluxo de eventos, entre o barramento e a escrita na conexão. O barramento
+ * não espera ninguém: se o app lê devagar, ou parou de ler, os eventos se acumulam aqui. Passado o
+ * teto, a fila solta o que acumulou e guarda um aviso só, `ressincronizar`, com o id do último
+ * evento: o app busca as listas e as conversas de novo e segue desse ponto. Enquanto o aviso não
+ * sai, o que chega só move esse id, sem ocupar memória.
+ *
+ * Um evento sozinho entra mesmo maior que o teto de caracteres: sem nada acumulado, não há o que soltar.
+ */
+export class FilaDeEventos {
+  private fila: EventoParaEscrever[] = [];
+  private acumulado = 0;
+  /** O id do último evento solto; enquanto não for `null`, a fila é só o aviso. */
+  private perdidoAte: string | null = null;
+  private readonly limites: LimitesDaFila;
+
+  constructor(limites: LimitesDaFila = LIMITES_DA_FILA_DE_EVENTOS) {
+    this.limites = limites;
+  }
+
+  get itens(): number {
+    return this.perdidoAte === null ? this.fila.length : 1;
+  }
+
+  get caracteres(): number {
+    return this.acumulado;
+  }
+
+  por(item: EventoNumerado): void {
+    if (this.perdidoAte !== null) {
+      this.perdidoAte = item.id;
+      return;
+    }
+    const dados = JSON.stringify(item.evento);
+    const cheia = this.fila.length >= this.limites.itens || (this.fila.length > 0 && this.acumulado + dados.length > this.limites.caracteres);
+    if (cheia) {
+      this.fila = [];
+      this.acumulado = 0;
+      this.perdidoAte = item.id;
+      return;
+    }
+    this.fila.push({ id: item.id, dados });
+    this.acumulado += dados.length;
+  }
+
+  tirar(): EventoParaEscrever | undefined {
+    if (this.perdidoAte !== null) {
+      const aviso: Evento = { tipo: 'ressincronizar' };
+      const id = this.perdidoAte;
+      this.perdidoAte = null;
+      return { id, dados: JSON.stringify(aviso) };
+    }
+    const proximo = this.fila.shift();
+    if (proximo) this.acumulado -= proximo.dados.length;
+    return proximo;
+  }
+}
