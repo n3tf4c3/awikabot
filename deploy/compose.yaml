@@ -7,6 +7,11 @@
 #   docker compose -f deploy/compose.yaml run --rm -it --entrypoint claude server auth login
 # Login do Codex, só para quem usa bots nele, também pela pessoa dona da conta:
 #   docker compose -f deploy/compose.yaml run --rm -it --entrypoint codex server login --device-auth
+# Antigravity, ainda em prova: o servidor só cria bot nele com AWIKA_MOTORES_EM_PROVA=antigravity
+# no ambiente do serviço, posta num arquivo de compose a mais. O acesso é a chave de API do
+# Gemini (GEMINI_API_KEY, no mesmo lugar e fora do Git). Para ensaio com a própria conta, a
+# pessoa dona dela entra pelo fluxo da CLI:
+#   docker compose -f deploy/compose.yaml run --rm -it --entrypoint agy server acp --login
 # Código para parear um aparelho:
 #   docker compose -f deploy/compose.yaml exec server node /app/server.mjs parear
 # Backup e restauração: deploy/backup.sh e deploy/restaurar.sh.

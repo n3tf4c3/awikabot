@@ -1,5 +1,6 @@
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ambienteDoMotor, EnvInvalida, lerEnv, lerEnvDoGancho } from './env';
+import { ambienteDoMotor, EnvInvalida, lerEnv, lerEnvDoGancho, lerPastaDoBot } from './env';
 
 describe('lerEnv', () => {
   it('usa loopback, a porta padrão e o motor real quando nada é informado', () => {
@@ -12,6 +13,7 @@ describe('lerEnv', () => {
       AWIKA_MOTOR: 'claude-code',
       AWIKA_CLAUDE_BIN: 'claude',
       AWIKA_CODEX_BIN: 'codex',
+      AWIKA_AGY_BIN: 'agy',
       AWIKA_MOTORES_EM_PROVA: [],
       AWIKA_TURNOS_SIMULTANEOS: 4,
       AWIKA_GANCHO: 'opcao',
@@ -53,7 +55,8 @@ describe('lerEnv', () => {
 
   it('lê os motores em prova, e só aceita os do catálogo', () => {
     expect(lerEnv({ AWIKA_MOTORES_EM_PROVA: ' codex , ' }).AWIKA_MOTORES_EM_PROVA).toEqual(['codex']);
-    for (const lista of ['antigravity', 'codex,--model=x', 'Codex']) {
+    expect(lerEnv({ AWIKA_MOTORES_EM_PROVA: 'antigravity' }).AWIKA_MOTORES_EM_PROVA).toEqual(['antigravity']);
+    for (const lista of ['gemini-cli', 'codex,--model=x', 'Codex']) {
       try {
         lerEnv({ AWIKA_MOTORES_EM_PROVA: lista });
         expect.unreachable('devia ter recusado');
@@ -114,10 +117,28 @@ describe('ambienteDoMotor', () => {
       ANTHROPIC_API_KEY: 'chave-do-claude',
       CODEX_HOME: '/data/codex',
       OPENAI_API_KEY: 'chave-do-codex',
+      GEMINI_API_KEY: 'chave-do-gemini',
+      GOOGLE_CLOUD_PROJECT: 'projeto',
+      AGY_CLI_DISABLE_AUTO_UPDATE: '1',
       AWIKA_CODEX_BIN: 'codex',
+      AWIKA_AGY_BIN: 'agy',
     };
     expect(ambienteDoMotor(origem, 'claude-code')).toEqual({ PATH: '/usr/bin', CLAUDE_CONFIG_DIR: '/data/claude', ANTHROPIC_API_KEY: 'chave-do-claude' });
     expect(ambienteDoMotor(origem, 'codex')).toEqual({ PATH: '/usr/bin', CODEX_HOME: '/data/codex', OPENAI_API_KEY: 'chave-do-codex' });
+    expect(ambienteDoMotor(origem, 'antigravity')).toEqual({
+      PATH: '/usr/bin',
+      GEMINI_API_KEY: 'chave-do-gemini',
+      GOOGLE_CLOUD_PROJECT: 'projeto',
+      AGY_CLI_DISABLE_AUTO_UPDATE: '1',
+    });
+  });
+});
+
+describe('lerPastaDoBot', () => {
+  it('só aceita um caminho completo', () => {
+    const completo = path.resolve('/data/trabalho/bot');
+    expect(lerPastaDoBot({ AWIKA_PASTA_DO_BOT: completo })).toBe(completo);
+    for (const valor of [undefined, '', 'trabalho/bot', '../bot']) expect(lerPastaDoBot({ AWIKA_PASTA_DO_BOT: valor })).toBeNull();
   });
 });
 

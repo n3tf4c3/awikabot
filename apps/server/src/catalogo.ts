@@ -2,6 +2,8 @@ import { MOTOR_PADRAO, type Catalogo, type MotorDoCatalogo } from '@awikabot/cor
 
 /** O motor do Codex, dirigido por `motor-codex.ts`. */
 export const MOTOR_CODEX = 'codex';
+/** O motor do Antigravity, dirigido por `motor-antigravity.ts`. */
+export const MOTOR_ANTIGRAVITY = 'antigravity';
 
 /**
  * Os motores que o servidor conhece, entregue em `GET /v1/catalogo`. A lista de modelos sugere e
@@ -21,6 +23,11 @@ export const MOTOR_CODEX = 'codex';
  * aceitam (`ultra` fica de fora: o `gpt-6-luna` não o tem). Ficou pronto em 26/11, depois de o
  * runbook de motor real passar com ele no Pi. Um motor novo entra com `pronto: false` até isso, e
  * só um servidor que o põe em `AWIKA_MOTORES_EM_PROVA` cria bot nele.
+ *
+ * O Antigravity tem a versão 1.5.18 fixada na imagem e ainda não está pronto: o runbook de motor
+ * real não rodou com ele no Pi. Os modelos são os da linha Gemini 4 que esse binário ofereceu à
+ * conta da prova em 26/11 e que não tinham data para sair; os esforços, os que todos eles aceitam
+ * (`xhigh` fica de fora: o `gemini-4-carbon` não o tem). Com a chave de API a lista pode ser outra.
  */
 export const CATALOGO: Catalogo = {
   motores: [
@@ -63,6 +70,23 @@ export const CATALOGO: Catalogo = {
       ],
       papeis: ['worker', 'decisao'],
       pronto: true,
+    },
+    {
+      id: MOTOR_ANTIGRAVITY,
+      nome: 'Antigravity',
+      familia: 'agente',
+      modelos: [
+        { id: 'gemini-4-neon', nome: 'Gemini 4 Neon' },
+        { id: 'gemini-4-carbon', nome: 'Gemini 4 Carbon' },
+        { id: 'gemini-4-hydrogen', nome: 'Gemini 4 Hydrogen' },
+      ],
+      esforcos: [
+        { id: 'low', nome: 'Baixo' },
+        { id: 'medium', nome: 'Médio' },
+        { id: 'high', nome: 'Alto' },
+      ],
+      papeis: ['worker'],
+      pronto: false,
     },
   ],
 };

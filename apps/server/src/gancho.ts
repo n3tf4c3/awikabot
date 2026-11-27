@@ -186,3 +186,34 @@ export async function executarGancho(
     pedido.end(entrada);
   });
 }
+
+/** O que um driver pergunta ao servidor: uma ferramenta, no vocabulário da política (`politica.ts`). */
+export interface ConsultaDeFerramenta {
+  ferramenta: string;
+  entrada: Record<string, unknown>;
+}
+
+/**
+ * Um driver que recebe o pedido de aprovação pelo protocolo do motor (o Codex e o Antigravity)
+ * pergunta ao servidor pelo mesmo caminho do gancho do Claude Code: a mesma política e o mesmo
+ * cartão. Sem gancho, ou com qualquer falha, nega.
+ */
+export async function consultarServidor(gancho: { porta: number; token: string } | null, consulta: ConsultaDeFerramenta): Promise<boolean> {
+  if (gancho === null) return false;
+  let saida = '';
+  await executarGancho(
+    { porta: gancho.porta, token: gancho.token },
+    {
+      lerEntrada: () => JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: consulta.ferramenta, tool_input: consulta.entrada }),
+      escrever: (texto) => {
+        saida += texto;
+      },
+    },
+  );
+  try {
+    const lido = JSON.parse(saida) as { hookSpecificOutput?: { permissionDecision?: unknown } };
+    return lido.hookSpecificOutput?.permissionDecision === 'allow';
+  } catch {
+    return false;
+  }
+}

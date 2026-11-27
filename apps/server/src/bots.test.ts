@@ -6,7 +6,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { EsquemaBot, EsquemaCatalogo, MOTOR_PADRAO } from '@awikabot/core';
 import { abrirBanco } from './banco';
 import { criarBot, editarBot, listarBots, obterBot, paraContrato } from './bots';
-import { CATALOGO, esforcoValido, MOTOR_CODEX, motorDoCatalogo, motorParaCriarBot } from './catalogo';
+import { CATALOGO, esforcoValido, MOTOR_ANTIGRAVITY, MOTOR_CODEX, motorDoCatalogo, motorParaCriarBot } from './catalogo';
 import { Barramento } from './eventos';
 import type { Motor, PedidoMotor } from './motor';
 import { GestorDeTurnos } from './turnos';
@@ -88,13 +88,17 @@ describe('motor e esforço gravados', () => {
 });
 
 describe('catálogo', () => {
-  it('passa no esquema do contrato, com o Claude Code e o Codex prontos', () => {
+  it('passa no esquema do contrato, com o Claude Code e o Codex prontos e o Antigravity ainda não', () => {
     expect(EsquemaCatalogo.parse(CATALOGO)).toEqual(CATALOGO);
     expect(motorParaCriarBot(MOTOR_PADRAO)?.nome).toBe('Claude Code');
     expect(CATALOGO.motores.map((motor) => [motor.id, motor.pronto])).toEqual([
       [MOTOR_PADRAO, true],
       [MOTOR_CODEX, true],
+      [MOTOR_ANTIGRAVITY, false],
     ]);
+    // Não pronto, o Antigravity só aceita bot num servidor que o põe em prova.
+    expect(motorParaCriarBot(MOTOR_ANTIGRAVITY)).toBeNull();
+    expect(motorParaCriarBot(MOTOR_ANTIGRAVITY, CATALOGO, [MOTOR_ANTIGRAVITY])?.nome).toBe('Antigravity');
   });
 
   it('cria bot num motor não pronto só no servidor que o põe em prova', () => {

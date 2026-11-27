@@ -805,6 +805,7 @@ Tudo entra de modo que os clientes já publicados continuem valendo; o desktop 0
 3. **Segundo motor**: o que passou na prova, com a mesma política, o mesmo cartão e a mesma regra de gravação.
    Verificar: o runbook de motor real, F0 a F4, percorrido com ele no Pi.
    Feito em 26/11: o runbook passou com o Codex num contêiner local e depois no Pi, e o Codex ficou pronto no catálogo. Ver "Etapa 7, passo 3: resultado do segundo motor".
+   Em 27/11 o Antigravity entrou como terceiro motor, ainda em prova: o runbook passou com ele num contêiner local, com o login da assinatura do titular; faltam a chave de API e o Pi. Ver "Etapa 7: resultado do driver do Antigravity".
 4. **Juiz**: a interface de decisor no servidor e o primeiro decisor, um turno sem ferramentas.
    Verificar: por teste, a resposta fora das opções, a ilegível e a atrasada sobem um degrau; nenhuma vira aprovação.
    Feito em 26/11: passou por teste e com os dois motores de verdade num contêiner local. Ver "Etapa 7, passo 4: resultado do juiz".
@@ -1191,6 +1192,48 @@ Não coberto:
 - a conversa do juiz fica guardada pelo motor, uma por pergunta, na pasta `decisor` do volume, e entra no backup com as outras; nada a apaga;
 - o turno do juiz não conta no limite de turnos simultâneos do servidor: ninguém o chama dentro do servidor ainda. Entra na conta com a equipe, no passo 5, quando a decisão também passa a ser gravada e mostrada na conversa da equipe, com esquema em `packages/core`;
 - a medida de quanto o juiz acerta: seis perguntas fáceis não medem isso. A escada não depende de o juiz acertar, só de a resposta caber no esquema.
+## Etapa 7: resultado do driver do Antigravity (2026-11-27)
+
+Pedido do titular em 27/11: fazer o driver. O Antigravity entrou como terceiro motor, atrás da mesma interface dos outros dois, e ainda não está pronto no catálogo: só um servidor com `AWIKA_MOTORES_EM_PROVA=antigravity` cria bot nele, e os apps não o oferecem.
+
+O driver (`apps/server/src/motor-antigravity.ts`) dirige o `agy acp` 1.5.18, um processo por turno, pelo JSON-RPC da entrada e saída padrão. O texto da pessoa vai no corpo do pedido do turno, nunca na linha de comando. As instruções do bot entram no fim do prompt do sistema, depois de uma orientação fixa do ambiente; o modelo e o esforço vão como opções da sessão, a cada turno. A conversa é a do Antigravity, retomada pelo id gravado no bot com `session/resume`, que não repete o histórico; uma conversa que ele não acha vira falha e deixa o bot recomeçar no turno seguinte. Parar manda o cancelamento e, se o turno não fechar em 5 s, mata o grupo de processos. O driver exige o modo que pede aprovação: se a sessão não entrar nele, o turno falha.
+
+A trava é o pedido de permissão do protocolo, como a prova mediu. O driver repassa cada pedido ao servidor pelo mesmo caminho do gancho do Claude Code (`consultarServidor`), então valem a mesma política, o mesmo cartão e a mesma regra de gravação presa à pasta. O comando vira uma consulta de terminal com a linha inteira; a gravação e a edição, uma consulta por arquivo, com o conteúdo ou o trecho trocado; a leitura, uma consulta por caminho. Um pedido de outro tipo, ou sem o que a política precisa ver, é negado. O driver só responde "uma vez": nunca a opção que vale para a sessão. Todo outro pedido do Antigravity ao cliente é recusado. Uma ferramenta que termina sem ter passado por um pedido aceito corta o turno na hora, e a resposta fica como falha, com o motivo.
+
+O que as provas acharam rodando sem pedido fica fechado assim (`configuracao-antigravity.ts`):
+
+- **A sessão abre fora da pasta do bot.** O Antigravity lê como configuração o `.agents/` da pasta em que a sessão abre. A sessão abre em `<AWIKA_DADOS>/antigravity/<bot>`, uma pasta do servidor que o driver esvazia antes de cada turno e recusa se estiver dentro de um repositório Git. A pasta do bot fica fora dela: nada dela é lido como configuração, e toda leitura, gravação e comando nela chega como pedido, com o caminho completo. A política ganhou `.agents/`, `.agent/`, `_agents/` e `_agent/` ao lado de `.claude/` e `.codex/`, como configuração que o bot não grava.
+- **A configuração pessoal é reposta antes de cada turno.** O Antigravity não tem lugar gerenciado fora do volume, como `/etc/claude-code` e `/etc/codex`. O servidor regrava em `~/.gemini` o gancho, a lista vazia de servidores MCP e os ajustes (o modo que pede revisão, sem regras de permissão, sem acesso fora da pasta), e recusa o turno se houver plugin instalado. Como o Antigravity só lê a configuração no começo do turno, o que um comando aprovado trocar não vale no turno em curso e é desfeito antes do seguinte.
+- **Um gancho que nega o que não conhece** (`gancho-antigravity`, outro subcomando do servidor). Só as ferramentas de ler, gravar e editar arquivo e a de terminal saem dele sem negação, porque o pedido do protocolo já cuida delas. O resto é negado: a busca na web, o subagente, o agendamento e o que uma versão nova trouxer.
+
+Duas diferenças para o desenho das provas:
+
+- **A busca na web ficou fechada, sem cartão.** O desenho previa o gancho perguntar ao servidor e esperar a pessoa. O gancho que entrou decide só pelo nome da ferramenta e não fala com o servidor. O cartão da busca é um passo a mais, e o caminho que ele usaria (`executarGancho`) já existe.
+- **O comando parte da pasta do bot porque o gancho reescreve a linha.** O pedido de comando do `agy` não leva pasta, e o comando partiria da pasta da sessão: na primeira rodada com o motor de verdade, `pwd` devolveu a pasta da sessão e um arquivo de caminho relativo caiu nela. Trocar `Cwd` ou `cwd` pela resposta do gancho não muda nada; trocar a linha por `cd '<pasta do bot>' && <linha>` pega. O pedido de permissão continua chegando ao driver com a linha original, então o driver refaz a mesma conta antes de consultar o servidor, e o cartão mostra a linha como ela roda. As duas pontas usam a mesma função (`comandoNaPastaDoBot`).
+
+O Antigravity está no catálogo com os três modelos que o 1.5.18 listou para a conta da prova (`gemini-4-neon`, `gemini-4-carbon`, `gemini-4-hydrogen`) e os esforços baixo, médio e alto. O papel é só worker. A imagem leva o binário 1.5.18 baixado do endereço da versão, com o SHA-512 conferido para amd64 e arm64, em `/usr/local/bin`, do root. O ambiente dele é só `GEMINI_*`, `GOOGLE_*` e `AGY_*`. Com `GEMINI_API_KEY` no ambiente, o driver autentica pela chave e fixa o provedor nos ajustes; sem ela, vale o login feito pela pessoa na própria CLI.
+
+| Verificação | Resultado |
+|---|---|
+| Suíte (lint, tipos e testes) | Passa: 59 testes no `core`, 750 no celular e 474 no servidor, já sobre a `main` com o juiz. O driver e a configuração têm 89 testes contra um `agy acp` de mentira (`antigravity-de-mentira.ts`) e o lado do gancho de verdade, com a política de verdade: resposta aos poucos, opções do turno, retomada, sessão perdida, comando aprovado e negado com a linha inteira no cartão, gravação e edição com o conteúdo no cartão, gravação fora da pasta e em `.agents/` negadas sem cartão, leitura fora da pasta negada, ferramenta sem pedido cortando o turno, opção de sessão nunca escolhida, pedido desconhecido recusado, parada, falha de login, binário ausente, a configuração reposta, o plugin que recusa o turno e a pasta da sessão esvaziada e recusada fora do lugar ou dentro de um repositório. |
+| Falsificação | 14 travas tiradas do código, uma de cada vez: em todas algum teste falha. Entre elas o corte da ferramenta sem pedido, a consulta ao servidor, a opção de sessão, o gancho que nega, a reposição do gancho e dos ajustes, a pasta da sessão, as aspas da pasta na linha do comando e a linha que o cartão mostra. |
+| `pnpm verificar` | 29 de 29, com o motor simulado. |
+| Desktop no Windows | Passa: rustfmt, clippy e os testes, 143 do cliente e 78 da janela. O contrato não mudou, e o teste de contrato continua vendo dois motores na lista de criar: o Antigravity, que não está pronto, não é oferecido. |
+| Runbook de motor real com o Antigravity | Num contêiner local (amd64) com a imagem do produto, somente leitura, `cap_drop: ALL` e `no-new-privileges`, com o login da assinatura do titular feito nas provas: 19 de 19 em 108 s, depois da correção da pasta do comando, e de novo 19 de 19 em 165 s com a imagem do commit, sobre a `main` com o juiz. A primeira resposta chegou em 5,3 s e em 6,0 s; a memória entre turnos, a parada, o comando aprovado rodando e o negado não (pelo disco), a leitura na pasta sem cartão, a gravação na pasta com o conteúdo no cartão, nenhum arquivo fora da pasta nem em `.agents/hooks.json`, e "sem busca" na busca na web. |
+| Pasta do comando, com o motor de verdade | `pwd`, pedido sem `cd`, devolveu a pasta do bot, e o cartão mostrou `cd '<pasta do bot>' && pwd`. Um arquivo de caminho relativo caiu na pasta do bot, e não na da sessão. |
+| Configuração plantada, com o motor de verdade | Com um gancho e um servidor MCP plantados em `.agents/` da pasta do bot e da pasta da sessão, e com o gancho pessoal trocado pelo plantado: nenhum rodou num turno com comando; a pasta da sessão terminou vazia e o gancho pessoal voltou a ser o do servidor. |
+
+Não coberto:
+
+- o acesso por chave de API do Gemini, que é o que os termos pedem: o caminho está no driver e nos testes, com um Antigravity de mentira, e nunca rodou com uma chave de verdade. Pode não ser a mesma lista de ferramentas nem de modelos;
+- o Pi e a imagem arm64: o binário arm64 só teve a soma conferida no build, que aqui foi amd64;
+- as conferências de leitura e gravação fora da pasta dependem de o modelo tentar: no runbook ele recusou antes, e nenhum pedido surgiu. O caminho inteiro da negação está nos testes do driver;
+- a linha que o `agy` de fato rodou: o cartão mostra a linha que o gancho deveria gravar, e nada confere isso depois. Se o gancho não reescrever, o comando roda como o modelo o escreveu, a partir da pasta da sessão;
+- um comando aprovado que troque a configuração e, no mesmo turno, faça o Antigravity relê-la: a prova mediu que ele só lê no começo do turno, numa versão;
+- a corrida entre o fim de uma ferramenta sem pedido e o envio da saída ao modelo, como no Codex;
+- as ferramentas que não apareceram nas provas (ler endereço, navegador, servidor MCP): o gancho as nega pelo nome, e isso só foi visto com a busca, o subagente e o agendamento;
+- o backup: as conversas do Antigravity não entram no arquivo, e um bot dele, restaurado, recomeça a conversa;
+- o Antigravity num aparelho e no desktop, turnos simultâneos, memória por turno no produto e espera de aprovação longa.
 
 ## Riscos
 
