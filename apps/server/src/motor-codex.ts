@@ -34,6 +34,34 @@ const ITENS_SEM_ACAO = new Set([
 const ITENS_COM_PEDIDO = new Set(['commandExecution', 'fileChange']);
 
 /**
+ * A saída do comando que a caixa de areia não deixou começar, no Codex 0.172.0 da imagem. No
+ * contêiner, o bwrap que vem com o Codex não cria o namespace e sai com 1 antes de executar o
+ * comando; o item termina como `failed`, sem pedido, com exatamente este texto, e o modelo tenta
+ * de novo pedindo aprovação. Medido em 27/11 com o binário de verdade, na imagem do servidor, com
+ * um modelo falso. Trocar a versão do Codex é medir de novo: se o texto mudar, toda tentativa sem
+ * pedido corta o turno, o que é o lado seguro.
+ */
+export const SAIDA_DA_CAIXA_QUE_NAO_SOBE =
+  "bwrap: No permissions to create a new namespace, likely because the kernel does not allow non-privileged user namespaces. On e.g. debian this can be enabled with 'sysctl kernel.unprivileged_userns_clone=1'.\n";
+
+/**
+ * Um comando ou uma edição que terminou sem pedido aceito agiu? O estado não basta: com a caixa
+ * de areia de pé, um comando que lê e sai com erro termina como `failed`, com o que leu na saída.
+ * Só não agiu o item recusado (`declined`) e o comando que a caixa de areia não deixou começar,
+ * reconhecido pela saída exata dela. Estado desconhecido conta como ação.
+ *
+ * Com a caixa de areia de pé, um comando pode imprimir aquela mesma saída e sair com 1 para não
+ * ser cortado. O que chega ao modelo continua sendo só o texto fixo; o que ele aprende é se o
+ * turno seguiu, um bit por tentativa.
+ */
+export function agiuSemPedido(item: Objeto): boolean {
+  if (item.status === 'declined') return false;
+  const naoComecou =
+    item.type === 'commandExecution' && item.status === 'failed' && item.exitCode === 1 && item.aggregatedOutput === SAIDA_DA_CAIXA_QUE_NAO_SOBE;
+  return !naoComecou;
+}
+
+/**
  * O que o modelo precisa saber do ambiente. Sem isto, ao ver a caixa de areia só de leitura, ele
  * desiste de comandos e edições sem pedir (no runbook, respondeu "negado" e "o ambiente é somente
  * leitura" sem tentar), e a pessoa nunca vê o cartão. A trava não depende deste texto: o que ele
@@ -302,9 +330,9 @@ export function criarMotorCodex(opcoes: {
           return;
         }
         if (ITENS_COM_PEDIDO.has(tipo)) {
-          // Na caixa de areia que não sobe, a tentativa sem pedido falha e vira pedido. Uma que dê
-          // certo sem pedido escapou da aprovação.
-          if (metodo === 'item/completed' && item.status === 'completed' && !aprovados.has(itemId)) {
+          // Sem pedido aceito, o item que terminou escapou da aprovação, tenha dado certo ou não; a
+          // tentativa que a caixa de areia não deixou começar fica de fora (`agiuSemPedido`).
+          if (metodo === 'item/completed' && !aprovados.has(itemId) && agiuSemPedido(item)) {
             cortar(`o Codex executou ${tipo === 'fileChange' ? 'uma edição' : 'um comando'} sem pedir aprovação`);
           }
           return;

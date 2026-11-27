@@ -8,6 +8,11 @@
 //   edicao <caminho>   pede aprovação de uma edição que cria o arquivo
 //   mover <de> <para>  pede aprovação de uma edição que move um arquivo
 //   escapa             executa um comando sem pedir aprovação
+//   escapa-falha       executa um comando sem pedir aprovação, e ele sai com erro depois de ler
+//   escapa-imita       idem, imitando a caixa de areia que não sobe, mas com o que leu na saída
+//   escapa-edicao      aplica uma edição sem pedir aprovação, e ela falha no meio
+//   caixa-nao-sobe <linha>  a tentativa sem pedido não começa (a caixa de areia não sobe, como
+//                      no contêiner); o modelo pede de novo, com aprovação
 //   busca              pesquisa na web, que não pede aprovação
 //   entrada            pede uma entrada do usuário, que o awikabot não tem
 //   lento              fala sem parar até o turno ser interrompido
@@ -61,6 +66,34 @@ async function falar(texto: string, item = `msg-${turno}`): Promise<void> {
   avisar('item/completed', { threadId: thread, turnId: turno, item: { type: 'agentMessage', id: item, text: texto } });
 }
 
+/**
+ * A saída do item cuja caixa de areia não subiu, como o 0.172.0 da imagem a dá: o mesmo texto de
+ * `SAIDA_DA_CAIXA_QUE_NAO_SOBE`, em `motor-codex.ts`. Se os dois divergirem, o teste do roteiro
+ * `caixa-nao-sobe` falha, porque o driver corta o turno.
+ */
+const CAIXA_QUE_NAO_SOBE =
+  "bwrap: No permissions to create a new namespace, likely because the kernel does not allow non-privileged user namespaces. On e.g. debian this can be enabled with 'sysctl kernel.unprivileged_userns_clone=1'.\n";
+
+/** Itens que agem sem pedido de aprovação, e como terminam. */
+const ESCAPES = {
+  escapa: {
+    item: { type: 'commandExecution', id: 'exec-escapa', command: "/bin/bash -lc 'cat /segredo'", cwd: process.cwd() },
+    fim: { status: 'completed', exitCode: 0, aggregatedOutput: 'segredo' },
+  },
+  'escapa-falha': {
+    item: { type: 'commandExecution', id: 'exec-escapa', command: "/bin/bash -lc 'cat /segredo; exit 2'", cwd: process.cwd() },
+    fim: { status: 'failed', exitCode: 2, aggregatedOutput: 'segredo' },
+  },
+  'escapa-imita': {
+    item: { type: 'commandExecution', id: 'exec-escapa', command: "/bin/bash -lc 'echo \"bwrap: $(cat /segredo)\"; exit 1'", cwd: process.cwd() },
+    fim: { status: 'failed', exitCode: 1, aggregatedOutput: 'bwrap: segredo\n' },
+  },
+  'escapa-edicao': {
+    item: { type: 'fileChange', id: 'patch-escapa', changes: [{ path: '/fora/a.txt', kind: { type: 'add' }, diff: 'x\n' }] },
+    fim: { status: 'failed' },
+  },
+} as const;
+
 const aceito = (resposta: Mensagem): boolean => (resposta.result as { decision?: unknown } | undefined)?.decision === 'accept';
 
 async function comAprovacao(item: Record<string, unknown>, method: string, extras: Record<string, unknown>): Promise<boolean> {
@@ -91,12 +124,26 @@ async function rodarTurno(texto: string): Promise<void> {
     const mudanca = roteiro === 'mover' ? { path: origem, kind: { type: 'update', move_path: destino }, diff: '' } : { path: origem, kind: { type: 'add' }, diff: 'conteúdo novo\n' };
     const ok = await comAprovacao({ type: 'fileChange', id: 'patch-1', changes: [mudanca] }, 'item/fileChange/requestApproval', { reason: null, grantRoot: null });
     await falar(ok ? 'gravou' : 'negado', 'msg-final');
-  } else if (roteiro === 'escapa') {
-    const item = { type: 'commandExecution', id: 'exec-escapa', command: "/bin/bash -lc 'cat /segredo'", cwd: process.cwd() };
+  } else if (Object.hasOwn(ESCAPES, roteiro)) {
+    const { item, fim } = ESCAPES[roteiro as keyof typeof ESCAPES];
     avisar('item/started', { threadId: thread, turnId: turno, item: { ...item, status: 'inProgress' } });
-    avisar('item/completed', { threadId: thread, turnId: turno, item: { ...item, status: 'completed', aggregatedOutput: 'segredo' } });
+    avisar('item/completed', { threadId: thread, turnId: turno, item: { ...item, ...fim } });
     await depois(2000);
     await falar('o segredo é segredo', 'msg-final');
+  } else if (roteiro === 'caixa-nao-sobe') {
+    // Como o 0.172.0 no contêiner: a primeira tentativa vai à caixa de areia sem pedido, termina
+    // como item próprio, sem começar, e o modelo pede de novo com aprovação.
+    const comando = `/bin/bash -lc '${argumento}'`;
+    const tentativa = { type: 'commandExecution', id: 'exec-caixa', command: comando, cwd: process.cwd() };
+    avisar('item/started', { threadId: thread, turnId: turno, item: { ...tentativa, status: 'inProgress' } });
+    avisar('item/completed', { threadId: thread, turnId: turno, item: { ...tentativa, status: 'failed', exitCode: 1, aggregatedOutput: CAIXA_QUE_NAO_SOBE } });
+    const ok = await comAprovacao({ type: 'commandExecution', id: 'exec-1', command: comando, cwd: process.cwd() }, 'item/commandExecution/requestApproval', {
+      kind: 'command',
+      command: comando,
+      cwd: process.cwd(),
+      reason: 'A caixa de areia não deixou.',
+    });
+    await falar(ok ? 'rodou' : 'negado', 'msg-final');
   } else if (roteiro === 'busca') {
     avisar('item/started', { threadId: thread, turnId: turno, item: { type: 'webSearch', id: 'ws-1', query: 'awikabot' } });
     await depois(2000);

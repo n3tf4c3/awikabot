@@ -979,6 +979,21 @@ Não coberto:
 - o Codex no app de desktop: o 0.1.3, publicado, ignora o catálogo e não o oferece, e nenhuma versão nova foi empacotada; no celular, o iPhone;
 - a memória de vários turnos do Codex ao mesmo tempo no Pi.
 
+### O corte também no item que falha (2026-11-27)
+
+A verificação de segurança da 0.1.4 (observação 16) apontou que o driver só cortava o comando ou a edição sem pedido que terminava como `completed`: um comando que lê e sai com erro passava, e a saída chegava ao modelo. Medido com o Codex 0.172.0 de verdade, na imagem do servidor com as travas do compose, dirigido como o driver dirige, com um modelo falso local no lugar da conta (sem rede e sem login):
+
+| Situação | O que o Codex emite |
+|---|---|
+| Comando sem pedido, caixa de areia que não sobe (travas do produto) | Um item próprio, `failed`, `exitCode` 1, sem pedido, com a saída exata do bwrap que vem com o Codex ("No permissions to create a new namespace…"). O comando não começou; o modelo recebe essa mensagem e, para rodar, tem de pedir de novo. A tentativa não vira pedido no mesmo item. |
+| Comando sem pedido, caixa de areia de pé (sem o filtro de chamadas do Docker) | `failed`, `exitCode` 3, sem pedido, com o que o comando leu na saída. É o caso da observação. |
+| Comando com pedido | Pedido no mesmo item, antes de rodar; recusado termina `declined`, aceito termina `completed` ou `failed` pelo código de saída. |
+| Edição, com ou sem a caixa de areia | Sempre pede antes de aplicar; termina `declined` ou `completed`. |
+
+Os estados possíveis, pelo esquema do próprio 0.172.0 (`codex app-server generate-json-schema`), são `inProgress`, `completed`, `failed` e `declined`, e o item não diz se a caixa de areia subiu. O que distingue a tentativa que não começou é a saída exata do bwrap, texto fixo, sem nada do que um comando leria. O driver passou a cortar todo comando ou edição que termina sem pedido aceito, menos o recusado e o comando com exatamente essa saída e código 1 (`agiuSemPedido`); estado desconhecido corta. Se outra versão do Codex mudar a mensagem, toda tentativa sem pedido corta o turno, o que é o lado seguro; trocar a versão é medir de novo.
+
+Fica um resíduo, só com a caixa de areia de pé: um comando pode imprimir a mesma mensagem e sair com 1 para não ser cortado. O modelo recebe só o texto fixo, e o que aprende é se o turno seguiu, um bit por tentativa.
+
 ## Termos de uso dos motores (2026-11-26)
 
 Pedido do titular em 26/11, depois de a prova achar a restrição do Antigravity: conferir se o Claude Code e o Codex têm o mesmo problema, e se usar o motor por ACP ou pela CLI, como o termIAX, muda a resposta. Não têm o mesmo problema. No Claude Code e no Codex o protocolo não muda nada: as páginas olham quem faz o login, com qual credencial, e se o aplicativo é local ou um serviço. No Antigravity muda: o `agy acp` é um caminho documentado, e o modo sem tela embrulhado num aplicativo é o que a FAQ recusa.
