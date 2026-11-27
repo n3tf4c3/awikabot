@@ -299,6 +299,11 @@ describe('bots (F2)', () => {
     expect(ultra.status).toBe(400);
   });
 
+  it('não cria no Antigravity, que ainda não está pronto nem em prova neste servidor', async () => {
+    const resposta = await ambiente.pedir('/v1/bots', { token, corpo: { nome: 'Antigravity', motor: 'antigravity' } });
+    expect(resposta.status).toBe(400);
+  });
+
   it('a edição muda o esforço, confere com o motor do bot e nunca muda o motor', async () => {
     const criado = EsquemaBot.parse(await (await ambiente.pedir('/v1/bots', { token, corpo: { nome: 'Scout' } })).json());
     const editar = (corpo: unknown) => ambiente.pedir(`/v1/bots/${criado.id}`, { token, metodo: 'PATCH', corpo });
@@ -341,6 +346,10 @@ describe('catálogo (F2)', () => {
     const codex = catalogo.motores.find((motor) => motor.id === 'codex');
     expect(codex).toMatchObject({ familia: 'agente', pronto: true, papeis: ['worker', 'decisao'] });
     expect(codex?.esforcos.map((esforco) => esforco.id)).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+    // O Antigravity aparece no catálogo como não pronto: os apps não o oferecem.
+    const antigravity = catalogo.motores.find((motor) => motor.id === 'antigravity');
+    expect(antigravity).toMatchObject({ familia: 'agente', pronto: false, papeis: ['worker'] });
+    expect(antigravity?.esforcos.map((esforco) => esforco.id)).toEqual(['low', 'medium', 'high']);
     // O motor simulado é só de teste: nunca aparece para a pessoa escolher.
     expect(catalogo.motores.map((motor) => motor.id)).not.toContain('simulado');
   });

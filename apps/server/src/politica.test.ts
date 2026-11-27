@@ -138,6 +138,11 @@ describe('gravação', () => {
       ['a configuração escrita com outra caixa', '.Claude/settings.json'],
       ['uma pasta de configuração dentro de uma subpasta', 'sub/.claude/skills/x/SKILL.md'],
       ['os servidores MCP do projeto', '.mcp.json'],
+      ['o gancho que o Antigravity leria da pasta', '.agents/hooks.json'],
+      ['os servidores MCP que o Antigravity leria da pasta', '.agents/mcp_config.json'],
+      ['a pasta do Antigravity com outro nome', '_agents/hooks.json'],
+      ['a pasta do Antigravity com o nome antigo', 'sub/.agent/plugins/x/plugin.json'],
+      ['a pasta do Antigravity com o quarto nome', '_agent/hooks.json'],
       ['a configuração alcançada por um caminho torto', 'sub/../.claude/settings.json'],
     ])('nega gravar %s, sem perguntar', (_caso, caminho) => {
       expect(avaliarFerramenta(ferramenta, entradaDe(ferramenta, caminho), pasta)).toEqual({

@@ -46,6 +46,12 @@ Com `-e AWIKA_VERIFICAR_MOTOR=codex` no segundo comando, o bot do runbook nasce 
 
 Para provar que a configuração gerenciada de `/etc/codex` vence a do usuário, grave antes, no volume, um `codex/config.toml` que liga o que ela desliga (`web_search = "live"`, `approval_policy = "never"`, `[features] apps = true`) e devolva o original no fim.
 
+### Com o Antigravity
+
+Com `-e AWIKA_VERIFICAR_MOTOR=antigravity` no segundo comando, o bot do runbook nasce no Antigravity. O servidor precisa do acesso dele (a chave em `GEMINI_API_KEY`, ou o login feito pela pessoa dona da conta; ver `deploy/compose.yaml`) e de `AWIKA_MOTORES_EM_PROVA=antigravity` no ambiente do serviço, num arquivo de compose a mais, porque o catálogo ainda não o marca como pronto. Nesse modo os pedidos de arquivo levam o caminho completo dentro da pasta do bot, porque a sessão abre fora dela; o comando de terminal não leva, e o cartão o mostra com `cd '<pasta do bot>' &&` na frente. A leitura na pasta do bot passa sem cartão, a leitura fora da pasta tenta o login do próprio Antigravity, a gravação na configuração é em `.agents/hooks.json`, e a busca na web não roda.
+
+Depois de mexer no driver, no gancho ou na configuração do Antigravity, conferir também, com um turno de verdade: que `pwd` sem `cd` devolve a pasta do bot e que um arquivo de caminho relativo cai nela; e que uma configuração plantada não tem efeito. Para isso, gravar pelo host um `.agents/hooks.json` com um gancho que cria um arquivo, na pasta do bot e na pasta da sessão (`<AWIKA_DADOS>/antigravity/<bot>`), trocar o `~/.gemini/config/hooks.json` pelo mesmo, rodar um turno e conferir que o arquivo não apareceu, que a pasta da sessão ficou vazia e que o gancho pessoal voltou a ser o do servidor.
+
 O modelo do Codex nem sempre pede: às vezes responde "negado" sem tentar. A conferência da ação negada depende de surgir um pedido; quando ela falha com zero pedidos, ler a resposta gravada antes de concluir que a trava falhou.
 
 ## Ensaio no host: queda, vigia, backup e restauração
