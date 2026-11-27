@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { LimitadorDeTentativas, origemDoPedido } from './dispositivos';
+import { normalizarCodigoPareamento } from '@awikabot/core';
+import { abrirBanco } from './banco';
+import { autenticar, criarCodigo, LimitadorDeTentativas, listarDispositivos, origemDoPedido, parear } from './dispositivos';
 
 const DEZ_MINUTOS = 10 * 60_000;
 
@@ -18,6 +20,42 @@ describe('origemDoPedido', () => {
     ['sem nada, uma origem só para todos', undefined, undefined, 'desconhecida'],
   ])('%s', (_caso, cabecalho, conexao, origem) => {
     expect(origemDoPedido(cabecalho, conexao)).toBe(origem);
+  });
+});
+
+describe('parear', () => {
+  it('se o aparelho não é gravado, o código não fica gasto: a pessoa pareia de novo com o mesmo', () => {
+    const banco = abrirBanco(':memory:');
+    try {
+      const codigo = normalizarCodigoPareamento(criarCodigo(banco));
+      banco.exec("CREATE TRIGGER falha_no_aparelho BEFORE INSERT ON dispositivos BEGIN SELECT RAISE(ABORT, 'falha injetada na segunda gravação'); END");
+      expect(() => parear(banco, codigo, 'Celular')).toThrow(/falha injetada/);
+      expect(listarDispositivos(banco)).toEqual([]);
+
+      banco.exec('DROP TRIGGER falha_no_aparelho');
+      const pareado = parear(banco, codigo, 'Celular');
+      expect(pareado?.dispositivo.nome).toBe('Celular');
+      expect(autenticar(banco, pareado!.token)?.id).toBe(pareado!.dispositivo.id);
+      // Uso único continua valendo depois de um pareamento que deu certo.
+      expect(parear(banco, codigo, 'Outro')).toBeNull();
+      expect(listarDispositivos(banco)).toHaveLength(1);
+    } finally {
+      banco.close();
+    }
+  });
+
+  it('código errado ou vencido não deixa transação aberta nem aparelho', () => {
+    const banco = abrirBanco(':memory:');
+    try {
+      const codigo = normalizarCodigoPareamento(criarCodigo(banco, 0));
+      expect(parear(banco, 'AAAAAAAAAAAA', 'Celular', 1)).toBeNull();
+      expect(parear(banco, codigo, 'Celular', 10 * 60_000)).toBeNull();
+      expect(banco.isTransaction).toBe(false);
+      expect(listarDispositivos(banco)).toEqual([]);
+      expect(parear(banco, codigo, 'Celular', 1)?.dispositivo.nome).toBe('Celular');
+    } finally {
+      banco.close();
+    }
   });
 });
 

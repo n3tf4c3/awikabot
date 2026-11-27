@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { Mensagem } from '@awikabot/core';
 import type { GestorDeAprovacoes } from './aprovacoes';
-import type { Banco } from './banco';
+import { emTransacao, type Banco } from './banco';
 import { gravarSessaoMotor, type BotInterno } from './bots';
 import { concluirMensagem, gravarParcial, inserirMensagem } from './conversa';
 import type { Barramento } from './eventos';
@@ -11,7 +11,7 @@ import type { Motor, ResultadoMotor, TurnoEmCurso } from './motor';
 
 export type InicioDeTurno =
   | { ok: true; usuario: Mensagem; bot: Mensagem }
-  | { ok: false; motivo: 'turno_em_andamento' | 'limite_de_turnos' };
+  | { ok: false; motivo: 'turno_em_andamento' | 'limite_de_turnos' | 'servidor_encerrando' };
 
 /** O que liga os turnos às aprovações. Sem isto, o motor nega o que pediria aprovação. */
 export interface LigacaoDeAprovacoes {
@@ -25,6 +25,9 @@ export interface LigacaoDeAprovacoes {
 /** De quanto em quanto tempo o texto de uma resposta em andamento vai para o banco. */
 export const INTERVALO_GRAVACAO_PARCIAL_MS = 1000;
 
+/** O que a pessoa lê na resposta de um turno cujo motor quebrou antes de começar. */
+const MOTOR_NAO_INICIOU = 'O motor não conseguiu começar este turno.';
+
 /** Quanto o servidor espera os turnos fecharem ao ser encerrado. Cabe no prazo de parada do contêiner. */
 export const PRAZO_PARADA_MS = 5000;
 
@@ -35,6 +38,10 @@ export class GestorDeTurnos {
   private readonly fechos = new Map<string, Promise<void>>();
   /** Texto já recebido de cada resposta em andamento, por id da mensagem. */
   private readonly parciais = new Map<string, string>();
+  /** A gravação marcada para o texto que chegou e ainda não foi para o banco, por id da mensagem. */
+  private readonly gravacoes = new Map<string, NodeJS.Timeout>();
+  /** O servidor recebeu o pedido de parada: nenhum turno novo começa. */
+  private encerrando = false;
   private readonly banco: Banco;
   private readonly motor: Motor;
   private readonly barramento: Barramento;
@@ -72,6 +79,8 @@ export class GestorDeTurnos {
   }
 
   iniciar(bot: BotInterno, texto: string): InicioDeTurno {
+    // Um turno aceito depois do pedido de parada ficaria fora dos que o servidor espera fechar.
+    if (this.encerrando) return { ok: false, motivo: 'servidor_encerrando' };
     if (this.ativos.has(bot.id)) return { ok: false, motivo: 'turno_em_andamento' };
     if (this.ativos.size >= this.limite) return { ok: false, motivo: 'limite_de_turnos' };
 
@@ -79,35 +88,41 @@ export class GestorDeTurnos {
     const pasta = path.resolve(this.pastaDosBots, bot.id);
     mkdirSync(pasta, { recursive: true });
 
-    const usuario = inserirMensagem(this.banco, { botId: bot.id, papel: 'usuario', texto, estado: 'completa' });
-    const resposta = inserirMensagem(this.banco, { botId: bot.id, papel: 'bot', texto: '', estado: 'em_andamento' });
+    // A mensagem da pessoa e a resposta em andamento entram juntas: se a segunda não entra, a
+    // primeira não fica sozinha na conversa.
+    const { usuario, resposta } = emTransacao(this.banco, () => ({
+      usuario: inserirMensagem(this.banco, { botId: bot.id, papel: 'usuario', texto, estado: 'completa' }),
+      resposta: inserirMensagem(this.banco, { botId: bot.id, papel: 'bot', texto: '', estado: 'em_andamento' }),
+    }));
 
     const ligacao = this.ligacao;
     const token = ligacao?.ganchos.registrar({ botId: bot.id, mensagemId: resposta.id, pasta }) ?? null;
 
     this.parciais.set(resposta.id, '');
-    let gravadoEm = Date.now();
-    const turno = this.motor({
-      motor: bot.motor,
-      pasta,
-      texto,
-      instrucoes: bot.instrucoes,
-      modelo: bot.modelo,
-      esforco: bot.esforco,
-      sessao: bot.sessaoMotor,
-      gancho: ligacao && token ? { comando: ligacao.comando, porta: ligacao.porta, token } : null,
-      aoTexto: (trecho) => {
-        const anterior = this.parciais.get(resposta.id) ?? '';
-        const parcial = anterior + trecho;
-        this.parciais.set(resposta.id, parcial);
-        // Numa queda, o que sobra é o que já foi para o banco: no máximo um intervalo se perde.
-        if (Date.now() - gravadoEm >= this.intervaloGravacaoMs) {
-          gravarParcial(this.banco, resposta.id, parcial);
-          gravadoEm = Date.now();
-        }
-        this.barramento.publicar({ tipo: 'texto', botId: bot.id, mensagemId: resposta.id, posicao: anterior.length, trecho });
-      },
-    });
+    let turno: TurnoEmCurso;
+    try {
+      turno = this.motor({
+        motor: bot.motor,
+        pasta,
+        texto,
+        instrucoes: bot.instrucoes,
+        modelo: bot.modelo,
+        esforco: bot.esforco,
+        sessao: bot.sessaoMotor,
+        gancho: ligacao && token ? { comando: ligacao.comando, porta: ligacao.porta, token } : null,
+        aoTexto: (trecho) => {
+          const anterior = this.parciais.get(resposta.id) ?? '';
+          this.parciais.set(resposta.id, anterior + trecho);
+          this.marcarGravacao(resposta.id);
+          this.barramento.publicar({ tipo: 'texto', botId: bot.id, mensagemId: resposta.id, posicao: anterior.length, trecho });
+        },
+      });
+    } catch (erro) {
+      // Um driver que quebra antes de devolver o turno deixaria a resposta em andamento para sempre,
+      // com o token do gancho valendo. O turno fecha como falha, pelo mesmo caminho dos outros.
+      console.error(`turnos: o motor não iniciou: ${erro instanceof Error ? erro.message : 'erro desconhecido'}`);
+      turno = { parar: () => {}, fim: Promise.resolve({ estado: 'falhou', texto: MOTOR_NAO_INICIOU, sessao: bot.sessaoMotor }) };
+    }
     this.ativos.set(bot.id, turno);
     this.barramento.publicar({ tipo: 'turno_iniciado', botId: bot.id, mensagemId: resposta.id });
     this.fechos.set(
@@ -128,10 +143,33 @@ export class GestorDeTurnos {
   }
 
   /**
-   * Para todos os turnos e espera cada resposta ser gravada, até o prazo. O que não fechar a
-   * tempo fica como está no banco, e a partida seguinte marca como falha.
+   * Marca a gravação do que chegou de uma resposta, para daqui a um intervalo. Numa queda, o que
+   * sobra é o que já foi para o banco: no máximo um intervalo se perde, mesmo que o motor se cale
+   * depois de um trecho. Com uma gravação já marcada, não marca outra; sem texto novo, nenhuma roda.
+   */
+  private marcarGravacao(mensagemId: string): void {
+    if (this.gravacoes.has(mensagemId)) return;
+    const relogio = setTimeout(() => {
+      this.gravacoes.delete(mensagemId);
+      this.gravarOQueChegou(mensagemId);
+    }, this.intervaloGravacaoMs);
+    this.gravacoes.set(mensagemId, relogio);
+  }
+
+  /** Com o banco já fechado, como no fim de uma parada, não há onde gravar: o relógio não derruba o processo. */
+  private gravarOQueChegou(mensagemId: string): void {
+    const parcial = this.parciais.get(mensagemId);
+    if (parcial !== undefined && this.banco.isOpen) gravarParcial(this.banco, mensagemId, parcial);
+  }
+
+  /**
+   * Para todos os turnos e espera cada resposta ser gravada, até o prazo. Do turno que não fechar
+   * a tempo, o texto que já chegou vai para o banco, e a partida seguinte marca a resposta como
+   * falha. Depois desta chamada o gestor não aceita turno novo: ela é o pedido de parada do servidor.
    */
   async pararTodos(prazoMs = PRAZO_PARADA_MS): Promise<void> {
+    // Antes de qualquer espera: daqui em diante, `iniciar` recusa, também para o pedido que já lia o corpo.
+    this.encerrando = true;
     const fechos = [...this.fechos.values()];
     for (const turno of this.ativos.values()) turno.parar();
     let relogio: NodeJS.Timeout | undefined;
@@ -140,12 +178,21 @@ export class GestorDeTurnos {
     });
     await Promise.race([Promise.all(fechos), prazo]);
     clearTimeout(relogio);
+    // Quem chama fecha o banco em seguida: o que ainda esperava a gravação marcada vai agora.
+    for (const [mensagemId, marcada] of this.gravacoes) {
+      clearTimeout(marcada);
+      this.gravarOQueChegou(mensagemId);
+    }
+    this.gravacoes.clear();
   }
 
   private concluir(botId: string, mensagemId: string, token: string | null, resultado: ResultadoMotor): void {
     this.ativos.delete(botId);
     this.fechos.delete(botId);
     this.parciais.delete(mensagemId);
+    // A gravação marcada não roda mais: a resposta vai inteira para o banco logo abaixo.
+    clearTimeout(this.gravacoes.get(mensagemId));
+    this.gravacoes.delete(mensagemId);
     if (this.ligacao && token) {
       // O token deixa de valer com o turno, e o que ainda esperava resposta não vai mais rodar.
       this.ligacao.ganchos.remover(token);

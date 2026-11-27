@@ -1,6 +1,6 @@
 import { isIP } from 'node:net';
 import type { Dispositivo } from '@awikabot/core';
-import type { Banco } from './banco';
+import { emTransacao, type Banco } from './banco';
 import { formatarCodigo, novoCodigo, novoId, novoToken, resumo } from './ids';
 
 export const VALIDADE_CODIGO_MS = 5 * 60_000;
@@ -30,18 +30,22 @@ export function parear(
   nome: string,
   agora = Date.now(),
 ): { token: string; dispositivo: Dispositivo } | null {
-  // O UPDATE condicional consome o código de forma atômica: dois pedidos com o mesmo código não passam os dois.
-  const consumo = banco
-    .prepare('UPDATE codigos_pareamento SET usado_em = ? WHERE codigo_hash = ? AND usado_em IS NULL AND expira_em > ?')
-    .run(agora, resumo(codigo), agora);
-  if (Number(consumo.changes) !== 1) return null;
+  // Gastar o código e gravar o aparelho é uma gravação só: se o aparelho não entra, o código continua
+  // valendo, e a pessoa não fica sem código e sem credencial. O token só sai daqui depois do commit.
+  return emTransacao(banco, () => {
+    // O UPDATE condicional consome o código de forma atômica: dois pedidos com o mesmo código não passam os dois.
+    const consumo = banco
+      .prepare('UPDATE codigos_pareamento SET usado_em = ? WHERE codigo_hash = ? AND usado_em IS NULL AND expira_em > ?')
+      .run(agora, resumo(codigo), agora);
+    if (Number(consumo.changes) !== 1) return null;
 
-  const token = novoToken();
-  const dispositivo: Dispositivo = { id: novoId(), nome, criadoEm: agora };
-  banco
-    .prepare('INSERT INTO dispositivos (id, nome, token_hash, criado_em) VALUES (?, ?, ?, ?)')
-    .run(dispositivo.id, nome, resumo(token), agora);
-  return { token, dispositivo };
+    const token = novoToken();
+    const dispositivo: Dispositivo = { id: novoId(), nome, criadoEm: agora };
+    banco
+      .prepare('INSERT INTO dispositivos (id, nome, token_hash, criado_em) VALUES (?, ?, ?, ?)')
+      .run(dispositivo.id, nome, resumo(token), agora);
+    return { token, dispositivo };
+  });
 }
 
 export function autenticar(banco: Banco, token: string, agora = Date.now()): Dispositivo | null {
