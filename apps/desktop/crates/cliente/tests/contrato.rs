@@ -15,8 +15,9 @@ use awikabot_cliente::catalogo::{Opcao, modelo_marcado, motores_para_criar, opco
 use awikabot_cliente::contrato::{
     Aprovacao, AprovacaoEstado, Bot, BotEdicao, BotEntrada, DecisaoAprovacao, DecisaoAprovacaoDecisao, Evento, MOTOR_PADRAO, Mensagem,
     MensagemEstado, MensagemPapel, MotorDoCatalogoFamilia, MotorDoCatalogoPapeis, PedidoPareamento, PedidoTurno, SaudeStatus,
-    VERSAO_PROTOCOLO,
+    VERSAO_PROTOCOLO, limites,
 };
+use awikabot_cliente::conversa::Conversa;
 use awikabot_cliente::fluxo::{Conexao, FimDoFluxo, Sinal, seguir};
 use awikabot_cliente::formulario_bot::{CamposBot, campos_do_bot, edicao_do_bot, validar_bot};
 use awikabot_cliente::servidor_de_teste::ServidorDeTeste;
@@ -496,4 +497,66 @@ fn negar_aprovacao_contra_o_servidor() {
     reaberto.aplicar_resolvidas(pagina.aprovacoes.unwrap_or_default());
     assert_eq!(reaberto.do_bot(&bot.id), vec![&negada]);
     assert_eq!(situacao_do_bot(&bot, &reaberto), None);
+}
+
+#[test]
+fn paginas_anteriores_da_conversa_contra_o_servidor() {
+    let servidor = ServidorDeTeste::subir();
+    let aparelho = Aparelho::parear(&servidor);
+    let (api, credencial) = (&aparelho.api, &aparelho.credencial);
+    let bot = aparelho.criar_bot("Scout");
+
+    // O primeiro turno pede uma aprovação, que é negada: ela fica presa à resposta mais antiga.
+    let primeira_resposta = aparelho.enviar(&bot, "!comando echo oi");
+    let pedida = aparelho.aprovacao_pedida();
+    let negada = api.decidir_aprovacao(credencial, &pedida.id, &NEGAR).expect("negar");
+    assert_eq!(aparelho.turno_terminado().id, primeira_resposta.id);
+    // Mais 25 turnos: 52 mensagens, duas a mais do que cabe numa página.
+    for numero in 2..=26 {
+        let resposta = aparelho.enviar(&bot, &format!("mensagem {numero}"));
+        assert_eq!(aparelho.turno_terminado().id, resposta.id);
+    }
+
+    // A página mais recente: as 50 últimas, e o aviso de que há mais antes delas.
+    let recente = api.listar_mensagens(credencial, &bot.id).expect("página mais recente");
+    assert_eq!(recente.mensagens.len(), limites::MENSAGENS_POR_PAGINA);
+    assert_eq!(recente.mensagens.iter().map(|mensagem| mensagem.seq).collect::<Vec<_>>(), (3..=52).collect::<Vec<_>>());
+    assert!(recente.tem_mais);
+    assert_eq!(recente.aprovacoes, Some(Vec::new()), "o pedido da resposta mais antiga não é desta página");
+
+    let mut conversa = Conversa::default();
+    conversa.aplicar_pagina_recente(recente.mensagens.clone(), recente.tem_mais);
+    let cursor = conversa.cursor_das_anteriores().expect("há mensagens anteriores");
+    assert_eq!(cursor, 3);
+
+    // A página anterior ao cursor: o que faltava, sem repetir a mensagem do cursor, com o pedido
+    // resolvido da resposta que ela traz.
+    let anterior = api.listar_mensagens_anteriores(credencial, &bot.id, cursor).expect("página anterior");
+    assert_eq!(anterior.mensagens.iter().map(|mensagem| mensagem.seq).collect::<Vec<_>>(), vec![1, 2]);
+    assert_eq!(anterior.mensagens[0].texto, "!comando echo oi");
+    assert_eq!(anterior.mensagens[1].id, primeira_resposta.id);
+    assert!(!anterior.tem_mais);
+    assert_eq!(anterior.aprovacoes, Some(vec![negada.clone()]));
+
+    // Juntas, as duas páginas dão a conversa inteira, uma mensagem de cada, e o pedido aparece
+    // uma vez mesmo que a página chegue duas vezes.
+    let mut aprovacoes = Aprovacoes::default();
+    aprovacoes.aplicar_resolvidas(recente.aprovacoes.unwrap_or_default());
+    for _ in 0..2 {
+        aprovacoes.aplicar_resolvidas(anterior.aprovacoes.clone().unwrap_or_default());
+    }
+    assert!(conversa.aplicar_pagina_anterior(cursor, anterior.mensagens.clone(), anterior.tem_mais));
+    assert!(!conversa.aplicar_pagina_anterior(cursor, anterior.mensagens, anterior.tem_mais), "a mesma página não entra duas vezes");
+    assert_eq!(conversa.mensagens.iter().map(|mensagem| mensagem.seq).collect::<Vec<_>>(), (1..=52).collect::<Vec<_>>());
+    assert_eq!(conversa.cursor_das_anteriores(), None);
+    assert_eq!(aprovacoes.do_bot(&bot.id), vec![&negada]);
+
+    // Antes da primeira mensagem não há nada; o cursor zero não é um cursor.
+    let antes_de_tudo = api.listar_mensagens_anteriores(credencial, &bot.id, 1).expect("página vazia");
+    assert!(antes_de_tudo.mensagens.is_empty() && !antes_de_tudo.tem_mais);
+    assert_eq!(api.listar_mensagens_anteriores(credencial, &bot.id, 0), Err(recusa(400, "dados_invalidos")));
+    // As mesmas recusas da página mais recente.
+    assert_eq!(api.listar_mensagens_anteriores(credencial, ID_QUE_NAO_EXISTE, 3), Err(recusa(404, "nao_encontrado")));
+    assert_eq!(api.listar_mensagens_anteriores(credencial, "id-que-nao-e-id", 3), Err(ErroApi::IdInvalido));
+    assert_eq!(api.listar_mensagens_anteriores(&aparelho.token_errado(), &bot.id, 3), Err(ErroApi::NaoAutenticado));
 }

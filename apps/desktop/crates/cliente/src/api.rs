@@ -195,6 +195,15 @@ impl Api {
         self.obter(credencial, &format!("/v1/bots/{bot_id}/mensagens"))
     }
 
+    /// A página anterior à mensagem de `seq` igual a `antes`, em ordem crescente: é o cursor que a
+    /// conversa dá em `cursor_das_anteriores`. O número é o único texto que entra na consulta.
+    pub fn listar_mensagens_anteriores(&self, credencial: &Credencial, bot_id: &str, antes: u64) -> Result<ListaMensagens, ErroApi> {
+        if !id_valido(bot_id) {
+            return Err(ErroApi::IdInvalido);
+        }
+        self.obter(credencial, &format!("/v1/bots/{bot_id}/mensagens?antes={antes}"))
+    }
+
     pub fn enviar_turno(&self, credencial: &Credencial, bot_id: &str, pedido: &PedidoTurno) -> Result<RespostaTurno, ErroApi> {
         if !id_valido(bot_id) {
             return Err(ErroApi::IdInvalido);

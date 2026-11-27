@@ -5,7 +5,7 @@
 //! resultado só é usado se essa credencial ainda for a da sessão atual, e só a recusa do token
 //! pelo próprio servidor desfaz o pareamento: a mesma regra do app de celular.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -16,13 +16,14 @@ use awikabot_cliente::catalogo::{
     texto_ao_escolher_outro, trocar_motor,
 };
 use awikabot_cliente::contrato::{
-    Aprovacao, AprovacaoEstado, Bot, Catalogo, DecisaoAprovacao, DecisaoAprovacaoDecisao, Evento, Mensagem, MensagemEstado, MensagemPapel,
-    PedidoPareamento, PedidoTurno, RespostaPareamento, VERSAO_PROTOCOLO, limites,
+    Aprovacao, AprovacaoEstado, Bot, Catalogo, DecisaoAprovacao, DecisaoAprovacaoDecisao, Evento, ListaMensagens, Mensagem, MensagemEstado,
+    MensagemPapel, PedidoPareamento, PedidoTurno, RespostaPareamento, RespostaTurno, VERSAO_PROTOCOLO, limites,
 };
-use awikabot_cliente::conversa::{Conversa, Efeito};
+use awikabot_cliente::conversa::{Conversa, Efeito, TurnosTerminados};
 use awikabot_cliente::endereco::normalizar_endereco;
 use awikabot_cliente::fluxo::{Conexao, FimDoFluxo, Sinal, seguir};
 use awikabot_cliente::formulario_bot::{CamposBot, ErrosBot, campos_do_bot, edicao_do_bot, validar_bot};
+use awikabot_cliente::rascunho::{Envio, Rascunhos};
 use awikabot_cliente::sessao::{self, Cofre, Sessao};
 use futures::StreamExt;
 use futures::channel::mpsc;
@@ -35,9 +36,11 @@ use crate::atualizador::{Configuracao, PainelDeAtualizacao};
 use crate::campo::{CampoDeTexto, Confirmado};
 use crate::tema;
 
-actions!(janela, [ProximoCampo, CampoAnterior, Cancelar]);
+actions!(janela, [ProximoCampo, CampoAnterior, Cancelar, AcionarBotao]);
 
 const CONTEXTO: &str = "Janela";
+/// O contexto de um botão de cartão de aprovação com o teclado nele: é só aí que Enter e Espaço decidem.
+const CONTEXTO_DA_DECISAO: &str = "DecisaoDoCartao";
 /// O código tem doze caracteres; a folga é para os hifens e espaços que a pessoa digitar.
 const LIMITE_DO_CODIGO: usize = 40;
 const LIMITE_DO_ENDERECO: usize = 300;
@@ -55,6 +58,8 @@ pub fn registrar_teclas(cx: &mut App) {
         KeyBinding::new("tab", ProximoCampo, Some(CONTEXTO)),
         KeyBinding::new("shift-tab", CampoAnterior, Some(CONTEXTO)),
         KeyBinding::new("escape", Cancelar, Some(CONTEXTO)),
+        KeyBinding::new("enter", AcionarBotao, Some(CONTEXTO_DA_DECISAO)),
+        KeyBinding::new("space", AcionarBotao, Some(CONTEXTO_DA_DECISAO)),
     ]);
 }
 
@@ -119,17 +124,32 @@ struct Formulario {
     _assinaturas: Vec<Subscription>,
 }
 
+/// O foco dos dois botões de um cartão de aprovação pendente. Nasce com o cartão e some com ele:
+/// o teclado que está num botão nunca passa sozinho para o botão de outro pedido.
+struct FocoDoCartao {
+    aprovar: FocusHandle,
+    negar: FocusHandle,
+}
+
 /// A sessão em uso: o que veio do cofre ou do pareamento, mais o que está na tela.
 struct SessaoAberta {
     credencial: Credencial,
     bots: Vec<Bot>,
     selecionado: Option<String>,
     conversa: Conversa,
+    /// O pedido da página anterior da conversa aberta já saiu e ainda não voltou.
+    carregando_anteriores: bool,
+    /// A última resposta que cada bot terminou: o aceite atrasado de um envio não reabre o turno.
+    terminados: TurnosTerminados,
+    /// O que a pessoa está escrevendo para cada bot. O campo mostra o do bot selecionado.
+    rascunhos: Rascunhos,
     /// Os pedidos de aprovação de todos os bots: os pendentes, os resolvidos nesta execução e os
     /// já resolvidos que vieram com a página de cada conversa.
     aprovacoes: Aprovacoes,
     /// Pedidos cuja decisão já saiu daqui e ainda não voltou do servidor.
     decidindo: HashSet<String>,
+    /// O foco dos botões dos cartões pendentes que estão na tela, pelo id do pedido.
+    foco_dos_cartoes: HashMap<String, FocoDoCartao>,
     /// O pedido de parar a resposta já saiu e ainda não voltou.
     parando: bool,
     formulario: Option<Formulario>,
@@ -140,7 +160,7 @@ struct SessaoAberta {
     conexao: Option<Conexao>,
     aviso: Option<SharedString>,
     rolagem: ScrollHandle,
-    _assinatura: Subscription,
+    _assinaturas: [Subscription; 2],
     _fluxo: FluxoAtivo,
 }
 
@@ -338,7 +358,11 @@ impl Janela {
     fn entrar(&mut self, credencial: Credencial, cx: &mut Context<Self>) {
         // Enter envia; Shift+Enter quebra a linha. O campo cresce com o texto até seis linhas.
         let compositor = cx.new(|cx| CampoDeTexto::area("Escreva para o bot", limites::TEXTO, (1, 6), true, cx));
-        let assinatura = cx.subscribe(&compositor, |janela: &mut Self, _, _: &Confirmado, cx| janela.enviar(cx));
+        let assinaturas = [
+            cx.subscribe(&compositor, |janela: &mut Self, _, _: &Confirmado, cx| janela.enviar(cx)),
+            // Cada mudança do campo vai para o rascunho do bot selecionado.
+            cx.observe(&compositor, |janela: &mut Self, _, cx| janela.guardar_rascunho(cx)),
+        ];
         self.foco_pendente = Some(compositor.focus_handle(cx));
 
         // O fluxo bloqueia enquanto durar: fica numa thread só dele e fala com a janela por um canal.
@@ -365,8 +389,12 @@ impl Janela {
             bots: Vec::new(),
             selecionado: None,
             conversa: Conversa::default(),
+            carregando_anteriores: false,
+            terminados: TurnosTerminados::default(),
+            rascunhos: Rascunhos::default(),
             aprovacoes: Aprovacoes::default(),
             decidindo: HashSet::new(),
+            foco_dos_cartoes: HashMap::new(),
             parando: false,
             formulario: None,
             catalogo: None,
@@ -374,7 +402,7 @@ impl Janela {
             conexao: None,
             aviso: iniciada.is_err().then(|| "Não foi possível acompanhar o servidor em tempo real.".into()),
             rolagem: ScrollHandle::new(),
-            _assinatura: assinatura,
+            _assinaturas: assinaturas,
             _fluxo: FluxoAtivo { parar, _escuta: escuta },
         }));
         self.carregar_bots(&credencial, cx);
@@ -449,12 +477,34 @@ impl Janela {
     fn selecionar(&mut self, credencial: &Credencial, bot_id: String, cx: &mut Context<Self>) {
         let Some(sessao) = self.sessao_de(credencial) else { return };
         if sessao.selecionado.as_deref() != Some(bot_id.as_str()) {
+            // O que está no campo é do bot que sai de cena: fica guardado com ele, e o campo passa a
+            // mostrar o rascunho do bot que entra. Assim o texto de um nunca é enviado ao outro.
+            let no_campo = sessao.compositor.read(cx).texto().to_owned();
+            match sessao.selecionado.as_deref() {
+                Some(anterior) => {
+                    sessao.rascunhos.editar(anterior, &no_campo);
+                    let do_novo = sessao.rascunhos.texto(&bot_id).to_owned();
+                    if do_novo != no_campo {
+                        sessao.compositor.update(cx, |campo, cx| campo.definir(&do_novo, cx));
+                    }
+                }
+                // A primeira seleção da sessão: não há de quem guardar.
+                None => sessao.rascunhos.editar(&bot_id, &no_campo),
+            }
             sessao.conversa = Conversa::default();
+            sessao.carregando_anteriores = false;
             sessao.selecionado = Some(bot_id.clone());
             sessao.parando = false;
         }
         cx.notify();
         self.carregar_mensagens(credencial, bot_id, cx);
+    }
+
+    /// O campo mudou: o texto vai para o rascunho do bot selecionado.
+    fn guardar_rascunho(&mut self, cx: &mut Context<Self>) {
+        let Tela::Sessao(sessao) = &mut self.tela else { return };
+        let Some(bot_id) = sessao.selecionado.as_deref() else { return };
+        sessao.rascunhos.editar(bot_id, sessao.compositor.read(cx).texto());
     }
 
     /// O clique num bot da lista: troca de conversa e fecha o formulário, se estava aberto.
@@ -470,47 +520,141 @@ impl Janela {
         self.em_segundo_plano(
             cx,
             move |api| api.listar_mensagens(&do_pedido, &bot_id),
-            move |janela, resposta, cx| {
-                let Some(pagina) = janela.conferir(&da_resposta, resposta, cx) else { return };
-                let Some(sessao) = janela.sessao_de(&da_resposta) else { return };
-                // Os pedidos já resolvidos da página valem seja qual for a conversa aberta agora. Um
-                // servidor anterior a esse campo não o manda.
-                sessao.aprovacoes.aplicar_resolvidas(pagina.aprovacoes.unwrap_or_default());
-                // A resposta de um bot que a pessoa já deixou de olhar não entra na conversa do outro.
-                if sessao.selecionado.as_deref() == Some(do_bot.as_str()) {
-                    sessao.conversa.trocar(pagina.mensagens);
-                    sessao.rolagem.scroll_to_bottom();
-                    cx.notify();
-                }
-            },
+            move |janela, resposta, cx| janela.ao_receber_pagina(&da_resposta, &do_bot, resposta, cx),
         );
     }
 
-    fn enviar(&mut self, cx: &mut Context<Self>) {
+    /// A página mais recente da conversa de `bot_id` chegou. Ela pode ter sido montada antes de um
+    /// evento que o fluxo já entregou: entra mensagem por mensagem, sem desfazer o que já terminou.
+    fn ao_receber_pagina(
+        &mut self,
+        credencial: &Credencial,
+        bot_id: &str,
+        resposta: Result<ListaMensagens, ErroApi>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(pagina) = self.conferir(credencial, resposta, cx) else { return };
+        let Some(sessao) = self.sessao_de(credencial) else { return };
+        // Os pedidos já resolvidos da página valem seja qual for a conversa aberta agora. Um
+        // servidor anterior a esse campo não o manda.
+        sessao.aprovacoes.aplicar_resolvidas(pagina.aprovacoes.unwrap_or_default());
+        for mensagem in &pagina.mensagens {
+            sessao.terminados.registrar(mensagem);
+        }
+        // A resposta de um bot que a pessoa já deixou de olhar não entra na conversa do outro.
+        if sessao.selecionado.as_deref() == Some(bot_id) {
+            sessao.conversa.aplicar_pagina_recente(pagina.mensagens, pagina.tem_mais);
+            sessao.rolagem.scroll_to_bottom();
+            cx.notify();
+        }
+    }
+
+    /// Busca a página anterior à mensagem mais antiga da conversa aberta, a pedido da pessoa.
+    fn carregar_anteriores(&mut self, cx: &mut Context<Self>) {
         let Tela::Sessao(sessao) = &mut self.tela else { return };
         let Some(bot_id) = sessao.selecionado.clone() else { return };
-        let texto = sessao.compositor.read(cx).texto().trim().to_owned();
-        if texto.is_empty() {
+        let Some(antes) = sessao.conversa.cursor_das_anteriores() else { return };
+        if sessao.carregando_anteriores {
             return;
         }
-        sessao.compositor.update(cx, |campo, cx| campo.definir("", cx));
+        sessao.carregando_anteriores = true;
         sessao.aviso = None;
+        cx.notify();
         let credencial = sessao.credencial.clone();
         let (do_pedido, da_resposta, do_bot) = (credencial.clone(), credencial, bot_id.clone());
         self.em_segundo_plano(
             cx,
-            move |api| api.enviar_turno(&do_pedido, &bot_id, &PedidoTurno { texto }),
-            move |janela, resposta, cx| {
-                let Some(turno) = janela.conferir(&da_resposta, resposta, cx) else { return };
-                let Some(sessao) = janela.sessao_de(&da_resposta) else { return };
-                marcar_turno(&mut sessao.bots, &do_bot, true);
-                if sessao.selecionado.as_deref() == Some(do_bot.as_str()) {
-                    sessao.conversa.registrar_turno(turno);
-                    sessao.rolagem.scroll_to_bottom();
-                }
-                cx.notify();
-            },
+            move |api| api.listar_mensagens_anteriores(&do_pedido, &bot_id, antes),
+            move |janela, resposta, cx| janela.ao_receber_anteriores(&da_resposta, &do_bot, antes, resposta, cx),
         );
+    }
+
+    /// A página anterior a `antes` chegou. O que o fluxo trouxe durante o pedido fica como está,
+    /// e a leitura continua na mensagem em que a pessoa estava.
+    fn ao_receber_anteriores(
+        &mut self,
+        credencial: &Credencial,
+        bot_id: &str,
+        antes: u64,
+        resposta: Result<ListaMensagens, ErroApi>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(sessao) = self.sessao_de(credencial)
+            && sessao.selecionado.as_deref() == Some(bot_id)
+        {
+            sessao.carregando_anteriores = false;
+            cx.notify();
+        }
+        let Some(pagina) = self.conferir(credencial, resposta, cx) else { return };
+        let Some(sessao) = self.sessao_de(credencial) else { return };
+        sessao.aprovacoes.aplicar_resolvidas(pagina.aprovacoes.unwrap_or_default());
+        if sessao.selecionado.as_deref() == Some(bot_id) {
+            let onde_estava = sessao.conversa.mensagens.first().map(|primeira| primeira.id.clone());
+            if sessao.conversa.aplicar_pagina_anterior(antes, pagina.mensagens, pagina.tem_mais)
+                && let Some(mensagem_id) = onde_estava
+                && let Some(posicao) =
+                    posicao_na_conversa(sessao, |item| matches!(item, Item::Mensagem(mensagem) if mensagem.id == mensagem_id))
+            {
+                // As mensagens novas entram acima; a que estava no alto da lista continua no alto.
+                sessao.rolagem.scroll_to_top_of_item(posicao);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Começa o envio do que está no campo ao bot selecionado. O texto continua no campo: só sai
+    /// quando o servidor aceitar.
+    fn comecar_envio(&mut self, cx: &mut Context<Self>) -> Option<(Credencial, Envio)> {
+        let Tela::Sessao(sessao) = &mut self.tela else { return None };
+        let bot_id = sessao.selecionado.clone()?;
+        sessao.rascunhos.editar(&bot_id, sessao.compositor.read(cx).texto());
+        let envio = sessao.rascunhos.comecar_envio(&bot_id)?;
+        sessao.aviso = None;
+        cx.notify();
+        Some((sessao.credencial.clone(), envio))
+    }
+
+    /// Enter no campo e o botão "Enviar" chegam aqui, e seguem a mesma regra.
+    fn enviar(&mut self, cx: &mut Context<Self>) {
+        let Some((credencial, envio)) = self.comecar_envio(cx) else { return };
+        let (do_pedido, bot_id, pedido) = (credencial.clone(), envio.bot_id().to_owned(), PedidoTurno { texto: envio.texto().to_owned() });
+        self.em_segundo_plano(
+            cx,
+            move |api| api.enviar_turno(&do_pedido, &bot_id, &pedido),
+            move |janela, resposta, cx| janela.ao_enviar(&credencial, &envio, resposta, cx),
+        );
+    }
+
+    /// A resposta de um envio. Recusa e falha de rede deixam o texto no campo, com o aviso do
+    /// motivo. No aceite, sai do campo só o que foi enviado: o que a pessoa digitou depois fica.
+    fn ao_enviar(&mut self, credencial: &Credencial, envio: &Envio, resposta: Result<RespostaTurno, ErroApi>, cx: &mut Context<Self>) {
+        let aceito = self.conferir(credencial, resposta, cx);
+        let Some(sessao) = self.sessao_de(credencial) else { return };
+        let Some(turno) = aceito else {
+            sessao.rascunhos.recusar(envio);
+            return;
+        };
+        let bot_id = envio.bot_id();
+        let na_tela = sessao.selecionado.as_deref() == Some(bot_id);
+        if na_tela {
+            sessao.rascunhos.editar(bot_id, sessao.compositor.read(cx).texto());
+        }
+        sessao.rascunhos.aceitar(envio);
+        if na_tela {
+            let fica = sessao.rascunhos.texto(bot_id).to_owned();
+            if sessao.compositor.read(cx).texto() != fica {
+                sessao.compositor.update(cx, |campo, cx| campo.definir(&fica, cx));
+            }
+        }
+        // O fim deste turno pode ter chegado pelo fluxo antes do aceite: aí o bot já não responde.
+        if !sessao.terminados.ja_terminou(&turno.bot) {
+            marcar_turno(&mut sessao.bots, bot_id, true);
+        }
+        if na_tela {
+            sessao.conversa.registrar_turno(turno);
+            sessao.rolagem.scroll_to_bottom();
+        }
+        cx.notify();
     }
 
     /// Para a resposta em andamento do bot selecionado.
@@ -884,7 +1028,8 @@ impl Janela {
                 match &evento {
                     Evento::BotSalvo { bot } => guardar_bot(&mut sessao.bots, bot.clone()),
                     Evento::TurnoIniciado { bot_id, .. } => marcar_turno(&mut sessao.bots, bot_id, true),
-                    Evento::TurnoTerminado { bot_id, .. } => {
+                    Evento::TurnoTerminado { bot_id, mensagem } => {
+                        sessao.terminados.registrar(mensagem);
                         marcar_turno(&mut sessao.bots, bot_id, false);
                         if sessao.selecionado.as_deref() == Some(bot_id.as_str()) {
                             sessao.parando = false;
@@ -931,15 +1076,58 @@ impl Janela {
         campos.into_iter().map(|campo| campo.focus_handle(cx)).collect()
     }
 
+    /// Por onde o Tab passa: os campos e, na conversa, os botões dos cartões de aprovação pendentes,
+    /// na ordem em que estão na tela. Cada botão vem com o id do pedido que ele decide.
+    fn percurso_do_tab(&self, cx: &App) -> Vec<(FocusHandle, Option<String>)> {
+        let mut percurso: Vec<_> = self.campos_em_ordem(cx).into_iter().map(|campo| (campo, None)).collect();
+        if let Tela::Sessao(sessao) = &self.tela {
+            for aprovacao_id in cartoes_com_botoes(sessao) {
+                if let Some(foco) = sessao.foco_dos_cartoes.get(&aprovacao_id) {
+                    percurso.push((foco.aprovar.clone(), Some(aprovacao_id.clone())));
+                    percurso.push((foco.negar.clone(), Some(aprovacao_id)));
+                }
+            }
+        }
+        percurso
+    }
+
+    /// Cria o foco dos botões de cada cartão que entrou na tela e solta o dos que saíram. Devolve
+    /// `true` se o teclado estava num botão que saiu: ele não passa para o botão de outro pedido.
+    fn acertar_foco_dos_cartoes(&mut self, window: &Window, cx: &mut Context<Self>) -> bool {
+        let Tela::Sessao(sessao) = &mut self.tela else { return false };
+        let na_tela = cartoes_com_botoes(sessao);
+        let mut ficou_sem_botao = false;
+        sessao.foco_dos_cartoes.retain(|aprovacao_id, foco| {
+            let fica = na_tela.contains(aprovacao_id);
+            ficou_sem_botao |= !fica && (foco.aprovar.is_focused(window) || foco.negar.is_focused(window));
+            fica
+        });
+        for aprovacao_id in na_tela {
+            sessao
+                .foco_dos_cartoes
+                .entry(aprovacao_id)
+                .or_insert_with(|| FocoDoCartao { aprovar: cx.focus_handle(), negar: cx.focus_handle() });
+        }
+        ficou_sem_botao
+    }
+
     fn andar_entre_campos(&mut self, para_frente: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let campos = self.campos_em_ordem(cx);
-        let quantos = campos.len();
-        let proximo = match campos.iter().position(|campo| campo.is_focused(window)) {
+        let percurso = self.percurso_do_tab(cx);
+        let quantos = percurso.len();
+        let proximo = match percurso.iter().position(|(foco, _)| foco.is_focused(window)) {
             Some(atual) if para_frente => (atual + 1) % quantos,
             Some(atual) => (atual + quantos - 1) % quantos,
             None => 0,
         };
-        window.focus(&campos[proximo], cx);
+        let (foco, cartao) = &percurso[proximo];
+        window.focus(foco, cx);
+        // O cartão do botão que recebe o teclado vem para a tela: ninguém decide o que não está vendo.
+        if let (Some(aprovacao_id), Tela::Sessao(sessao)) = (cartao, &self.tela)
+            && let Some(posicao) =
+                posicao_na_conversa(sessao, |item| matches!(item, Item::Aprovacao(aprovacao) if &aprovacao.id == aprovacao_id))
+        {
+            sessao.rolagem.scroll_to_item(posicao);
+        }
     }
 
     fn proximo_campo(&mut self, _: &ProximoCampo, window: &mut Window, cx: &mut Context<Self>) {
@@ -967,6 +1155,33 @@ fn marcar_turno(bots: &mut [Bot], bot_id: &str, ativo: bool) {
     if let Some(bot) = bots.iter_mut().find(|bot| bot.id == bot_id) {
         bot.turno_ativo = ativo;
     }
+}
+
+/// Os pedidos pendentes da conversa aberta cujos botões estão na tela, na ordem em que aparecem.
+/// Com o formulário aberto, ou com a decisão a caminho do servidor, o cartão não tem botões.
+fn cartoes_com_botoes(sessao: &SessaoAberta) -> Vec<String> {
+    if sessao.formulario.is_some() {
+        return Vec::new();
+    }
+    let Some(bot) = sessao.selecionado.as_ref().and_then(|id| sessao.bots.iter().find(|bot| &bot.id == id)) else { return Vec::new() };
+    let do_bot = sessao.aprovacoes.do_bot(&bot.id);
+    intercalar(&sessao.conversa.mensagens, &do_bot)
+        .into_iter()
+        .filter_map(|item| match item {
+            Item::Aprovacao(aprovacao) if aprovacao.estado == AprovacaoEstado::Pendente && !sessao.decidindo.contains(&aprovacao.id) => {
+                Some(aprovacao.id.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Em que filho da lista de mensagens da tela está um item da conversa aberta. O botão das
+/// mensagens anteriores, quando existe, é o primeiro filho.
+fn posicao_na_conversa(sessao: &SessaoAberta, e_o_item: impl Fn(&Item<'_>) -> bool) -> Option<usize> {
+    let do_bot = sessao.aprovacoes.do_bot(sessao.selecionado.as_deref()?);
+    let posicao = intercalar(&sessao.conversa.mensagens, &do_bot).iter().position(e_o_item)?;
+    Some(posicao + usize::from(sessao.conversa.tem_mais))
 }
 
 /// O bot ainda está respondendo: é quando o botão de enviar dá lugar ao de parar.
@@ -1075,6 +1290,7 @@ impl Janela {
             });
             div()
                 .id(("bot", indice))
+                .debug_selector(move || format!("bot-{indice}"))
                 .px_3()
                 .py_1p5()
                 .flex()
@@ -1148,6 +1364,28 @@ impl Janela {
             .children(estado)
     }
 
+    /// Um botão do cartão de aprovação. Decide pelo clique e, com o teclado nele, por Enter ou
+    /// Espaço; a borda mostra onde o teclado está. O pedido que ele decide é o do cartão em que foi
+    /// desenhado, e só esse: o id vai preso ao botão, não à posição dele na tela.
+    fn botao_de_decisao(
+        base: gpui::Stateful<gpui::Div>,
+        foco: Option<&FocusHandle>,
+        aprovacao_id: &str,
+        decisao: DecisaoAprovacaoDecisao,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let (do_clique, do_teclado) = (aprovacao_id.to_owned(), aprovacao_id.to_owned());
+        let com_clique = base.border_2().on_click(cx.listener(move |janela, _, _, cx| janela.decidir(do_clique.clone(), decisao, cx)));
+        match foco {
+            Some(foco) => com_clique
+                .key_context(CONTEXTO_DA_DECISAO)
+                .track_focus(foco)
+                .focus(|estilo| estilo.border_color(tema::texto_forte()))
+                .on_action(cx.listener(move |janela, _: &AcionarBotao, _, cx| janela.decidir(do_teclado.clone(), decisao, cx))),
+            None => com_clique,
+        }
+    }
+
     /// O cartão de um pedido de aprovação. Enquanto pendente, mostra o pedido inteiro e os dois
     /// botões: é o que está escrito aqui que a pessoa aprova. Depois de resolvido, vira uma linha.
     fn desenhar_aprovacao(&self, sessao: &SessaoAberta, aprovacao: &Aprovacao, indice: usize, cx: &mut Context<Self>) -> gpui::Div {
@@ -1167,22 +1405,29 @@ impl Janela {
         }
 
         let enviando = sessao.decidindo.contains(&aprovacao.id);
-        let botoes =
-            if enviando {
-                div().child(texto_pequeno("Enviando a decisão…", tema::texto_secundario()))
-            } else {
-                let (para_aprovar, para_negar) = (aprovacao.id.clone(), aprovacao.id.clone());
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(botao(("aprovar", indice), "Aprovar", true).debug_selector(|| "aprovar".into()).on_click(
-                        cx.listener(move |janela, _, _, cx| janela.decidir(para_aprovar.clone(), DecisaoAprovacaoDecisao::Aprovar, cx)),
-                    ))
-                    .child(botao(("negar", indice), "Negar", false).debug_selector(|| "negar".into()).on_click(
-                        cx.listener(move |janela, _, _, cx| janela.decidir(para_negar.clone(), DecisaoAprovacaoDecisao::Negar, cx)),
-                    ))
-            };
+        let botoes = if enviando {
+            div().child(texto_pequeno("Enviando a decisão…", tema::texto_secundario()))
+        } else {
+            let foco = sessao.foco_dos_cartoes.get(&aprovacao.id);
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(Self::botao_de_decisao(
+                    botao(("aprovar", indice), "Aprovar", true).border_color(tema::destaque()).debug_selector(|| "aprovar".into()),
+                    foco.map(|foco| &foco.aprovar),
+                    &aprovacao.id,
+                    DecisaoAprovacaoDecisao::Aprovar,
+                    cx,
+                ))
+                .child(Self::botao_de_decisao(
+                    botao(("negar", indice), "Negar", false).debug_selector(|| "negar".into()),
+                    foco.map(|foco| &foco.negar),
+                    &aprovacao.id,
+                    DecisaoAprovacaoDecisao::Negar,
+                    cx,
+                ))
+        };
         div()
             .w_full()
             .min_w_0()
@@ -1238,6 +1483,18 @@ impl Janela {
             Item::Aprovacao(aprovacao) => self.desenhar_aprovacao(sessao, aprovacao, indice, cx),
         });
         let itens: Vec<gpui::Div> = itens.collect();
+        // O servidor entrega a conversa em páginas: as mensagens mais antigas vêm a pedido.
+        let anteriores = sessao.conversa.tem_mais.then(|| {
+            div().w_full().flex_none().flex().justify_center().child(
+                botao(
+                    "carregar-anteriores",
+                    if sessao.carregando_anteriores { "Carregando…" } else { "Carregar mensagens anteriores" },
+                    false,
+                )
+                .debug_selector(|| "carregar-anteriores".into())
+                .on_click(cx.listener(|janela, _, _, cx| janela.carregar_anteriores(cx))),
+            )
+        });
         let aviso = sessao.aviso.clone().map(|texto| div().px_4().pb_2().text_color(tema::estado_de_aviso()).child(texto));
         let acao = if respondendo(bot, &sessao.conversa) {
             botao("parar", if sessao.parando { "Parando…" } else { "Parar" }, false)
@@ -1280,6 +1537,7 @@ impl Janela {
             .child(
                 div()
                     .id("mensagens")
+                    .debug_selector(|| "mensagens".into())
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
@@ -1288,6 +1546,8 @@ impl Janela {
                     .flex()
                     .flex_col()
                     .gap_2()
+                    // A ordem dos filhos é a que `posicao_na_conversa` conta.
+                    .children(anteriores)
                     .children(itens),
             )
             .children(aviso)
@@ -1445,12 +1705,14 @@ impl Render for Janela {
         if let Some(foco) = self.foco_pendente.take() {
             window.focus(&foco, cx);
         }
+        let ficou_sem_botao = self.acertar_foco_dos_cartoes(window, cx);
         // Um clique num botão ou numa área vazia deixa o teclado na janela, sem campo nenhum:
-        // ele volta para o campo em que estava, para a pessoa seguir digitando.
+        // ele volta para o campo em que estava, para a pessoa seguir digitando. O mesmo vale para
+        // o teclado que estava no botão de um cartão que saiu da tela, decidido ou não.
         let campos = self.campos_em_ordem(cx);
         if let Some(com_o_teclado) = campos.iter().find(|campo| campo.is_focused(window)) {
             self.ultimo_campo = Some(com_o_teclado.clone());
-        } else if self.foco.is_focused(window) {
+        } else if ficou_sem_botao || self.foco.is_focused(window) {
             let de_volta = self.ultimo_campo.clone().filter(|ultimo| campos.contains(ultimo)).or_else(|| campos.first().cloned());
             if let Some(campo) = de_volta {
                 window.focus(&campo, cx);
@@ -1492,7 +1754,7 @@ mod testes {
     use awikabot_cliente::contrato::BotEntrada;
     use awikabot_cliente::servidor_de_teste::{RespostaFalsa, ServidorDeTeste, ServidorFalso};
     use awikabot_cliente::sessao::CofreEmMemoria;
-    use gpui::{Modifiers, TestAppContext, VisualTestContext};
+    use gpui::{Modifiers, ScrollDelta, ScrollWheelEvent, TestAppContext, TouchPhase, VisualTestContext, point};
 
     use super::*;
     use crate::campo;
@@ -2339,5 +2601,509 @@ mod testes {
             assert_eq!(sessao.aviso, None);
         });
         assert!(na_tela(&mut cx, "enviar"), "parada a resposta, volta o botão de enviar");
+    }
+
+    // --- Rascunho: o texto do campo de mensagem ------------------------------------
+
+    fn texto_do_campo(janela: &Entity<Janela>, cx: &mut VisualTestContext) -> String {
+        cx.run_until_parked();
+        janela.read_with(cx, |janela, cx| aberta(janela).map(|sessao| sessao.compositor.read(cx).texto().to_owned()).unwrap_or_default())
+    }
+
+    fn aviso_da_sessao(janela: &Janela) -> Option<String> {
+        aberta(janela).and_then(|sessao| sessao.aviso.as_ref()).map(ToString::to_string)
+    }
+
+    fn selecionado(janela: &Janela) -> Option<&str> {
+        aberta(janela).and_then(|sessao| sessao.selecionado.as_deref())
+    }
+
+    /// O que a pessoa escreveu em cada conversa, pelo que o servidor guardou.
+    fn enviadas_ao_servidor(credencial: &Credencial, bot: &Bot) -> Vec<String> {
+        let pagina = Api::new().listar_mensagens(credencial, &bot.id).expect("mensagens no servidor");
+        pagina.mensagens.into_iter().filter(|mensagem| mensagem.papel == MensagemPapel::Usuario).map(|mensagem| mensagem.texto).collect()
+    }
+
+    #[gpui::test]
+    fn envio_recusado_pelo_servidor_deixa_o_texto_no_campo_e_so_o_aceite_o_tira(cx: &mut TestAppContext) {
+        let (_servidor, guardada, bot, janela, mut cx) = abrir_com_bot(cx, "Scout");
+        // Uma resposta longa: enquanto ela chega, o servidor recusa outro envio para o mesmo bot.
+        cx.simulate_input(&"palavra ".repeat(600));
+        cx.simulate_keystrokes("enter");
+        esperar(&mut cx, &janela, "resposta chegando", |janela| {
+            ultima_mensagem(janela).is_some_and(|ultima| ultima.estado == MensagemEstado::EmAndamento && !ultima.texto.is_empty())
+        });
+        assert_eq!(texto_do_campo(&janela, &mut cx), "", "aceito o envio, o texto sai do campo");
+
+        // Enter com o bot ainda respondendo: o servidor responde 409, e o texto não pode sumir.
+        cx.simulate_input("não me perca");
+        cx.simulate_keystrokes("enter");
+        esperar(&mut cx, &janela, "aviso da recusa", |janela| aviso_da_sessao(janela).is_some());
+        janela.read_with(&cx, |janela, _| assert_eq!(aviso_da_sessao(janela).as_deref(), Some("O bot ainda está respondendo.")));
+        assert_eq!(texto_do_campo(&janela, &mut cx), "não me perca", "recusado o envio, o texto fica no campo");
+        assert_eq!(enviadas_ao_servidor(&guardada.credencial(), &bot).len(), 1, "a mensagem recusada não entrou na conversa");
+
+        // Parada a resposta, o mesmo texto vai com outro Enter, sem ser digitado de novo.
+        clicar(&mut cx, "parar");
+        esperar(&mut cx, &janela, "resposta interrompida", |janela| {
+            ultima_mensagem(janela).is_some_and(|ultima| ultima.estado == MensagemEstado::Parada)
+        });
+        cx.simulate_keystrokes("enter");
+        esperar(&mut cx, &janela, "resposta à mensagem que tinha sido recusada", |janela| {
+            resposta_completa(janela) && ultima_mensagem(janela).is_some_and(|ultima| ultima.texto == "Você disse: não me perca")
+        });
+        assert_eq!(texto_do_campo(&janela, &mut cx), "");
+        janela.read_with(&cx, |janela, _| assert_eq!(aviso_da_sessao(janela), None));
+    }
+
+    #[gpui::test]
+    fn falha_de_rede_no_envio_pelo_botao_deixa_o_texto_no_campo(cx: &mut TestAppContext) {
+        let (servidor, _guardada, _bot, janela, mut cx) = abrir_com_bot(cx, "Scout");
+        cx.simulate_input("ainda estou aqui");
+        // O servidor sai do ar antes do clique.
+        drop(servidor);
+        clicar(&mut cx, "enviar");
+        esperar(&mut cx, &janela, "aviso da falha de rede", |janela| aviso_da_sessao(janela).is_some());
+        janela.read_with(&cx, |janela, _| {
+            assert_eq!(aviso_da_sessao(janela).as_deref(), Some("Sem resposta do servidor. Confira o endereço e a rede."));
+            assert!(aberta(janela).is_some_and(|sessao| sessao.conversa.mensagens.is_empty()), "nada entrou na conversa");
+        });
+        assert_eq!(texto_do_campo(&janela, &mut cx), "ainda estou aqui", "sem resposta do servidor, o texto fica no campo");
+        // O teclado continua no campo, e o envio que falhou não o prende: a pessoa segue escrevendo.
+        cx.simulate_input("!");
+        assert_eq!(texto_do_campo(&janela, &mut cx), "ainda estou aqui!");
+        janela.read_with(&cx, |janela, _| {
+            let sessao = aberta(janela).expect("sessão");
+            assert!(!sessao.rascunhos.enviando(sessao.selecionado.as_deref().expect("bot selecionado")), "o envio que falhou já voltou");
+        });
+    }
+
+    #[gpui::test]
+    fn o_aceite_que_demora_tira_do_campo_so_o_que_foi_enviado(cx: &mut TestAppContext) {
+        let (_servidor, guardada, bot, janela, mut cx) = abrir_com_bot(cx, "Scout");
+        cx.simulate_input("primeira");
+        // O envio sai e o aceite demora: o teste faz o papel da rede lenta, segurando a resposta.
+        let (credencial, envio) = janela.update(&mut cx, |janela, cx| janela.comecar_envio(cx)).expect("envio começado");
+        assert_eq!((envio.bot_id(), envio.texto()), (bot.id.as_str(), "primeira"));
+        assert_eq!(texto_do_campo(&janela, &mut cx), "primeira", "o texto fica no campo até o servidor aceitar");
+
+        // Com o envio a caminho, outro Enter não manda o mesmo texto de novo, e a pessoa segue escrevendo.
+        cx.simulate_keystrokes("enter");
+        cx.simulate_input(" e a seguinte");
+        let aceite =
+            Api::new().enviar_turno(&guardada.credencial(), &bot.id, &PedidoTurno { texto: envio.texto().to_owned() }).expect("turno");
+        janela.update(&mut cx, |janela, cx| janela.ao_enviar(&credencial, &envio, Ok(aceite), cx));
+        assert_eq!(texto_do_campo(&janela, &mut cx), " e a seguinte", "o que foi digitado depois do envio não se perde");
+
+        esperar(&mut cx, &janela, "resposta completa", resposta_completa);
+        assert_eq!(enviadas_ao_servidor(&guardada.credencial(), &bot), vec!["primeira"], "o segundo Enter não mandou nada");
+        // O que ficou no campo vai no envio seguinte, pelo Enter.
+        cx.simulate_keystrokes("enter");
+        esperar(&mut cx, &janela, "segunda resposta completa", |janela| {
+            resposta_completa(janela) && aberta(janela).is_some_and(|sessao| sessao.conversa.mensagens.len() == 4)
+        });
+        assert_eq!(enviadas_ao_servidor(&guardada.credencial(), &bot), vec!["primeira", "e a seguinte"]);
+        assert_eq!(texto_do_campo(&janela, &mut cx), "");
+    }
+
+    #[gpui::test]
+    fn cada_bot_tem_o_proprio_rascunho_na_troca_pela_lista_e_pelo_aviso_do_sistema(cx: &mut TestAppContext) {
+        let (_servidor, guardada, primeiro, janela, mut cx) = abrir_com_bot(cx, "Scout");
+        let segundo = criar_bot_pela_api(&guardada, "Vigia");
+        esperar(&mut cx, &janela, "segundo bot na lista", |janela| aberta(janela).is_some_and(|sessao| sessao.bots.len() == 2));
+        janela.read_with(&cx, |janela, _| {
+            let nomes: Vec<_> = aberta(janela).expect("sessão").bots.iter().map(|bot| bot.nome.as_str()).collect();
+            assert_eq!(nomes, vec!["Scout", "Vigia"]);
+            assert_eq!(selecionado(janela), Some(primeiro.id.as_str()));
+        });
+
+        // Pela lista: o texto escrito para o Scout não vai junto para a conversa do Vigia.
+        cx.simulate_input("para o Scout");
+        clicar(&mut cx, "bot-1");
+        esperar(&mut cx, &janela, "conversa do Vigia aberta", |janela| selecionado(janela) == Some(segundo.id.as_str()));
+        assert_eq!(texto_do_campo(&janela, &mut cx), "", "o campo do Vigia é dele");
+        cx.simulate_input("para o Vigia");
+        clicar(&mut cx, "bot-0");
+        esperar(&mut cx, &janela, "conversa do Scout aberta", |janela| selecionado(janela) == Some(primeiro.id.as_str()));
+        assert_eq!(texto_do_campo(&janela, &mut cx), "para o Scout", "de volta ao Scout, o rascunho dele continua lá");
+
+        // Pelo aviso do sistema: o Vigia pede uma aprovação com a janela em segundo plano.
+        cx.deactivate_window();
+        Api::new().enviar_turno(&guardada.credencial(), &segundo.id, &PedidoTurno { texto: "!comando ls".into() }).expect("turno");
+        esperar(&mut cx, &janela, "pedido do Vigia conhecido", |janela| {
+            aberta(janela).is_some_and(|sessao| sessao.aprovacoes.tem_pendente(&segundo.id))
+        });
+        let aviso = cx.shown_system_notifications().pop().expect("aviso do sistema");
+        cx.simulate_system_notification_response(SystemNotificationResponse { tag: aviso.tag.clone(), action_id: None });
+        esperar(&mut cx, &janela, "conversa do Vigia aberta pelo aviso", |janela| selecionado(janela) == Some(segundo.id.as_str()));
+        assert_eq!(texto_do_campo(&janela, &mut cx), "para o Vigia", "o aviso abre a conversa do Vigia com o rascunho do Vigia");
+
+        // De volta ao Scout, Enter manda ao Scout o texto do Scout; o do Vigia continua guardado.
+        clicar(&mut cx, "bot-0");
+        esperar(&mut cx, &janela, "conversa do Scout aberta", |janela| selecionado(janela) == Some(primeiro.id.as_str()));
+        assert_eq!(texto_do_campo(&janela, &mut cx), "para o Scout");
+        cx.simulate_keystrokes("enter");
+        esperar(&mut cx, &janela, "resposta do Scout", resposta_completa);
+        assert_eq!(texto_do_campo(&janela, &mut cx), "");
+        assert_eq!(enviadas_ao_servidor(&guardada.credencial(), &primeiro), vec!["para o Scout"]);
+        assert_eq!(enviadas_ao_servidor(&guardada.credencial(), &segundo), vec!["!comando ls"], "nada do que foi digitado chegou ao Vigia");
+        clicar(&mut cx, "bot-1");
+        esperar(&mut cx, &janela, "conversa do Vigia aberta", |janela| selecionado(janela) == Some(segundo.id.as_str()));
+        assert_eq!(texto_do_campo(&janela, &mut cx), "para o Vigia");
+    }
+
+    // --- Resposta HTTP que chega depois do evento ----------------------------------
+
+    #[gpui::test]
+    fn pagina_pedida_antes_do_fim_do_turno_e_entregue_depois_nao_desfaz_a_resposta(cx: &mut TestAppContext) {
+        let (_servidor, guardada, bot, janela, mut cx) = abrir_com_bot(cx, "Scout");
+        let credencial = guardada.credencial();
+        cx.simulate_input(&"palavra ".repeat(200));
+        cx.simulate_keystrokes("enter");
+        esperar(&mut cx, &janela, "resposta chegando", |janela| {
+            ultima_mensagem(janela).is_some_and(|ultima| ultima.estado == MensagemEstado::EmAndamento && !ultima.texto.is_empty())
+        });
+        // A página como o servidor a monta agora, com a resposta pela metade. É ela que vai chegar
+        // atrasada: o teste faz o papel da rede lenta e só a entrega depois do fim do turno.
+        let antiga = Api::new().listar_mensagens(&credencial, &bot.id).expect("página no meio do turno");
+        assert_eq!(antiga.mensagens.last().map(|ultima| ultima.estado), Some(MensagemEstado::EmAndamento));
+
+        esperar(&mut cx, &janela, "fim do turno pelo fluxo", |janela| {
+            resposta_completa(janela) && aberta(janela).is_some_and(|sessao| !sessao.bots[0].turno_ativo)
+        });
+        let completa = janela.read_with(&cx, |janela, _| ultima_mensagem(janela).cloned().expect("resposta"));
+        assert_eq!(completa.texto, format!("Você disse: {}", "palavra ".repeat(200).trim_end()));
+
+        janela.update(&mut cx, |janela, cx| janela.ao_receber_pagina(&credencial, &bot.id, Ok(antiga), cx));
+        cx.run_until_parked();
+        janela.read_with(&cx, |janela, _| {
+            let sessao = aberta(janela).expect("sessão");
+            assert_eq!(sessao.conversa.mensagens.len(), 2);
+            assert_eq!(sessao.conversa.mensagens.last(), Some(&completa), "a página antiga não desfaz o fim do turno");
+            assert!(!sessao.bots[0].turno_ativo);
+        });
+        assert!(na_tela(&mut cx, "enviar") && !na_tela(&mut cx, "parar"), "terminado o turno, a ação é enviar");
+    }
+
+    #[gpui::test]
+    fn aceite_do_envio_entregue_depois_do_fim_do_turno_nao_marca_o_bot_como_respondendo(cx: &mut TestAppContext) {
+        let (_servidor, _guardada, bot, janela, mut cx) = abrir_com_bot(cx, "Scout");
+        cx.simulate_input("oi");
+        let (credencial, envio) = janela.update(&mut cx, |janela, cx| janela.comecar_envio(cx)).expect("envio começado");
+        // O envio chega ao servidor, o turno roda inteiro e o fim dele vem pelo fluxo. O aceite fica
+        // para trás: o teste faz o papel da rede lenta e só o entrega depois.
+        let aceite = Api::new().enviar_turno(&credencial, &bot.id, &PedidoTurno { texto: envio.texto().to_owned() }).expect("turno");
+        assert_eq!(aceite.bot.estado, MensagemEstado::EmAndamento);
+        esperar(&mut cx, &janela, "fim do turno pelo fluxo", |janela| {
+            resposta_completa(janela) && aberta(janela).is_some_and(|sessao| !sessao.bots[0].turno_ativo)
+        });
+
+        janela.update(&mut cx, |janela, cx| janela.ao_enviar(&credencial, &envio, Ok(aceite), cx));
+        cx.run_until_parked();
+        janela.read_with(&cx, |janela, _| {
+            let sessao = aberta(janela).expect("sessão");
+            assert!(!sessao.bots[0].turno_ativo, "o aceite atrasado não reabre o turno que já terminou");
+            let textos: Vec<_> = sessao.conversa.mensagens.iter().map(|mensagem| (mensagem.estado, mensagem.texto.as_str())).collect();
+            assert_eq!(textos, vec![(MensagemEstado::Completa, "oi"), (MensagemEstado::Completa, "Você disse: oi")]);
+        });
+        assert_eq!(texto_do_campo(&janela, &mut cx), "", "aceito o envio, o texto sai do campo");
+        assert!(na_tela(&mut cx, "enviar") && !na_tela(&mut cx, "parar"), "terminado o turno, a ação é enviar");
+    }
+
+    // --- Páginas anteriores da conversa --------------------------------------------
+
+    fn seqs_da_conversa(janela: &Janela) -> Vec<u64> {
+        aberta(janela).map(|sessao| sessao.conversa.mensagens.iter().map(|mensagem| mensagem.seq).collect()).unwrap_or_default()
+    }
+
+    /// Rola a conversa até o começo com a roda do mouse, como a pessoa faz para ler o que veio antes.
+    fn rolar_ao_comeco(cx: &mut VisualTestContext) {
+        cx.run_until_parked();
+        let lista = cx.debug_bounds("mensagens").expect("lista de mensagens na tela");
+        cx.simulate_event(ScrollWheelEvent {
+            position: lista.center(),
+            delta: ScrollDelta::Pixels(point(px(0.), px(1_000_000.))),
+            modifiers: Modifiers::none(),
+            touch_phase: TouchPhase::Moved,
+        });
+    }
+
+    #[gpui::test]
+    fn carrega_as_mensagens_anteriores_pelo_botao_sem_repetir_nada_e_sem_perder_o_ponto_de_leitura(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let servidor = ServidorDeTeste::subir();
+        let guardada = parear_pela_api(&servidor, "Computador de teste");
+        let bot = criar_bot_pela_api(&guardada, "Scout");
+        let (api, credencial) = (Api::new(), guardada.credencial());
+        let turno_terminado = || api.listar_bots(&credencial).is_ok_and(|lista| !lista.bots[0].turno_ativo);
+
+        // O primeiro turno pede uma aprovação, que é negada: ela fica ligada à resposta mais antiga da conversa.
+        api.enviar_turno(&credencial, &bot.id, &PedidoTurno { texto: "!comando whoami".into() }).expect("turno");
+        esperar_fora_do_app("pedido pendente no servidor", || {
+            api.listar_aprovacoes(&credencial).is_ok_and(|lista| lista.aprovacoes.len() == 1)
+        });
+        let pedido = api.listar_aprovacoes(&credencial).expect("pendentes").aprovacoes.remove(0);
+        let negada =
+            api.decidir_aprovacao(&credencial, &pedido.id, &DecisaoAprovacao { decisao: DecisaoAprovacaoDecisao::Negar }).expect("negar");
+        esperar_fora_do_app("primeiro turno terminado", turno_terminado);
+        // Mais 25 turnos: 52 mensagens, duas a mais do que cabe numa página.
+        for numero in 2..=26 {
+            api.enviar_turno(&credencial, &bot.id, &PedidoTurno { texto: format!("mensagem {numero}") }).expect("turno");
+            esperar_fora_do_app("turno terminado", turno_terminado);
+        }
+
+        let (janela, mut cx) = abrir(&cofre_com(&guardada), cx);
+        esperar(&mut cx, &janela, "página mais recente", |janela| {
+            pronta_com_bot(janela) && seqs_da_conversa(janela).len() == limites::MENSAGENS_POR_PAGINA
+        });
+        janela.read_with(&cx, |janela, _| {
+            assert_eq!(seqs_da_conversa(janela), (3..=52).collect::<Vec<_>>());
+            assert_eq!(pedidos(janela), Vec::new(), "o pedido da resposta mais antiga ainda não veio");
+        });
+
+        // Ao conectar, o fluxo pede uma carga de tudo, que leva a conversa de volta ao fim: o teste
+        // dá tempo de ela passar antes de rolar.
+        std::thread::sleep(Duration::from_millis(300));
+        cx.run_until_parked();
+
+        // A conversa abre no fim. No começo dela está o botão que busca o que veio antes.
+        rolar_ao_comeco(&mut cx);
+        clicar(&mut cx, "carregar-anteriores");
+        esperar(&mut cx, &janela, "página anterior na conversa", |janela| seqs_da_conversa(janela).len() == 52);
+        janela.read_with(&cx, |janela, _| {
+            let sessao = aberta(janela).expect("sessão");
+            assert_eq!(seqs_da_conversa(janela), (1..=52).collect::<Vec<_>>(), "todas as mensagens, uma vez cada, em ordem");
+            assert!(!sessao.conversa.tem_mais && !sessao.carregando_anteriores);
+            assert_eq!(pedidos(janela), vec![negada.clone()], "o pedido resolvido da resposta mais antiga veio com a página dela");
+            assert_eq!(sessao.aviso, None);
+        });
+        assert!(!na_tela(&mut cx, "carregar-anteriores"), "sem mais nada antes, o botão some");
+        // A leitura continua onde estava: no alto da lista está a mensagem que era a primeira (a
+        // terceira da conversa), depois das duas que chegaram e da linha do pedido resolvido.
+        janela.read_with(&cx, |janela, _| assert_eq!(aberta(janela).expect("sessão").rolagem.top_item(), 3));
+
+        // Subindo, a pessoa chega à resposta mais antiga e à linha do pedido ligado a ela.
+        rolar_ao_comeco(&mut cx);
+        let lista = cx.debug_bounds("mensagens").expect("lista de mensagens");
+        let linha = cx.debug_bounds("pedido-resolvido").expect("linha do pedido resolvido");
+        assert!(lista.intersects(&linha), "a linha do pedido está à vista: {linha:?} em {lista:?}");
+
+        // Um turno novo entra no fim, e o que foi carregado antes continua na conversa.
+        cx.simulate_input("mais uma");
+        cx.simulate_keystrokes("enter");
+        esperar(&mut cx, &janela, "resposta do turno novo", |janela| resposta_completa(janela) && seqs_da_conversa(janela).len() == 54);
+        janela.read_with(&cx, |janela, _| {
+            assert_eq!(seqs_da_conversa(janela), (1..=54).collect::<Vec<_>>());
+            assert_eq!(pedidos(janela), vec![negada.clone()]);
+        });
+    }
+
+    // --- Decisão de aprovação pelo teclado ----------------------------------------
+
+    /// O botão de cartão que está com o teclado: o id do pedido e o que o botão decide.
+    fn botao_com_o_teclado(janela: &Entity<Janela>, cx: &mut VisualTestContext) -> Option<(String, DecisaoAprovacaoDecisao)> {
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let sessao = aberta(janela.read(cx))?;
+            sessao.foco_dos_cartoes.iter().find_map(|(aprovacao_id, foco)| {
+                if foco.aprovar.is_focused(window) {
+                    Some((aprovacao_id.clone(), DecisaoAprovacaoDecisao::Aprovar))
+                } else if foco.negar.is_focused(window) {
+                    Some((aprovacao_id.clone(), DecisaoAprovacaoDecisao::Negar))
+                } else {
+                    None
+                }
+            })
+        })
+    }
+
+    #[gpui::test]
+    fn tab_leva_o_teclado_ao_aprovar_do_cartao_e_espaco_aprova(cx: &mut TestAppContext) {
+        let (_servidor, guardada, _bot, janela, mut cx) = abrir_com_bot(cx, "Scout");
+        cx.simulate_input("!comando ls -la");
+        cx.simulate_keystrokes("enter");
+        esperar(&mut cx, &janela, "pedido de aprovação pendente", |janela| estados_dos_pedidos(janela) == [AprovacaoEstado::Pendente]);
+        let pedido = janela.read_with(&cx, |janela, _| pedidos(janela)[0].clone());
+        assert_eq!(botao_com_o_teclado(&janela, &mut cx), None, "o teclado começa no campo de mensagem");
+
+        // Só com o teclado: Tab sai do campo e para no "Aprovar" do cartão.
+        cx.simulate_keystrokes("tab");
+        assert_eq!(botao_com_o_teclado(&janela, &mut cx), Some((pedido.id.clone(), DecisaoAprovacaoDecisao::Aprovar)));
+        // O que se digita com o teclado no botão não vai para o campo de mensagem.
+        cx.simulate_input("x");
+        assert_eq!(texto_do_campo(&janela, &mut cx), "");
+
+        cx.simulate_keystrokes("space");
+        esperar(&mut cx, &janela, "pedido aprovado e resposta completa", |janela| {
+            estados_dos_pedidos(janela) == [AprovacaoEstado::Aprovada] && resposta_completa(janela)
+        });
+        // Quem decide é o servidor, com a decisão que o botão mandou.
+        janela.read_with(&cx, |janela, _| {
+            assert_eq!(ultima_mensagem(janela).map(|ultima| ultima.texto.as_str()), Some("Comando permitido: ls -la"));
+        });
+        assert!(Api::new().listar_aprovacoes(&guardada.credencial()).expect("pendentes").aprovacoes.is_empty());
+
+        // Decidido o pedido, o botão some e o teclado volta ao campo de mensagem.
+        assert_eq!(botao_com_o_teclado(&janela, &mut cx), None);
+        cx.simulate_input("obrigado");
+        assert_eq!(texto_do_campo(&janela, &mut cx), "obrigado");
+    }
+
+    #[gpui::test]
+    fn tab_e_shift_tab_andam_entre_o_campo_e_os_botoes_do_cartao_e_enter_no_negar_nega(cx: &mut TestAppContext) {
+        let (_servidor, _guardada, _bot, janela, mut cx) = abrir_com_bot(cx, "Scout");
+        cx.simulate_input("!gravar notas.txt");
+        cx.simulate_keystrokes("enter");
+        esperar(&mut cx, &janela, "pedido de aprovação pendente", |janela| estados_dos_pedidos(janela) == [AprovacaoEstado::Pendente]);
+        let pedido = janela.read_with(&cx, |janela, _| pedidos(janela)[0].clone());
+        let no_aprovar = Some((pedido.id.clone(), DecisaoAprovacaoDecisao::Aprovar));
+        let no_negar = Some((pedido.id.clone(), DecisaoAprovacaoDecisao::Negar));
+
+        cx.simulate_keystrokes("tab tab");
+        assert_eq!(botao_com_o_teclado(&janela, &mut cx), no_negar);
+        cx.simulate_keystrokes("shift-tab");
+        assert_eq!(botao_com_o_teclado(&janela, &mut cx), no_aprovar);
+        cx.simulate_keystrokes("shift-tab");
+        assert_eq!(botao_com_o_teclado(&janela, &mut cx), None, "antes do Aprovar está o campo de mensagem");
+        // Do campo, Shift+Tab dá a volta e cai no último botão; Tab, de novo no campo.
+        cx.simulate_keystrokes("shift-tab");
+        assert_eq!(botao_com_o_teclado(&janela, &mut cx), no_negar);
+        cx.simulate_keystrokes("tab");
+        assert_eq!(botao_com_o_teclado(&janela, &mut cx), None);
+        janela.read_with(&cx, |janela, _| assert_eq!(estados_dos_pedidos(janela), [AprovacaoEstado::Pendente], "andar não decide nada"));
+
+        cx.simulate_keystrokes("tab tab enter");
+        esperar(&mut cx, &janela, "pedido negado e turno terminado", |janela| {
+            estados_dos_pedidos(janela) == [AprovacaoEstado::Negada]
+                && ultima_mensagem(janela).is_some_and(|ultima| ultima.estado != MensagemEstado::EmAndamento)
+        });
+        janela.read_with(&cx, |janela, _| {
+            assert!(ultima_mensagem(janela).is_some_and(|ultima| ultima.texto.starts_with("Gravação negada")), "a ação não rodou");
+        });
+    }
+
+    fn pedido_de_mentira(id: &str, resumo: &str, criada_em: u64, estado: &str) -> String {
+        let resolvida_em = if estado == "pendente" { "null".to_owned() } else { (criada_em + 10).to_string() };
+        format!(
+            r#"{{"id":"{id}","botId":"botbotbotbotbot1","mensagemId":"mensagem00000001","ferramenta":"Bash","resumo":"{resumo}","estado":"{estado}","criadaEm":{criada_em},"resolvidaEm":{resolvida_em}}}"#
+        )
+    }
+
+    #[gpui::test]
+    fn com_dois_cartoes_o_teclado_decide_so_o_pedido_do_botao_em_que_esta(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        const PRIMEIRO: &str = "aprovacao0000001";
+        const SEGUNDO: &str = "aprovacao0000002";
+        // O servidor de verdade só tem um pedido pendente por conversa de cada vez; este tem dois.
+        // Ele não lê o corpo da decisão: responde pelo pedido a que ela foi endereçada.
+        let servidor = ServidorFalso::subir(|_, pedido| {
+            let linha = pedido.linha.as_str();
+            if linha.contains("/v1/eventos") {
+                RespostaFalsa::html(502)
+            } else if linha.starts_with("POST ") && linha.contains(PRIMEIRO) {
+                RespostaFalsa::json(200, &pedido_de_mentira(PRIMEIRO, "ls", 2, "aprovada"))
+            } else if linha.starts_with("POST ") && linha.contains(SEGUNDO) {
+                RespostaFalsa::json(200, &pedido_de_mentira(SEGUNDO, "rm -rf build", 3, "negada"))
+            } else if linha.contains("/v1/aprovacoes") {
+                let pendentes =
+                    [pedido_de_mentira(PRIMEIRO, "ls", 2, "pendente"), pedido_de_mentira(SEGUNDO, "rm -rf build", 3, "pendente")];
+                RespostaFalsa::json(200, &format!(r#"{{"aprovacoes":[{}]}}"#, pendentes.join(",")))
+            } else if linha.contains("/mensagens") {
+                RespostaFalsa::json(200, r#"{"mensagens":[],"temMais":false}"#)
+            } else if linha.contains("/v1/bots") {
+                RespostaFalsa::json(
+                    200,
+                    r#"{"bots":[{"id":"botbotbotbotbot1","nome":"Scout","instrucoes":"","modelo":null,"criadoEm":1,"atualizadoEm":1,"turnoAtivo":true}]}"#,
+                )
+            } else {
+                RespostaFalsa::html(404)
+            }
+        });
+        let guardada = Sessao {
+            servidor: servidor.base.clone(),
+            token: "t".repeat(43),
+            dispositivo: awikabot_cliente::contrato::Dispositivo { id: "abcdefgh12345678".into(), nome: "Computador".into(), criado_em: 1 },
+        };
+        let decisoes_enviadas =
+            || servidor.pedidos().into_iter().map(|pedido| pedido.linha).filter(|linha| linha.starts_with("POST ")).collect::<Vec<_>>();
+        let decisao_do = |id: &str| format!("POST /v1/aprovacoes/{id} HTTP/1.1");
+        let (janela, mut cx) = abrir(&cofre_com(&guardada), cx);
+        esperar(&mut cx, &janela, "os dois pedidos pendentes", |janela| {
+            estados_dos_pedidos(janela) == [AprovacaoEstado::Pendente, AprovacaoEstado::Pendente]
+        });
+        janela.read_with(&cx, |janela, _| {
+            let ids: Vec<_> = pedidos(janela).into_iter().map(|pedido| pedido.id).collect();
+            assert_eq!(ids, vec![PRIMEIRO, SEGUNDO], "na tela, o primeiro cartão é o do pedido mais antigo");
+        });
+
+        // Só com o teclado, a volta inteira: campo, os dois botões do primeiro cartão, os dois do
+        // segundo, campo de novo.
+        let no_botao = |id: &str, decisao| Some((id.to_owned(), decisao));
+        for esperado in [
+            no_botao(PRIMEIRO, DecisaoAprovacaoDecisao::Aprovar),
+            no_botao(PRIMEIRO, DecisaoAprovacaoDecisao::Negar),
+            no_botao(SEGUNDO, DecisaoAprovacaoDecisao::Aprovar),
+            no_botao(SEGUNDO, DecisaoAprovacaoDecisao::Negar),
+            None,
+            no_botao(PRIMEIRO, DecisaoAprovacaoDecisao::Aprovar),
+        ] {
+            cx.simulate_keystrokes("tab");
+            assert_eq!(botao_com_o_teclado(&janela, &mut cx), esperado);
+        }
+        assert_eq!(decisoes_enviadas(), Vec::<String>::new(), "andar entre os botões não decide nada");
+
+        // Enter no "Aprovar" do primeiro cartão decide o primeiro pedido, e só ele.
+        cx.simulate_keystrokes("enter");
+        esperar(&mut cx, &janela, "primeiro pedido aprovado", |janela| {
+            estados_dos_pedidos(janela) == [AprovacaoEstado::Aprovada, AprovacaoEstado::Pendente]
+                && aberta(janela).is_some_and(|sessao| sessao.decidindo.is_empty())
+        });
+        assert_eq!(decisoes_enviadas(), vec![decisao_do(PRIMEIRO)], "uma decisão, e a do pedido do botão");
+
+        // O cartão que ficou passou a ser o primeiro da tela, mas o teclado não foi para o botão
+        // dele: voltou ao campo. Enter e Espaço, agora, não decidem o outro pedido.
+        assert_eq!(botao_com_o_teclado(&janela, &mut cx), None);
+        cx.simulate_keystrokes("enter space enter");
+        cx.run_until_parked();
+        janela.read_with(&cx, |janela, _| {
+            assert_eq!(estados_dos_pedidos(janela), [AprovacaoEstado::Aprovada, AprovacaoEstado::Pendente]);
+            assert!(aberta(janela).is_some_and(|sessao| sessao.decidindo.is_empty()));
+        });
+        assert_eq!(decisoes_enviadas(), vec![decisao_do(PRIMEIRO)], "o pedido do outro cartão continua à espera da pessoa");
+
+        // Para decidir o outro, a pessoa vai até o botão dele: Tab, Tab, e Espaço no "Negar".
+        cx.simulate_keystrokes("tab tab");
+        assert_eq!(botao_com_o_teclado(&janela, &mut cx), no_botao(SEGUNDO, DecisaoAprovacaoDecisao::Negar));
+        cx.simulate_keystrokes("space");
+        esperar(&mut cx, &janela, "segundo pedido negado", |janela| {
+            estados_dos_pedidos(janela) == [AprovacaoEstado::Aprovada, AprovacaoEstado::Negada]
+        });
+        assert_eq!(decisoes_enviadas(), vec![decisao_do(PRIMEIRO), decisao_do(SEGUNDO)]);
+    }
+
+    #[gpui::test]
+    fn o_clique_no_aviso_do_sistema_abre_a_conversa_e_nao_poe_o_teclado_em_botao_de_decisao(cx: &mut TestAppContext) {
+        let (_servidor, guardada, bot, janela, mut cx) = abrir_com_bot(cx, "Scout");
+        cx.deactivate_window();
+        let api = Api::new();
+        api.enviar_turno(&guardada.credencial(), &bot.id, &PedidoTurno { texto: "!comando uptime".into() }).expect("turno");
+        esperar(&mut cx, &janela, "pedido pendente", |janela| estados_dos_pedidos(janela) == [AprovacaoEstado::Pendente]);
+        let aviso = cx.shown_system_notifications().pop().expect("aviso do sistema");
+        cx.simulate_system_notification_response(SystemNotificationResponse { tag: aviso.tag.clone(), action_id: None });
+        assert!(na_tela(&mut cx, "aprovar"), "o cartão está na conversa");
+
+        // O aviso só traz a pessoa ao cartão. Enter e Espaço logo depois dele não decidem nada.
+        assert_eq!(botao_com_o_teclado(&janela, &mut cx), None);
+        cx.simulate_keystrokes("enter space enter");
+        cx.run_until_parked();
+        janela.read_with(&cx, |janela, _| {
+            assert_eq!(estados_dos_pedidos(janela), [AprovacaoEstado::Pendente]);
+            assert!(aberta(janela).is_some_and(|sessao| sessao.decidindo.is_empty()));
+        });
+        assert_eq!(
+            api.listar_aprovacoes(&guardada.credencial()).expect("pendentes").aprovacoes.len(),
+            1,
+            "o pedido continua pendente no servidor"
+        );
     }
 }
