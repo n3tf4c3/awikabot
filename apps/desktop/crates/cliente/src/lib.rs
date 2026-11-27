@@ -16,6 +16,7 @@ pub mod fluxo;
 pub mod formulario_bot;
 pub(crate) mod opcional_nulo;
 pub mod preferencias;
+pub mod rascunho;
 #[cfg(feature = "teste-suporte")]
 pub mod servidor_de_teste;
 pub mod sessao;
