@@ -13,6 +13,7 @@ import {
   EsquemaListaMensagens,
   EsquemaRespostaPareamento,
   EsquemaRespostaTurno,
+  LIMITES,
   type Evento,
 } from '@awikabot/core';
 import { criarApp } from './app';
@@ -234,6 +235,18 @@ describe('o que o servidor decide sem a pessoa', () => {
     await a.enviar('!ler ../../segredo.txt');
     expect(await a.respostaDoBot()).toMatchObject({ texto: 'Leitura negada: o bot só lê arquivos da própria pasta de trabalho' });
     expect(a.doTipo('aprovacao_pedida')).toEqual([]);
+  });
+
+  it('nega o comando que não cabe inteiro no cartão, sem criar pedido para a pessoa aprovar pela metade', async () => {
+    // Com a espera curta, um pedido que fosse criado expiraria sozinho, e o teste veria o cartão.
+    const a = await montar({ esperaMs: 50 });
+    await a.enviar(`!comando echo ${'x'.repeat(LIMITES.resumoAprovacao)}; rm -rf fim-que-o-cartao-nao-mostraria`);
+    expect(await a.respostaDoBot()).toMatchObject({
+      texto: 'Comando negado: a ação não cabe inteira no cartão de aprovação; divida-a em partes menores',
+      estado: 'completa',
+    });
+    expect(a.doTipo('aprovacao_pedida')).toEqual([]);
+    expect(await a.pendentes()).toEqual([]);
   });
 });
 
