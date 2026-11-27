@@ -488,6 +488,26 @@ describe('carregarAprovacoes', () => {
     expect(estadosDe(armazem)).toEqual({ 'comando 1': 'pendente', 'comando 2': 'pendente' });
   });
 
+  it('a busca que falha deixa a marca no armazém, e a que dá certo depois a tira e traz o pedido que já existia', async () => {
+    let falhar = true;
+    const { armazem, operacoes } = montar({
+      listarAprovacoes: async () => {
+        if (falhar) throw new ErroApi('rede', null);
+        return { aprovacoes: [apr(1)] };
+      },
+    });
+    expect(armazem.estado().cargaDeAprovacoes).toBe('carregando');
+
+    await expect(operacoes.carregarAprovacoes()).rejects.toBeInstanceOf(ErroApi);
+    expect(armazem.estado().cargaDeAprovacoes).toBe('falhou');
+    expect(estadosDe(armazem)).toEqual({});
+
+    falhar = false;
+    await operacoes.carregarAprovacoes();
+    expect(armazem.estado().cargaDeAprovacoes).toBe('pronta');
+    expect(estadosDe(armazem)).toEqual({ 'comando 1': 'pendente' });
+  });
+
   it('lista nova sem um pendente conhecido tira esse pedido', async () => {
     const { armazem, operacoes } = montar({ listarAprovacoes: async () => ({ aprovacoes: [apr(2)] }) });
     armazem.despachar({ tipo: 'aprovacoes_carregadas', pendentes: [apr(1), apr(2)], revisao: 0 });

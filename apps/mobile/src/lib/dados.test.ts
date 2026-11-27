@@ -258,6 +258,31 @@ describe('redutorDados: aprovações', () => {
     expect(DADOS_INICIAIS.aprovacoes).toEqual({ porId: {}, revisao: 0 });
   });
 
+  it('a busca dos pendentes começa em andamento, e a falha fica marcada até uma busca dar certo', () => {
+    expect(DADOS_INICIAIS.cargaDeAprovacoes).toBe('carregando');
+    const falhou = aplicar(DADOS_INICIAIS, [{ tipo: 'aprovacoes_falharam' }]);
+    expect(falhou.cargaDeAprovacoes).toBe('falhou');
+    expect(aplicar(falhou, [{ tipo: 'aprovacoes_falharam' }])).toBe(falhou);
+    // Evento de aprovação não diz nada sobre os pedidos que já existiam antes da conexão.
+    expect(aplicar(falhou, [evento({ tipo: 'aprovacao_pedida', aprovacao: apr(2) })]).cargaDeAprovacoes).toBe('falhou');
+
+    const pronta = aplicar(falhou, [{ tipo: 'aprovacoes_carregadas', pendentes: [apr(1)], revisao: 0 }]);
+    expect(pronta.cargaDeAprovacoes).toBe('pronta');
+    expect(estadosDe(pronta)).toEqual({ 'comando 1': 'pendente' });
+    expect(aplicar(pronta, [{ tipo: 'aprovacoes_falharam' }]).cargaDeAprovacoes).toBe('falhou');
+  });
+
+  it('a lista vazia e a lista velha também contam como busca que deu certo', () => {
+    const vazia = aplicar(DADOS_INICIAIS, [{ tipo: 'aprovacoes_carregadas', pendentes: [], revisao: 0 }]);
+    expect(vazia.cargaDeAprovacoes).toBe('pronta');
+    expect(aplicar(vazia, [{ tipo: 'aprovacoes_carregadas', pendentes: [], revisao: 0 }])).toBe(vazia);
+
+    const comEvento = aplicar(aplicar(DADOS_INICIAIS, [{ tipo: 'aprovacoes_falharam' }]), [evento({ tipo: 'aprovacao_pedida', aprovacao: apr(2) })]);
+    const velha = aplicar(comEvento, [{ tipo: 'aprovacoes_carregadas', pendentes: [], revisao: 0 }]);
+    expect(velha.cargaDeAprovacoes).toBe('pronta');
+    expect(estadosDe(velha)).toEqual({ 'comando 2': 'pendente' });
+  });
+
   it('os eventos de aprovação entram no armazém e não mexem em bots nem em conversas', () => {
     const pedida = aplicar(comConversa, [evento({ tipo: 'aprovacao_pedida', aprovacao: apr(1) })]);
     expect(estadosDe(pedida)).toEqual({ 'comando 1': 'pendente' });
@@ -287,7 +312,10 @@ describe('redutorDados: aprovações', () => {
   it('aprovacoes_carregadas com revisão antiga não tira o que chegou por evento', () => {
     const antes = aplicar(comBots, [evento({ tipo: 'aprovacao_pedida', aprovacao: apr(1) })]);
     const estado = aplicar(antes, [{ tipo: 'aprovacoes_carregadas', pendentes: [], revisao: 0 }]);
-    expect(estado).toBe(antes);
+    // A lista velha não entra; o que muda é só a marca de que a busca deu certo.
+    expect(estado.aprovacoes).toBe(antes.aprovacoes);
+    expect(estado).toEqual({ ...antes, cargaDeAprovacoes: 'pronta' });
+    expect(aplicar(estado, [{ tipo: 'aprovacoes_carregadas', pendentes: [], revisao: 0 }])).toBe(estado);
   });
 
   it('aprovacao_decidida guarda a resposta do servidor', () => {

@@ -72,12 +72,18 @@ export default function Conversa() {
           ),
         }}
       />
-      {conversa.semEventos || conversa.erro !== null || conversa.aviso !== null ? (
+      {conversa.semEventos || conversa.erro !== null || conversa.aviso !== null || conversa.aprovacoesSemConferir ? (
         <View style={estilos.avisos}>
           {conversa.semEventos ? <Aviso tipo="informacao" texto="Sem conexão com o servidor. Tentando de novo…" /> : null}
           {conversa.aviso !== null ? <Aviso tipo="informacao" texto={conversa.aviso} /> : null}
           {conversa.erro !== null ? <Aviso texto={conversa.erro} /> : null}
           {conversa.falhaDeCarga ? <Botao rotulo="Tentar de novo" variante="secundaria" aoTocar={conversa.tentarDeNovo} /> : null}
+          {conversa.aprovacoesSemConferir ? (
+            <>
+              <Aviso texto="Não foi possível buscar os pedidos de aprovação. Pode haver um pedido esperando por você." />
+              <Botao rotulo="Buscar pedidos de novo" variante="secundaria" aoTocar={conversa.conferirAprovacoes} />
+            </>
+          ) : null}
         </View>
       ) : null}
       {conversa.itens.length === 0 ? (

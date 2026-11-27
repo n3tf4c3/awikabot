@@ -19,6 +19,12 @@ import {
 /** Situação do fluxo de eventos, para a tela avisar quando o texto ao vivo pode atrasar. */
 export type Conexao = 'conectando' | 'conectada' | 'reconectando';
 
+/**
+ * Situação da busca dos pedidos de aprovação pendentes. Sem ela, uma busca que falha e uma lista
+ * vazia são a mesma tela: o bot espera a aprovação e nenhum cartão aparece.
+ */
+export type CargaDeAprovacoes = 'carregando' | 'pronta' | 'falhou';
+
 /** Tudo o que o app sabe do servidor enquanto está aberto. Nada disto vai para o disco. */
 export interface EstadoDados {
   /** `null` até a primeira lista chegar. */
@@ -35,6 +41,8 @@ export interface EstadoDados {
    * já resolvidos que vieram com as páginas das conversas.
    */
   readonly aprovacoes: EstadoAprovacoes;
+  /** `carregando` até a primeira resposta de `GET /v1/aprovacoes`; depois, o desfecho da última busca. */
+  readonly cargaDeAprovacoes: CargaDeAprovacoes;
   readonly conexao: Conexao;
 }
 
@@ -48,6 +56,8 @@ export type AcaoDados =
   | { tipo: 'turno_enviado'; botId: string; resposta: RespostaTurno }
   /** Lista de `GET /v1/aprovacoes`, com a revisão das aprovações que o app tinha ao pedi-la. */
   | { tipo: 'aprovacoes_carregadas'; pendentes: readonly Aprovacao[]; revisao: number }
+  /** `GET /v1/aprovacoes` falhou: os pendentes que o app mostra podem estar incompletos. */
+  | { tipo: 'aprovacoes_falharam' }
   /** Aprovação já resolvida, devolvida por `POST /v1/aprovacoes/:id`. */
   | { tipo: 'aprovacao_decidida'; aprovacao: Aprovacao }
   | { tipo: 'evento'; evento: Evento }
@@ -58,6 +68,7 @@ export const DADOS_INICIAIS: EstadoDados = {
   revisaoBots: 0,
   conversas: {},
   aprovacoes: APROVACOES_VAZIAS,
+  cargaDeAprovacoes: 'carregando',
   conexao: 'conectando',
 };
 
@@ -152,9 +163,13 @@ export function redutorDados(estado: EstadoDados, acao: AcaoDados): EstadoDados 
       return { ...comConversa, bots: marcarTurno(comConversa.bots, acao.botId, true), revisaoBots: estado.revisaoBots + 1 };
     }
     case 'aprovacoes_carregadas': {
+      // A busca deu certo mesmo quando a lista chega velha e não entra: quem decide isso é a revisão.
       const aprovacoes = aplicarPendentes(estado.aprovacoes, acao.pendentes, acao.revisao);
-      return aprovacoes === estado.aprovacoes ? estado : { ...estado, aprovacoes };
+      if (aprovacoes === estado.aprovacoes && estado.cargaDeAprovacoes === 'pronta') return estado;
+      return { ...estado, aprovacoes, cargaDeAprovacoes: 'pronta' };
     }
+    case 'aprovacoes_falharam':
+      return estado.cargaDeAprovacoes === 'falhou' ? estado : { ...estado, cargaDeAprovacoes: 'falhou' };
     case 'aprovacao_decidida': {
       const aprovacoes = aplicarDecisao(estado.aprovacoes, acao.aprovacao);
       return aprovacoes === estado.aprovacoes ? estado : { ...estado, aprovacoes };

@@ -5,6 +5,7 @@ import { AppState } from 'react-native';
 import { criarArmazemDados, type ArmazemDados, type EstadoDados } from '@/lib/dados';
 import { iniciarFluxoEventos } from '@/lib/fluxo-eventos';
 import { criarOperacoes, type Operacoes } from '@/lib/operacoes';
+import { criarRecarga, type Recarga } from '@/lib/recarga';
 import type { Sessao } from '@/lib/sessao';
 import { api, guardaSessao } from '@/servicos';
 
@@ -13,11 +14,14 @@ interface DadosDaSessao {
   sessao: Sessao | null;
   armazem: ArmazemDados;
   operacoes: Operacoes;
+  /** Busca os pedidos de aprovação pendentes e, se falhar, continua tentando enquanto a sessão durar. */
+  recargaDeAprovacoes: Recarga;
 }
 
 function criarDados(sessao: Sessao | null): DadosDaSessao {
   const armazem = criarArmazemDados();
-  return { sessao, armazem, operacoes: criarOperacoes(api, armazem) };
+  const operacoes = criarOperacoes(api, armazem);
+  return { sessao, armazem, operacoes, recargaDeAprovacoes: criarRecarga({ carregar: operacoes.carregarAprovacoes }) };
 }
 
 const Contexto = createContext<DadosDaSessao | null>(null);
@@ -32,7 +36,7 @@ export function ProvedorDados({ sessao, children }: { sessao: Sessao | null; chi
   if (dados.sessao !== sessao) definirDados(criarDados(sessao));
 
   useEffect(() => {
-    const { armazem, operacoes } = dados;
+    const { armazem, operacoes, recargaDeAprovacoes } = dados;
     const daSessao = dados.sessao;
     if (daSessao === null) return;
     const fluxo = iniciarFluxoEventos({
@@ -45,7 +49,7 @@ export function ProvedorDados({ sessao, children }: { sessao: Sessao | null; chi
         // de aprovação pendentes são buscados aqui.
         if (evento.tipo === 'ressincronizar') {
           operacoes.carregarBots().catch(() => {});
-          operacoes.carregarAprovacoes().catch(() => {});
+          recargaDeAprovacoes.pedir();
         }
       },
       aoNaoAutenticado: () => {
@@ -54,18 +58,24 @@ export function ProvedorDados({ sessao, children }: { sessao: Sessao | null; chi
       aoMudarConexao: (conexao) => armazem.despachar({ tipo: 'conexao', conexao }),
     });
     // Primeira carga dos pedidos pendentes, sem depender de o fluxo conseguir abrir: um bot pode
-    // estar parado à espera de aprovação desde antes de o app abrir.
-    operacoes.carregarAprovacoes().catch(() => {});
+    // estar parado à espera de aprovação desde antes de o app abrir. Se a busca falha, a recarga
+    // continua tentando: o pedido que já existia não volta por evento, só por esta lista.
+    recargaDeAprovacoes.pedir();
     // Em segundo plano o sistema suspende o app e a conexão morre calada. O fluxo fecha ao sair
     // e, na volta, reconecta do ponto em que parou; `inactive` é passagem e não mexe em nada.
     if (AppState.currentState === 'background') fluxo.pausar();
     const estadoDoApp = AppState.addEventListener('change', (estado) => {
       if (estado === 'background') fluxo.pausar();
-      else if (estado === 'active') fluxo.retomar();
+      else if (estado === 'active') {
+        fluxo.retomar();
+        // Em segundo plano o sistema segura os relógios: na volta, a busca que tinha falhado sai na hora.
+        if (armazem.estado().cargaDeAprovacoes === 'falhou') recargaDeAprovacoes.pedir();
+      }
     });
     return () => {
       estadoDoApp.remove();
       fluxo.parar();
+      recargaDeAprovacoes.parar();
     };
   }, [dados]);
 
