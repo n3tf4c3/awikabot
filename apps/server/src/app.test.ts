@@ -462,6 +462,21 @@ describe('conversa (F3)', () => {
     await ambiente.esperarFimDoTurno(botId);
   });
 
+  it('recusa turno novo com 503 depois de o servidor começar a sair', async () => {
+    ambiente = montar({ atrasoMs: 30 });
+    token = (await ambiente.parearAparelho()).token;
+    const primeiro = await criarBot();
+    const segundo = await criarBot();
+    expect((await ambiente.pedir(`/v1/bots/${primeiro}/turnos`, { token, corpo: { texto: 'um dois tres' } })).status).toBe(201);
+    const parada = ambiente.turnos.pararTodos();
+    const recusado = await ambiente.pedir(`/v1/bots/${segundo}/turnos`, { token, corpo: { texto: 'oi' } });
+    expect(recusado.status).toBe(503);
+    expect(await erroDe(recusado)).toBe('servidor_encerrando');
+    await parada;
+    const mensagens = EsquemaListaMensagens.parse(await (await ambiente.pedir(`/v1/bots/${segundo}/mensagens`, { token })).json());
+    expect(mensagens.mensagens).toEqual([]);
+  });
+
   it('respeita o teto de turnos simultâneos do servidor', async () => {
     ambiente = montar({ atrasoMs: 30, limite: 1 });
     token = (await ambiente.parearAparelho()).token;

@@ -198,7 +198,11 @@ export function criarApp(deps: Dependencias): Hono<Ambiente> {
     const corpo = await lerCorpo(c, EsquemaPedidoTurno);
     if ('resposta' in corpo) return corpo.resposta;
     const inicio = deps.turnos.iniciar(bot, corpo.dados.texto);
-    if (!inicio.ok) return c.json({ erro: inicio.motivo }, inicio.motivo === 'turno_em_andamento' ? 409 : 429);
+    if (!inicio.ok) {
+      // O servidor saindo é indisponibilidade, não erro do pedido: o app tenta de novo depois.
+      const status = inicio.motivo === 'servidor_encerrando' ? 503 : inicio.motivo === 'turno_em_andamento' ? 409 : 429;
+      return c.json({ erro: inicio.motivo }, status);
+    }
     return c.json({ usuario: inicio.usuario, bot: inicio.bot }, 201);
   });
 
