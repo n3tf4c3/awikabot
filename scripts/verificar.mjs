@@ -10,7 +10,7 @@
 // está no ar, com o motor real, e um código de pareamento gerado nele. Gasta
 // uso da conta do motor e deixa um bot de teste no banco desse servidor.
 import { spawn, spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -111,7 +111,7 @@ function iniciarServidor(pasta, ambiente) {
   return servico;
 }
 
-/** Roda um subcomando do servidor (`parear`, `backup`, `revogar-todos`, `saude`, `julgar`) e devolve a saída e o código. */
+/** Roda um subcomando do servidor (`parear`, `backup`, `conferir-banco`, `revogar-todos`, `saude`, `julgar`) e devolve a saída e o código. */
 function comandoDoServidor(args, ambiente = local.ambiente, entrada = '') {
   return spawnSync(process.execPath, ['dist/server.mjs', ...args], { cwd: local.servidor, env: ambiente, encoding: 'utf8', input: entrada });
 }
@@ -465,7 +465,22 @@ try {
         const ambienteRestaurado = { ...local.ambiente, AWIKA_PORTA: String(PORTA + 2), AWIKA_PORTA_GANCHO: String(PORTA + 3), AWIKA_DADOS: restaurada };
         // Como o `deploy/restaurar.sh`: antes de o servidor restaurado subir, todo aparelho do backup sai.
         // O arquivo não sabe quem foi revogado depois da cópia.
+        // Antes disso o banco é conferido inteiro, sem ser alterado; um arquivo cortado é recusado.
+        const bancoRestaurado = path.join(restaurada, 'awikabot.db');
+        const conferencia = comandoDoServidor(['conferir-banco', bancoRestaurado], ambienteRestaurado);
+        const cortado = path.join(restaurada, 'cortado.db');
+        writeFileSync(cortado, readFileSync(bancoRestaurado).subarray(0, 4096));
+        const conferenciaDoCortado = comandoDoServidor(['conferir-banco', cortado], ambienteRestaurado);
+        rmSync(cortado);
+        registrar('O1', 'o banco do backup é conferido antes de ir para o lugar',
+          conferencia.status === 0 && /Banco íntegro/.test(conferencia.stdout) && conferenciaDoCortado.status === 1,
+          `conferir-banco: saída ${conferencia.status}; com o arquivo cortado: saída ${conferenciaDoCortado.status}`);
         const revogacao = comandoDoServidor(['revogar-todos'], ambienteRestaurado);
+        // O `restaurar.sh` leva só o `awikabot.db` para o lugar: a revogação tem de estar nele, não no diário.
+        const diario = `${bancoRestaurado}-wal`;
+        const semDiario = !existsSync(diario) || statSync(diario).size === 0;
+        registrar('O1', 'depois de revogar, o arquivo do banco tem tudo', revogacao.status === 0 && semDiario,
+          `revogar-todos: saída ${revogacao.status}; diário pendente: ${semDiario ? 'não' : 'sim'}`);
         const segundo = iniciarServidor(local.servidor, ambienteRestaurado);
         extras.processos.push(segundo);
         const subiu = await esperar(() => responde(baseRestaurada), 10_000);
