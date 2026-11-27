@@ -7,7 +7,7 @@ import { EsquemaBotEntrada, MOTOR_PADRAO } from '@awikabot/core';
 import pacote from '../package.json' with { type: 'json' };
 import { criarApp } from './app';
 import { expirarPendentesNaPartida, GestorDeAprovacoes } from './aprovacoes';
-import { BackupRecusado, fazerBackup } from './backup';
+import { BackupRecusado, conferirBanco, fazerBackup } from './backup';
 import { abrirBanco, type Banco } from './banco';
 import { marcarInterrompidas } from './conversa';
 import { criarCodigo, LimitadorDeTentativas, listarDispositivos, revogar, revogarTodos } from './dispositivos';
@@ -210,7 +210,7 @@ async function julgar(env: Env, opcoes: string[]): Promise<void> {
 const formatarInstante =(instante: number | null): string => (instante === null ? '-' : new Date(instante).toISOString());
 
 const USO =
-  'Uso: servir | parear | dispositivos | revogar <id> | revogar-todos | backup <arquivo> | saude | julgar [opções] | configuracao-do-motor | configuracao-do-codex <configuracao|requisitos>';
+  'Uso: servir | parear | dispositivos | revogar <id> | revogar-todos | backup <arquivo> | conferir-banco <arquivo> | saude | julgar [opções] | configuracao-do-motor | configuracao-do-codex <configuracao|requisitos>';
 
 function copiarBanco(banco: Banco, destino: string | undefined): void {
   if (!destino) {
@@ -271,6 +271,30 @@ function administrar(env: Env, comando: string, argumento: string | undefined): 
       console.error(USO);
       process.exitCode = 64;
   }
+  // Fechar grava no arquivo do banco o que ficou no diário (WAL): depois de um comando, o
+  // `awikabot.db` sozinho tem tudo, e é só ele que a restauração leva para o lugar. O Node já fecha
+  // o banco ao sair; aqui isso não depende dele, e o `pnpm verificar` confere que não sobra diário.
+  if (comando !== 'servir') banco.close();
+}
+
+/**
+ * Confere um arquivo de banco, sem abrir o banco do servidor nem gravar nada. É o que o
+ * `deploy/restaurar.sh` roda sobre o banco extraído, antes de ele ir para o lugar.
+ */
+function conferirArquivoDoBanco(arquivo: string | undefined): void {
+  if (!arquivo) {
+    console.error('Informe o arquivo do banco a conferir.');
+    process.exitCode = 64;
+    return;
+  }
+  try {
+    const resumo = conferirBanco(arquivo);
+    console.log(`Banco íntegro: esquema ${resumo.versaoDoEsquema}, ${resumo.bots} bot(s), ${resumo.mensagens} mensagem(ns), ${resumo.aparelhosAtivos} aparelho(s) ativo(s)`);
+  } catch (erro) {
+    // A mensagem do SQLite não leva dado do banco.
+    console.error(erro instanceof BackupRecusado ? erro.message : `O arquivo não é um banco íntegro: ${erro instanceof Error ? erro.message : 'erro desconhecido'}`);
+    process.exitCode = 1;
+  }
 }
 
 const [comando = 'servir', argumento] = process.argv.slice(2);
@@ -300,6 +324,8 @@ if (comando === 'gancho') {
     console.error(USO);
     process.exitCode = 64;
   }
+} else if (comando === 'conferir-banco') {
+  conferirArquivoDoBanco(argumento);
 } else if (comando === 'julgar') {
   await julgar(lerEnvOuSair(), process.argv.slice(3));
 } else if (comando === 'saude') {
