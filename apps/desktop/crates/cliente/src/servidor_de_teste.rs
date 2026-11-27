@@ -212,6 +212,17 @@ fn atender(
             .filter_map(|linha| linha.split_once(':').map(|(chave, valor)| (chave.trim().to_owned(), valor.trim().to_owned())))
             .collect(),
     };
+    // O corpo do pedido é lido inteiro antes de responder. Fechar a conexão com o corpo por ler faz
+    // o sistema mandar um RST, e o cliente pode perder a resposta que já estava escrita: num POST
+    // cujo corpo chegava depois dos cabeçalhos, isso aparecia de vez em quando como falha de rede.
+    let fim_dos_cabecalhos = bruto.windows(4).position(|janela| janela == b"\r\n\r\n").map_or(bruto.len(), |posicao| posicao + 4);
+    let corpo_declarado = pedido.cabecalho("content-length").and_then(|valor| valor.parse::<usize>().ok()).unwrap_or(0);
+    while bruto.len() < fim_dos_cabecalhos.saturating_add(corpo_declarado) {
+        match conexao.read(&mut pedaco) {
+            Ok(0) | Err(_) => break,
+            Ok(lidos) => bruto.extend_from_slice(&pedaco[..lidos]),
+        }
+    }
     let numero = {
         let mut lista = pedidos.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         lista.push(pedido.clone());
