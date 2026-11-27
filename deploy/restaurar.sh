@@ -7,6 +7,9 @@
 # conversas do motor que vêm no arquivo: nunca escreve por cima de um servidor com
 # dados. O volume pode já ter o login dos motores, que não vem no backup.
 #
+# Todo aparelho pareado no backup sai revogado: o arquivo não sabe quem foi revogado
+# depois da cópia. Cada aparelho pareia de novo, com o comando `parear`.
+#
 # Para ensaiar ao lado do servidor de verdade, use outro projeto:
 #   COMPOSE_PROJECT_NAME=awikabot-ensaio AWIKA_SUBREDE=172.28.0.0/16 AWIKA_PORTA_HOST=8799 \
 #     deploy/restaurar.sh <arquivo.tar>
@@ -65,9 +68,30 @@ if ! printf '%s\n' "$itens" | compose run --rm -T --no-deps --entrypoint sh serv
   exit 1
 fi
 
+# Do momento em que o banco entra no volume até a revogação passar, o volume guarda aparelhos que
+# podem já ter sido revogados no servidor de origem. Se o script parar nesse intervalo, avisa.
+revogar='docker compose run --rm --no-deps server revogar-todos'
+banco_no_volume=nao
+aparelhos_revogados=nao
+avisar() {
+  if [ "$banco_no_volume" = sim ] && [ "$aparelhos_revogados" = nao ]; then
+    echo "ATENÇÃO: o volume pode ter recebido o banco do backup, e os aparelhos pareados nele ainda valem." >&2
+    echo "Não suba o servidor antes de rodar, com o mesmo projeto e o mesmo arquivo de compose: $revogar" >&2
+  fi
+}
+trap avisar EXIT
+
 # -k: se, apesar da conferência, algum arquivo já existir, o tar para em vez de trocá-lo.
 membros=$(tar -tf "$arquivo" | awk -F/ '$1 == "awikabot.db" || $1 == "trabalho" { print $1 } $1 == "claude" { print "claude/projects" } $1 == "codex" { print "codex/sessions" }' | sort -u)
+banco_no_volume=sim
 # shellcheck disable=SC2086
 compose run --rm -T --no-deps --entrypoint tar server -C /data -k -xf - $membros <"$arquivo"
 
-echo "Restaurado. Se o volume é novo, faça o login do motor (ver deploy/compose.yaml) e suba o servidor."
+# O backup traz os aparelhos pareados como estavam no dia da cópia: um aparelho revogado depois
+# dela voltaria a entrar com o token antigo. Não há registro das revogações fora do banco, então
+# todos saem antes de o servidor subir, e cada aparelho pareia de novo.
+compose run --rm -T --no-deps server revogar-todos </dev/null
+aparelhos_revogados=sim
+
+echo "Restaurado. Os aparelhos pareados no backup foram revogados: depois de subir o servidor, pareie cada um de novo (comando parear)."
+echo "Se o volume é novo, faça o login do motor (ver deploy/compose.yaml) antes de subir o servidor."

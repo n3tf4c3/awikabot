@@ -9,6 +9,10 @@
 #   - as conversas de cada motor (Claude Code e Codex), para os bots lembrarem depois de restaurados.
 # O login dos motores nunca entra no arquivo: nem claude/.credentials.json nem codex/auth.json.
 #
+# O arquivo só ganha o nome final depois de conferido: o tar terminou, o arquivo é lido até o fim,
+# traz o que devia e o banco dentro dele é a cópia que o servidor conferiu. Se qualquer passo
+# falha, não fica arquivo nem .sha256.
+#
 # O arquivo leva conversas e arquivos dos bots: cifre antes de tirá-lo do host.
 set -eu
 
@@ -22,36 +26,81 @@ compose() { docker compose "$@"; }
 carimbo=$(date -u +%Y%m%dT%H%M%SZ)
 nome="awikabot-$carimbo.tar"
 copia="backup/awikabot-$carimbo.db"
+parcial="$destino/$nome.parcial"
 
 umask 077
 mkdir -p "$destino"
-[ ! -e "$destino/$nome" ] || { echo "já existe: $destino/$nome" >&2; exit 1; }
+for existente in "$destino/$nome" "$destino/$nome.sha256"; do
+  [ ! -e "$existente" ] || { echo "já existe: $existente" >&2; exit 1; }
+done
 
-# Desfaz só o que este script criou: a cópia do banco no volume e o arquivo pela metade.
+falhar() {
+  echo "$1; nenhum backup foi gravado" >&2
+  exit 1
+}
+
+# Desfaz só o que este script criou: a cópia do banco no volume e o que ficou pela metade.
 limpar() {
   compose exec -T server rm -f "/data/$copia" </dev/null >/dev/null 2>&1 || true
-  rm -f "$destino/$nome.parcial"
+  rm -f "$parcial" "$parcial.erros" "$parcial.lista" "$parcial.sha256"
 }
 trap limpar EXIT
 
-compose exec -T server node /app/server.mjs backup "/data/$copia" </dev/null
+# A cópia do banco, que o servidor abre e confere. O sha256 que ele informa é o que o banco de
+# dentro do arquivo final tem de ter.
+relato=$(compose exec -T server node /app/server.mjs backup "/data/$copia" </dev/null) || falhar "o servidor não copiou o banco"
+printf '%s\n' "$relato"
+banco_esperado=$(printf '%s\n' "$relato" | sed -n 's/.*sha256 \([0-9a-f]\{64\}\).*/\1/p' | head -n 1)
+[ -n "$banco_esperado" ] || falhar "o servidor não informou o sha256 da cópia do banco"
 
+# Quais pastas existem no volume. A resposta tem de vir inteira, com uma linha por pasta e a marca
+# do fim: uma falha na consulta ao contêiner não pode passar por pasta ausente.
+pastas='trabalho claude/projects codex/sessions'
+# shellcheck disable=SC2016
+consulta='for pasta in "$@"; do if [ -d "/data/$pasta" ]; then echo "tem $pasta"; else echo "sem $pasta"; fi; done; echo fim'
+# shellcheck disable=SC2086
+resposta=$(compose exec -T server sh -c "$consulta" sh $pastas </dev/null) || falhar "a consulta às pastas do volume falhou"
+printf '%s\n' "$resposta" | grep -qxF 'fim' || falhar "a consulta às pastas do volume voltou incompleta"
 itens=$copia
-for pasta in trabalho claude/projects codex/sessions; do
-  if compose exec -T server test -d "/data/$pasta" </dev/null; then itens="$itens $pasta"; fi
+esperados=awikabot.db
+for pasta in $pastas; do
+  if printf '%s\n' "$resposta" | grep -qxF "tem $pasta"; then
+    itens="$itens $pasta"
+    esperados="$esperados $pasta"
+  elif ! printf '%s\n' "$resposta" | grep -qxF "sem $pasta"; then
+    falhar "a consulta às pastas do volume não disse se existe $pasta"
+  fi
 done
 
-# No arquivo, o banco já sai com o nome que o servidor espera encontrar.
+# No arquivo, o banco já sai com o nome que o servidor espera encontrar. O empacotador diz, pela
+# saída de erro, com que código o tar terminou: sem essa linha, o tar nem chegou a rodar ou foi
+# interrompido, e o código 1 do compose não é o "arquivo mudou durante a leitura" do tar.
+# shellcheck disable=SC2016
+empacotar='transformacao=$1; shift; estado=0; tar -C /data --transform "$transformacao" -cf - "$@" || estado=$?; echo "awikabot-tar-saiu:$estado" >&2; exit "$estado"'
 estado=0
 # shellcheck disable=SC2086
-compose exec -T server tar -C /data --transform "s|^$copia\$|awikabot.db|" -cf - $itens </dev/null >"$destino/$nome.parcial" || estado=$?
+compose exec -T server sh -c "$empacotar" sh "s|^$copia\$|awikabot.db|" $itens </dev/null >"$parcial" 2>"$parcial.erros" || estado=$?
+grep -v '^awikabot-tar-saiu:' "$parcial.erros" >&2 || true
+relatado=$(sed -n 's/^awikabot-tar-saiu:\([0-9][0-9]*\).*/\1/p' "$parcial.erros" | tail -n 1)
+[ -n "$relatado" ] || falhar "o empacotamento não chegou ao fim (código $estado)"
 # O tar sai com 1 quando um arquivo muda durante a leitura, o que acontece com um bot trabalhando.
-if [ "$estado" -gt 1 ]; then
-  echo "o tar falhou com código $estado; nenhum backup foi gravado" >&2
-  exit 1
-fi
-[ "$estado" -eq 0 ] || echo "aviso: algum arquivo de bot mudou durante a cópia; o banco não é afetado" >&2
+[ "$relatado" -le 1 ] || falhar "o tar falhou com código $relatado"
+[ "$estado" -eq "$relatado" ] || falhar "o empacotamento terminou com código $estado, e o tar com $relatado"
+[ "$relatado" -eq 0 ] || echo "aviso: algum arquivo de bot mudou durante a cópia; o banco não é afetado" >&2
 
-mv "$destino/$nome.parcial" "$destino/$nome"
-(cd "$destino" && sha256sum "$nome" >"$nome.sha256")
+# O que chegou ao host: lido até o fim, terminado pela marca de fim do tar, com o banco que o
+# servidor conferiu e com cada pasta que existe no volume.
+tar -tf "$parcial" >"$parcial.lista" 2>/dev/null || falhar "o arquivo gerado não é um tar legível até o fim"
+[ "$(tail -c 1024 "$parcial" | tr -d '\000' | wc -c)" -eq 0 ] || falhar "o arquivo gerado não termina com a marca de fim do tar"
+for membro in $esperados; do
+  grep -qxF -e "$membro" -e "$membro/" "$parcial.lista" || falhar "o arquivo gerado não traz $membro"
+done
+banco_obtido=$(tar -xOf "$parcial" awikabot.db 2>/dev/null | sha256sum | cut -c1-64)
+[ "$banco_obtido" = "$banco_esperado" ] || falhar "o banco de dentro do arquivo não é a cópia que o servidor conferiu"
+
+# O .sha256 sai dos mesmos bytes conferidos e entra antes do arquivo: um .sha256 sozinho não passa por backup.
+resumo=$(sha256sum "$parcial" | cut -c1-64)
+printf '%s  %s\n' "$resumo" "$nome" >"$parcial.sha256"
+mv "$parcial.sha256" "$destino/$nome.sha256"
+mv "$parcial" "$destino/$nome" || { rm -f "$destino/$nome.sha256"; falhar "o arquivo conferido não pôde ganhar o nome final"; }
 echo "Backup gravado em $destino/$nome"
