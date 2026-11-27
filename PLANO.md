@@ -1040,7 +1040,7 @@ O que sai daqui:
 
 - **O mecanismo do Antigravity pelo ACP serve para um worker.** O pedido de permissão nega quando quem responde falha, que era a pergunta deixada pela leitura dos termos. É a mesma trava do Codex, por outro protocolo.
 - **Ele ainda não entra.** Faltam três coisas, nesta ordem: provar o acesso por chave de API, que é a decisão do titular; fechar o gancho da pasta do bot; e fechar a busca na web com um gancho que nega.
-- **O gancho da pasta é o impedimento mais sério.** No Claude Code, `--setting-sources=user` impede que a pasta do bot vire configuração. No Antigravity não foi achada opção igual. A política de gravação precisa negar `.agents/`, como já nega `.claude/`, e isso não cobre um comando de terminal aprovado.
+- **O gancho da pasta era o impedimento mais sério.** No Claude Code, `--setting-sources=user` impede que a pasta do bot vire configuração. No Antigravity não há opção igual, mas há um arranjo que faz o mesmo papel: ver "Etapa 7: a pasta do bot como configuração do Antigravity".
 - **Como orquestrador e como juiz, não provado.** O ACP não traz resposta presa a esquema; o servidor teria de conferir a resposta ele mesmo.
 - **Versão**: o binário entra na imagem numa pasta em que o bot não grava, o que a imagem do produto já faz com o sistema de arquivos somente leitura.
 - **Backup**: o login do Antigravity é o arquivo `antigravity-oauth-token`. Fica de fora, como os outros dois.
@@ -1049,13 +1049,47 @@ Não coberto pela prova:
 
 - o acesso por chave de API do Gemini, e os modelos e limites que ela dá;
 - o Pi: tudo rodou em amd64, e em arm64 só emulado;
-- um conserto para o gancho da pasta do bot: só foi provado que ele roda;
 - um gancho que consulta o servidor e espera a pessoa, para dar à busca na web um cartão: o prazo máximo de um gancho não foi medido;
 - a caixa de areia do Antigravity e os modos `accept-edits`, `auto` e `plan`: a prova usou o modo padrão;
 - ferramentas de servidor MCP, subagentes e o navegador;
 - um processo atendendo várias sessões, e turnos simultâneos: a prova abriu um processo por turno;
 - as instruções do bot: o servidor anuncia que aceita acrescentar ao prompt do sistema, e isso não foi usado;
 - os termos: a prova mandou cerca de 40 pedidos por roteiro com a assinatura, o que as respostas do fórum não cobrem. Foi escolha do titular para a prova, e não muda a decisão de o produto usar chave de API.
+
+## Etapa 7: a pasta do bot como configuração do Antigravity (2026-11-26)
+
+Pedido do titular em 26/11: fechar o gancho da pasta do bot, achado na prova pelo ACP. Rodada no mesmo contêiner, com o mesmo roteiro e `prova/gancho-da-pasta.sh`, que planta um gancho e um servidor MCP numa pasta e confere se rodaram. O acesso foi de novo pela assinatura do titular, em 13 turnos. Nada em `apps/` mudou: o Antigravity ainda não é motor do produto, e o que fecha o problema é desenho do driver que ainda não existe.
+
+A página "Customization discovery", em `antigravity.google/docs/customization-discovery`, lida em 26/11 e sem data, diz o que o Antigravity lê como configuração: a pasta `.agents/` da pasta de trabalho e de cada pasta acima dela até a raiz do repositório Git, com regras, habilidades, agentes, plugins, ganchos (`hooks.json`) e servidores MCP (`mcp_config.json`). Reconhece também `.agent/`, `_agents/` e `_agent/`. Uma pasta dada por `--add-dir` conta como pasta de trabalho. E ele não procura em subpastas. As páginas de ajustes não trazem opção que desligue essa leitura. A chave `trustedWorkspaces` aparece nelas sem dizer o que barra; pelo ACP nenhuma pergunta de confiança apareceu, e a chave ficou vazia.
+
+| Verificação | Resultado |
+|---|---|
+| Gancho e servidor MCP em `.agents/`, na pasta de trabalho | Os dois rodam sem aprovação. O servidor MCP é um comando que o `agy` lança sozinho. |
+| Nome alternativo, `_agents/` | O gancho roda. |
+| Pasta do bot dada por `--add-dir`, com a sessão aberta em outra pasta | Os dois rodam. |
+| Configuração na pasta de cima | Roda quando a pasta de cima é a raiz de um repositório Git. Sem repositório, não roda. |
+| Sessão aberta na pasta de cima, configuração na subpasta do bot | **Não roda**, nem o gancho nem o servidor MCP. Também não roda quando a subpasta é um repositório Git. |
+| Quando a configuração passa a valer | No começo de cada turno. Plantada por um comando aprovado no meio de um turno, não valeu para o comando seguinte do mesmo turno e valeu no turno seguinte, na mesma sessão e no mesmo processo. Abrir a sessão, sem turno, não lança o servidor MCP. |
+| O que o pedido de permissão traz | Para arquivo, o caminho absoluto e o conteúdo. Para comando, a linha inteira. |
+| Arquivo pedido sem caminho, com a sessão na pasta de cima | O pedido veio com o caminho na pasta de cima, não na pasta do bot. |
+
+Como fecha, no driver do Antigravity:
+
+- **A sessão abre numa pasta do servidor, uma acima da pasta do bot.** A pasta de cima só contém a pasta do bot e não fica dentro de repositório Git. O que aparecer em `.agents/` na pasta do bot, por ferramenta de arquivo, por comando ou por um repositório clonado, não é lido. É o papel que o `--setting-sources=user` faz no Claude Code.
+- **A política de gravação já cobre a pasta de cima.** Ela fica fora da pasta do bot, e gravação fora da pasta é negada sem cartão. O pedido traz o caminho absoluto, que é o que a política precisa.
+- **O servidor confere a pasta de cima antes de cada turno.** Havendo ali qualquer coisa além da pasta do bot, o turno não começa. Como a configuração só vale a partir do turno seguinte, a conferência pega também o que um comando de terminal aprovado tiver plantado, antes de valer.
+- **O bot precisa saber qual é a pasta dele.** Sem isso, um arquivo pedido sem caminho cai na pasta de cima e a política nega. As instruções do bot dizem a pasta; o servidor anuncia que aceita acrescentar ao prompt do sistema.
+
+Com isto, o que falta para o Antigravity entrar como worker passa a ser o acesso por chave de API e a busca na web.
+
+Não coberto:
+
+- a conferência antes de cada turno: é código do driver, e não foi escrita;
+- a configuração pessoal, em `~/.gemini/config`, com os mesmos `hooks.json` e `mcp_config.json`. Um comando de terminal aprovado a alcança, como alcança a configuração de usuário dos outros motores. A mesma conferência antes de cada turno serviria para ela;
+- plugins e agentes personalizados plantados na pasta, um a um: ficam dentro da mesma `.agents/`, e só o gancho e o servidor MCP foram testados;
+- o arquivo `.gemini/config.json` na raiz de um repositório, que a página diz redirecionar a leitura para outra pasta;
+- o trabalho do bot com a sessão na pasta de cima: os comandos partem dela, e a prova não rodou um turno de verdade assim com as instruções dizendo a pasta;
+- as opções `--gemini-dir` e `--app-data-dir`, que mudam onde a CLI guarda as coisas dela.
 
 ## Riscos
 
