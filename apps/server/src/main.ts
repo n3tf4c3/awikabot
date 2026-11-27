@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
@@ -10,15 +11,17 @@ import { BackupRecusado, fazerBackup } from './backup';
 import { abrirBanco, type Banco } from './banco';
 import { marcarInterrompidas } from './conversa';
 import { criarCodigo, LimitadorDeTentativas, listarDispositivos, revogar } from './dispositivos';
-import { ambienteDoMotor, EnvInvalida, lerEnv, lerEnvDoGancho, type Env } from './env';
+import { ambienteDoMotor, EnvInvalida, lerEnv, lerEnvDoGancho, lerPastaDoBot, type Env } from './env';
 import { Barramento } from './eventos';
-import { esforcoValido, MOTOR_CODEX, motorDoCatalogo } from './catalogo';
+import { esforcoValido, MOTOR_ANTIGRAVITY, MOTOR_CODEX, motorDoCatalogo } from './catalogo';
 import { EsquemaPergunta, subirEscada, type Pergunta } from './decisao';
 import { criarJuiz } from './juiz';
+import { decidirNoGanchoDoAntigravity } from './configuracao-antigravity';
 import { codexGerenciadoInstalado, configuracaoDoCodexToml, requisitosDoCodexToml } from './configuracao-codex';
 import { configuracaoGerenciada, gerenciadaInstalada } from './configuracao-motor';
 import { criarAppDoGancho, executarGancho, Ganchos } from './gancho';
 import { despacharPorMotor, type Motor } from './motor';
+import { criarMotorAntigravity } from './motor-antigravity';
 import { criarMotorClaudeCode } from './motor-claude-code';
 import { criarMotorCodex } from './motor-codex';
 import { criarMotorSimulado } from './motor-simulado';
@@ -40,6 +43,8 @@ function lerEnvOuSair(): Env {
 
 /** A linha de comando do gancho: este mesmo programa, com o subcomando `gancho`. */
 const comandoDoGancho = (): string => `${JSON.stringify(process.execPath)} ${JSON.stringify(process.argv[1] ?? '')} gancho`;
+/** O gancho do Antigravity é outro subcomando: ele não consulta o servidor, só nega o que não conhece. */
+const comandoDoGanchoDoAntigravity = (): string => `${comandoDoGancho()}-antigravity`;
 
 /**
  * Os motores deste processo, depois de conferir a configuração gerenciada. Cada turno roda no motor
@@ -62,6 +67,13 @@ function criarMotores(env: Env): Motor {
     : despacharPorMotor({
         [MOTOR_PADRAO]: criarMotorClaudeCode({ binario: env.AWIKA_CLAUDE_BIN, ambiente: ambienteDoMotor(process.env, 'claude-code'), ganchoGerenciado }),
         [MOTOR_CODEX]: criarMotorCodex({ binario: env.AWIKA_CODEX_BIN, ambiente: ambienteDoMotor(process.env, 'codex'), configuracaoGerenciada: ganchoGerenciado }),
+        [MOTOR_ANTIGRAVITY]: criarMotorAntigravity({
+          binario: env.AWIKA_AGY_BIN,
+          ambiente: ambienteDoMotor(process.env, 'antigravity'),
+          // Fora de `trabalho/`: a pasta da sessão não pode ser a do bot, nem ficar dentro dela.
+          pastaDasSessoes: path.join(env.AWIKA_DADOS, 'antigravity'),
+          comandoDoGancho: comandoDoGanchoDoAntigravity(),
+        }),
       });
 }
 
@@ -259,6 +271,18 @@ const [comando = 'servir', argumento] = process.argv.slice(2);
 if (comando === 'gancho') {
   // Chamado pelo motor antes de cada ferramenta. Não abre o banco nem lê a configuração do servidor.
   await executarGancho(lerEnvDoGancho(process.env));
+} else if (comando === 'gancho-antigravity') {
+  // Chamado pelo Antigravity antes de cada ferramenta. Decide só pelo nome dela, e no terminal
+  // reescreve a linha do comando para ela partir da pasta do bot; sair sem dizer nada deixa o
+  // pedido de permissão seguir para o driver.
+  let entrada = '';
+  try {
+    entrada = readFileSync(0, 'utf8');
+  } catch {
+    // Sem entrada, o gancho nega.
+  }
+  const decisao = decidirNoGanchoDoAntigravity(entrada, lerPastaDoBot(process.env));
+  if (decisao !== null) process.stdout.write(JSON.stringify(decisao));
 } else if (comando === 'configuracao-do-motor') {
   // Usado no build da imagem: imprime a configuração gerenciada do motor, com o gancho deste programa.
   console.log(JSON.stringify(configuracaoGerenciada(comandoDoGancho()), null, 2));

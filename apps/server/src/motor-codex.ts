@@ -3,8 +3,8 @@ import { mkdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { configuracaoDoCodexPorOpcao } from './configuracao-codex';
-import { executarGancho } from './gancho';
-import type { Gancho, Motor, ResultadoMotor } from './motor';
+import { consultarServidor, type ConsultaDeFerramenta } from './gancho';
+import type { Motor, ResultadoMotor } from './motor';
 
 /**
  * Dirige o Codex sem modificação, pelo servidor de aplicativo (`codex app-server`): JSON-RPC, uma
@@ -99,12 +99,6 @@ export function argumentosDoCodex(configuracaoGerenciada: boolean): string[] {
   return ['app-server', '--listen=stdio://', ...(configuracaoGerenciada ? [] : configuracaoDoCodexPorOpcao())];
 }
 
-/** O que o servidor pergunta ao gancho: uma ferramenta, no vocabulário da política (`politica.ts`). */
-export interface ConsultaDeFerramenta {
-  ferramenta: string;
-  entrada: Record<string, unknown>;
-}
-
 type Objeto = Record<string, unknown>;
 
 function objeto(valor: unknown): Objeto | null {
@@ -149,27 +143,6 @@ export function consultasDeEdicao(item: Objeto | undefined): ConsultaDeFerrament
     } else return null;
   }
   return consultas;
-}
-
-/** Pergunta ao servidor, pelo caminho do gancho. Sem gancho, ou com qualquer falha, nega. */
-async function consultarServidor(gancho: Gancho | null, consulta: ConsultaDeFerramenta): Promise<boolean> {
-  if (gancho === null) return false;
-  let saida = '';
-  await executarGancho(
-    { porta: gancho.porta, token: gancho.token },
-    {
-      lerEntrada: () => JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: consulta.ferramenta, tool_input: consulta.entrada }),
-      escrever: (texto) => {
-        saida += texto;
-      },
-    },
-  );
-  try {
-    const lido = JSON.parse(saida) as { hookSpecificOutput?: { permissionDecision?: unknown } };
-    return lido.hookSpecificOutput?.permissionDecision === 'allow';
-  } catch {
-    return false;
-  }
 }
 
 function dentroDaPasta(pasta: string, alvo: string): boolean {

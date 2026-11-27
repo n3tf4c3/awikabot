@@ -58,14 +58,17 @@ function dentroDaPasta(pasta: string, alvo: string): boolean {
 /**
  * Arquivos que um motor lê como configuração na pasta de trabalho: neles cabem ganchos e
  * comandos que rodariam nos turnos seguintes sem passar por aprovação. `.claude/` e `.mcp.json`
- * são do Claude Code; `.codex/` é do Codex.
+ * são do Claude Code; `.codex/` é do Codex; `.agents/` e os outros três nomes são do Antigravity,
+ * que lê deles ganchos e servidores MCP.
  */
+const PASTAS_DE_CONFIGURACAO = ['.claude', '.codex', '.agents', '.agent', '_agents', '_agent'];
+
 function ehConfiguracaoDoMotor(pasta: string, alvo: string): boolean {
   const base = caminhoReal(path.resolve(pasta));
   return formasDoCaminho(alvo).some((forma) => {
     const real = caminhoReal(path.resolve(base, forma));
     const partes = path.relative(base, real).split(path.sep).map((parte) => parte.toLowerCase());
-    return partes.includes('.claude') || partes.includes('.codex') || partes.at(-1) === '.mcp.json';
+    return PASTAS_DE_CONFIGURACAO.some((nome) => partes.includes(nome)) || partes.at(-1) === '.mcp.json';
   });
 }
 

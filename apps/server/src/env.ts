@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { z } from 'zod';
 import { motorDoCatalogo } from './catalogo';
 
@@ -18,6 +19,7 @@ const EsquemaEnv = z
     AWIKA_MOTOR: z.enum(['claude-code', 'simulado']).default('claude-code'),
     AWIKA_CLAUDE_BIN: z.string().min(1).default('claude'),
     AWIKA_CODEX_BIN: z.string().min(1).default('codex'),
+    AWIKA_AGY_BIN: z.string().min(1).default('agy'),
     /**
      * Motores do catálogo ainda não prontos em que este servidor aceita criar bot, separados por
      * vírgula. Serve ao runbook de um motor novo; o catálogo continua dizendo que ele não está pronto.
@@ -57,7 +59,7 @@ export class EnvInvalida extends Error {
 /**
  * O que o motor precisa herdar do servidor para rodar: sistema, idioma, proxy e as variáveis
  * do próprio motor (`ANTHROPIC_` e `CLAUDE_` para o Claude Code; `CODEX_` e `OPENAI_` para o
- * Codex). Nada mais passa, para que um segredo posto no ambiente do servidor não chegue aos bots
+ * Codex; `GEMINI_`, `GOOGLE_` e `AGY_` para o Antigravity). Nada mais passa, para que um segredo posto no ambiente do servidor não chegue aos bots
  * sem alguém decidir isso aqui, nem o de um motor aos bots do outro.
  */
 const NOMES_DO_MOTOR = new Set([
@@ -67,7 +69,11 @@ const NOMES_DO_MOTOR = new Set([
   'SYSTEMROOT', 'WINDIR', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'PATHEXT', 'COMSPEC', 'HOMEDRIVE', 'HOMEPATH',
   'PROGRAMFILES', 'PROGRAMDATA',
 ]);
-const PREFIXOS_DE_CADA_MOTOR = { 'claude-code': ['ANTHROPIC_', 'CLAUDE_'], codex: ['CODEX_', 'OPENAI_'] } as const;
+const PREFIXOS_DE_CADA_MOTOR = {
+  'claude-code': ['ANTHROPIC_', 'CLAUDE_'],
+  codex: ['CODEX_', 'OPENAI_'],
+  antigravity: ['GEMINI_', 'GOOGLE_', 'AGY_'],
+} as const;
 const PREFIXOS_DE_TODOS = ['LC_'];
 
 export type MotorReal = keyof typeof PREFIXOS_DE_CADA_MOTOR;
@@ -95,6 +101,16 @@ const EsquemaEnvDoGancho = z.object({
 export function lerEnvDoGancho(origem: Record<string, string | undefined>): { porta: number; token: string } | null {
   const lido = EsquemaEnvDoGancho.safeParse(origem);
   return lido.success ? { porta: lido.data.AWIKA_PORTA_GANCHO, token: lido.data.AWIKA_TURNO_TOKEN } : null;
+}
+
+/**
+ * A pasta de trabalho do bot, que o driver do Antigravity entrega ao gancho dele pelo ambiente do
+ * motor. Só vale um caminho completo; com qualquer outra coisa devolve `null`, e o gancho não mexe
+ * na linha do comando.
+ */
+export function lerPastaDoBot(origem: Record<string, string | undefined>): string | null {
+  const pasta = origem.AWIKA_PASTA_DO_BOT;
+  return typeof pasta === 'string' && pasta !== '' && path.isAbsolute(pasta) ? pasta : null;
 }
 
 export function lerEnv(origem: Record<string, string | undefined>): Env {
