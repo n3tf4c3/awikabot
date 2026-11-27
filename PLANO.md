@@ -1000,7 +1000,7 @@ Sobre o Antigravity há ainda duas respostas no fórum de desenvolvedores do Goo
 - **Um servidor por pessoa, quando o login é de assinatura.** Quem não é o dono do servidor não usa as assinaturas do dono, e um servidor que atende outra pessoa se aproxima de serviço hospedado. O colaborador roda o servidor dele, com as contas dele, ou usa chave de API.
 - **Produto pago ou hospedado para outros pede chave de API nos três motores.**
 - **A linha é a mesma nos três: a assinatura é para a pessoa que digita o pedido; o que o aplicativo dispara sozinho pede chave de API.** Só o Antigravity diz isso como proibição. O Codex diz como recomendação, e o Claude Code, como premissa dos limites do plano. As equipes da etapa 7, em que o orquestrador dispara turnos, caem do lado da chave de API.
-- **A próxima prova do Antigravity usa o `agy acp`, não o `agy -p`.** É o caminho documentado para um cliente de fora, aceita a chave de API pelo ambiente e traz o pedido de permissão, que pausa o turno até a pessoa permitir ou negar. É o que a prova do passo 1 não achou no modo sem tela. Se esse pedido nega quando ninguém responde, falta provar.
+- **A próxima prova do Antigravity usa o `agy acp`, não o `agy -p`.** É o caminho documentado para um cliente de fora, aceita a chave de API pelo ambiente e traz o pedido de permissão, que pausa o turno até a pessoa permitir ou negar. É o que a prova do passo 1 não achou no modo sem tela. Esse pedido nega quando ninguém responde: provado em 26/11, em "Etapa 7: prova do Antigravity pelo ACP".
 - **O "Entrar com o ChatGPT" não entra agora.** Nele, o aplicativo recebe um token da conta e o entrega ao servidor de aplicativo, o que contraria a regra de o awikabot nunca receber o login. A página não dá prazo para migrar.
 
 ### O que segue em dúvida
@@ -1011,6 +1011,51 @@ Sobre o Antigravity há ainda duas respostas no fórum de desenvolvedores do Goo
 - **Um bot só do Antigravity, com a assinatura, num servidor próprio**: as respostas do fórum não cobrem esse caso. A que recusa o servidor remoto se apoia no repasse entre vários agentes, e manda quem quer usar a assinatura pelo celular para o controle remoto do próprio Antigravity. Com a decisão de usar só chave de API, a pergunta não precisa de resposta agora.
 
 As duas empresas mandam perguntar em caso de dúvida: a Anthropic a vendas, a OpenAI pela lista de espera de parceiros. Ninguém perguntou ainda.
+
+## Etapa 7: prova do Antigravity pelo ACP (2026-11-26)
+
+Rodada no Docker local, no PC do titular (amd64), com o kit de `spike/motores-etapa-7` e o roteiro `prova/prova-agy-acp.mjs`. O Antigravity CLI 1.5.18 rodou como servidor ACP (`agy acp`), no contêiner com as travas do produto. O acesso foi pela assinatura do titular, por escolha dele para esta prova, com o login feito por ele em `agy acp --login`. O acesso por chave de API, que é o que ele decidiu para o produto, não rodou. Nada rodou no Pi.
+
+A página lida é a "Other editors (ACP)", em `antigravity.google/docs/ide/extensions/acp`, em 26/11; não mostra data. Ela diz que qualquer cliente ACP pode lançar o `agy acp`, que o servidor fala a versão 1 do protocolo pela entrada e saída padrão, e que os pedidos de permissão "pause the turn until you allow or deny the action".
+
+| Verificação | Resultado |
+|---|---|
+| Aperto de mãos, sem credencial | Passa, em amd64 e em arm64 emulado. O servidor anuncia carregar, retomar, listar e fechar sessão, e quatro modos de acesso, entre eles a chave de API do Gemini. Sem credencial, abrir uma sessão devolve "Authentication required". |
+| Login no contêiner | Passa. O `agy acp --login` mostra um endereço e espera o código colado. Sem chaveiro do sistema, o token fica no arquivo `~/.gemini/antigravity-cli/antigravity-oauth-token`, no volume. |
+| Resposta em trechos | Passa: 9 trechos de texto, o primeiro em 3,2 s e o último 1,4 s depois. São trechos maiores que os do Codex, que mandou cerca de 180 para o mesmo texto. |
+| Aprovação respondida por um programa de fora | Passa. O pedido de permissão chega com o comando inteiro e duas opções, permitir uma vez e negar uma vez. Com "permitir" depois de 5 s e depois de 180 s o comando rodou; com "negar", não. |
+| O programa de fora falha, demora ou devolve algo ilegível | Passa. Com "cancelado", com uma opção que não existe, com um resultado fora da forma, com uma linha que não é JSON, com 30 s de silêncio seguidos de cancelamento e com o processo morto, o comando não rodou. |
+| O que pede permissão, no modo padrão | Todo comando de terminal, até um `ls`; toda gravação de arquivo, dentro ou fora da pasta; a leitura de arquivo fora da pasta. A leitura de arquivo da própria pasta passa sem pedido. O pedido de arquivo traz o caminho. |
+| Gravar fora da pasta de trabalho | Passa, por pedido negado, pelo terminal e pela ferramenta de escrita. |
+| Busca na web | Roda sem pedido de permissão, também com `toolPermission: "strict"` e com regras de negar para endereços. Um gancho `PreToolUse` que nega `search_web` fecha. O gancho não consegue transformar a busca em pedido ao cliente: com `force_ask`, ela rodou. |
+| Gancho que falha | Quase sempre nega: com saída 1, com texto que não é JSON e travado até o corte do motor, a ferramenta não rodou. Com saída 0 sem dizer nada, segue o fluxo normal: o comando ainda pede permissão ao cliente, e a busca roda. Um gancho que responde "permitir" não dispensa o pedido ao cliente. |
+| Gancho plantado na pasta do bot | **Roda.** Um `.agents/hooks.json` na pasta de trabalho executou o comando dele antes de qualquer pedido de permissão, nas duas tentativas. A opção `--include-default-customizations=false` não muda isso. |
+| Modelo e esforço de um turno para o outro | Passa. Na mesma sessão, `gemini-4-hydrogen` com esforço `low` e depois `gemini-4-neon` com `high`, por `session/set_config_option`: a palavra guardada voltou. |
+| Retomada em contêiner novo | Passa, por `session/load`. As conversas ficam em `~/.gemini/antigravity-cli/conversations`, no volume. |
+| Versão fixada | O binário não mudou em toda a rodada. Com ele numa pasta do root, o atualizador registra que não pode gravar ali e desiste. A variável `AGY_CLI_DISABLE_AUTO_UPDATE` estava ligada e o atualizador chegou a conferir a pasta assim mesmo: o que segura é a pasta. O instalador continua sem aceitar versão. |
+| arm64 | Na imagem `linux/arm64`, emulada, três turnos de verdade: eventos, permitir e negar. |
+| Memória por turno | Pico de 238 a 269 MB na árvore de processos, 293 MB num turno com buscas, e de 152 a 168 MB no contêiner. |
+
+O que sai daqui:
+
+- **O mecanismo do Antigravity pelo ACP serve para um worker.** O pedido de permissão nega quando quem responde falha, que era a pergunta deixada pela leitura dos termos. É a mesma trava do Codex, por outro protocolo.
+- **Ele ainda não entra.** Faltam três coisas, nesta ordem: provar o acesso por chave de API, que é a decisão do titular; fechar o gancho da pasta do bot; e fechar a busca na web com um gancho que nega.
+- **O gancho da pasta é o impedimento mais sério.** No Claude Code, `--setting-sources=user` impede que a pasta do bot vire configuração. No Antigravity não foi achada opção igual. A política de gravação precisa negar `.agents/`, como já nega `.claude/`, e isso não cobre um comando de terminal aprovado.
+- **Como orquestrador e como juiz, não provado.** O ACP não traz resposta presa a esquema; o servidor teria de conferir a resposta ele mesmo.
+- **Versão**: o binário entra na imagem numa pasta em que o bot não grava, o que a imagem do produto já faz com o sistema de arquivos somente leitura.
+- **Backup**: o login do Antigravity é o arquivo `antigravity-oauth-token`. Fica de fora, como os outros dois.
+
+Não coberto pela prova:
+
+- o acesso por chave de API do Gemini, e os modelos e limites que ela dá;
+- o Pi: tudo rodou em amd64, e em arm64 só emulado;
+- um conserto para o gancho da pasta do bot: só foi provado que ele roda;
+- um gancho que consulta o servidor e espera a pessoa, para dar à busca na web um cartão: o prazo máximo de um gancho não foi medido;
+- a caixa de areia do Antigravity e os modos `accept-edits`, `auto` e `plan`: a prova usou o modo padrão;
+- ferramentas de servidor MCP, subagentes e o navegador;
+- um processo atendendo várias sessões, e turnos simultâneos: a prova abriu um processo por turno;
+- as instruções do bot: o servidor anuncia que aceita acrescentar ao prompt do sistema, e isso não foi usado;
+- os termos: a prova mandou cerca de 40 pedidos por roteiro com a assinatura, o que as respostas do fórum não cobrem. Foi escolha do titular para a prova, e não muda a decisão de o produto usar chave de API.
 
 ## Riscos
 

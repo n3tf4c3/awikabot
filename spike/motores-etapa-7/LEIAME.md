@@ -22,6 +22,8 @@ O servidor de aprovação da prova faz o papel do servidor do awikabot e do celu
 
 `prova/prova-codex-servidor.mjs` dirige o Codex pelo servidor de aplicativo (`codex app-server`), que é onde o texto sai em trechos e onde a aprovação chega como pedido ao programa que o dirige. O `codex exec`, que o `prova.mjs` usa, nunca pede aprovação. Os testes são os mesmos, mais `cliente-morre`, `leitura`, `leitura-fora`, `dentro-edicao`, `fora-terminal`, `fora-edicao`, `busca` e `esquema`.
 
+`prova/prova-agy-acp.mjs` dirige o Antigravity pelo ACP (`agy acp`), que também traz o pedido de permissão ao programa que o dirige. Usa a chave da API do Gemini, se ela estiver no volume, ou a conta guardada com `agy acp --login`. `AWIKA_AGY_AJUSTES` leva ajustes ao `settings.json` dele, e `AWIKA_AGY_GANCHO` instala um gancho que nega, permite ou quebra de um jeito escolhido (`prova/gancho-nega.mjs`). `prova/gancho-da-pasta.sh` planta um gancho na pasta do bot e confere se ele rodou.
+
 `orquestrador/prova-orquestrador.mjs` é a parte do Claude Code: compara a ferramenta própria, dada por um servidor MCP na linha de comando, com a lista no fim da resposta, conferida por esquema.
 
 ## Como rodar
@@ -45,6 +47,12 @@ docker compose run --rm prova node /opt/prova/prova.mjs codex retomar
 AWIKA_CODEX_SANDBOX=read-only docker compose run --rm prova node /opt/prova/prova-codex-servidor.mjs tudo
 AWIKA_CODEX_SANDBOX=read-only docker compose run --rm prova node /opt/prova/prova-codex-servidor.mjs retomar
 
+# O Antigravity pelo ACP, com a conta ou com a chave que estiver no volume.
+docker compose run --rm -it prova agy acp --login
+docker compose run --rm prova node /opt/prova/prova-agy-acp.mjs tudo
+docker compose run --rm prova node /opt/prova/prova-agy-acp.mjs retomar
+docker compose run --rm -e 'AWIKA_AGY_GANCHO=nega:search_web|read_url_content' prova node /opt/prova/prova-agy-acp.mjs busca
+
 # Um teste avulso.
 docker compose run --rm prova node /opt/prova/prova.mjs agy gancho-trava
 
@@ -53,7 +61,7 @@ docker compose run --rm prova node /opt/orquestrador/prova-orquestrador.mjs
 docker compose run --rm orquestrador-gerenciado
 ```
 
-O Antigravity roda por chave de API por decisão do titular, em 26/11: a FAQ dele diz que embrulhar o `agy` num aplicativo de terceiros não é suportado em plano pessoal. Com `modelProvider: "gemini"` e `GEMINI_API_KEY`, a documentação diz que os pedidos vão direto à API do Gemini e que a CLI não abre sessão de conta. A prova grava o `modelProvider` sozinha quando acha a chave no volume, e só entrega a chave ao processo do `agy`.
+No produto, o Antigravity roda por chave de API por decisão do titular, em 26/11; a prova pelo ACP usou a assinatura dele, por escolha dele para a prova. O motivo da decisão: a FAQ dele diz que embrulhar o `agy` num aplicativo de terceiros não é suportado em plano pessoal. Com `modelProvider: "gemini"` e `GEMINI_API_KEY`, a documentação diz que os pedidos vão direto à API do Gemini e que a CLI não abre sessão de conta. A prova grava o `modelProvider` sozinha quando acha a chave no volume, e só entrega a chave ao processo do `agy`.
 
 O serviço `prova` tem as travas do contêiner do produto. O `prova-sem-filtro` tira o filtro de chamadas do Docker e serve só para medir a caixa de areia de cada CLI, que não sobe com o filtro.
 
