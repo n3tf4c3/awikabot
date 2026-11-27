@@ -1,5 +1,6 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { configuracaoDoCodexPorOpcao } from './configuracao-codex';
 import { executarGancho } from './gancho';
@@ -192,6 +193,49 @@ export function prepararCasaDoCodex(ambiente: Record<string, string>): void {
   }
 }
 
+/** O que o comando da prova imprime se a caixa de areia o deixar rodar. Sem espaço nem aspas, para chegar inteiro em qualquer sistema. */
+const MARCA_DA_PROVA = 'awikabot-a-caixa-de-areia-deixou-rodar';
+/** Quanto a prova da caixa de areia pode levar, na partida. */
+const PRAZO_DA_PROVA_MS = 20_000;
+
+/**
+ * Confere, na partida, que a caixa de areia do Codex não sobe neste servidor. Com ela de pé (fora
+ * do contêiner, como num Mac ou num Windows de desenvolvimento), o Codex roda sem pedido os
+ * comandos que só leem, em todo o disco; o driver só corta o turno depois que o comando rodou, e a
+ * saída já está na sessão do Codex. A prova roda um comando dentro dela, pelo `codex sandbox`, com
+ * o ambiente e a configuração dos turnos.
+ *
+ * O Codex só fica ligado quando a caixa de areia não deixa o comando começar e diz isso com a saída
+ * que o driver reconhece nos turnos (`SAIDA_DA_CAIXA_QUE_NAO_SOBE`): no 0.172.0, na imagem, o
+ * `codex sandbox` sai com 1 e escreve exatamente esse texto (medido em 27/11). Qualquer outra coisa
+ * desliga o Codex: o comando rodou, o binário não iniciou, a saída é outra, a prova passou do prazo.
+ * Devolve o motivo, ou `null` com o Codex ligado.
+ */
+export function conferirCaixaDeAreia(opcoes: {
+  binario: string;
+  prefixo?: string[];
+  ambiente: Record<string, string>;
+  configuracaoGerenciada: boolean;
+}): string | null {
+  const prova = spawnSync(
+    opcoes.binario,
+    [
+      ...(opcoes.prefixo ?? []),
+      'sandbox',
+      ...(opcoes.configuracaoGerenciada ? [] : configuracaoDoCodexPorOpcao()),
+      '--',
+      process.execPath,
+      '-e',
+      `process.stdout.write('${MARCA_DA_PROVA}')`,
+    ],
+    { cwd: os.tmpdir(), env: opcoes.ambiente, encoding: 'utf8', timeout: PRAZO_DA_PROVA_MS, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  if (prova.stdout?.includes(MARCA_DA_PROVA)) return 'a caixa de areia dele sobe aqui, e os comandos que só leem rodariam sem aprovação';
+  if ((prova.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') return 'ele não iniciou';
+  if (prova.status === 1 && prova.stderr === SAIDA_DA_CAIXA_QUE_NAO_SOBE) return null;
+  return 'não deu para confirmar que a caixa de areia dele não sobe aqui';
+}
+
 export function criarMotorCodex(opcoes: {
   /** O executável e o que vem antes de `app-server`: nos testes, o Node e um Codex de mentira. */
   binario: string;
@@ -203,7 +247,15 @@ export function criarMotorCodex(opcoes: {
 }): Motor {
   // Na partida do servidor, antes de qualquer login ou turno.
   prepararCasaDoCodex(opcoes.ambiente);
+  const desligado = conferirCaixaDeAreia(opcoes);
+  if (desligado !== null) console.error(`motor codex: desligado na partida: ${desligado}`);
   return (pedido) => {
+    if (desligado !== null) {
+      // Nada roda, nem o processo do Codex. A sessão do bot fica como estava.
+      const aviso = `O Codex está desligado neste servidor: ${desligado}.`;
+      pedido.aoTexto(aviso);
+      return { parar: () => {}, fim: Promise.resolve({ estado: 'falhou', texto: aviso, sessao: pedido.sessao }) };
+    }
     const unix = process.platform !== 'win32';
     const filho = spawn(opcoes.binario, [...(opcoes.prefixo ?? []), ...argumentosDoCodex(opcoes.configuracaoGerenciada)], {
       cwd: pedido.pasta,
@@ -479,7 +531,9 @@ export function criarMotorCodex(opcoes: {
         pendentes.clear();
         if (corte !== null) {
           acrescentar(`${texto === '' ? '' : '\n\n'}[awikabot] Turno interrompido: ${corte}.`);
-          ok({ estado: 'falhou', texto, sessao });
+          // A saída do que agiu sem pedido pode ter ficado na sessão do Codex, e voltaria ao modelo
+          // no turno seguinte: a sessão não é retomada, e o bot recomeça a conversa.
+          ok({ estado: 'falhou', texto, sessao: null });
           return;
         }
         if (parado) {

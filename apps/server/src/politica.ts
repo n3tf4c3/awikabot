@@ -29,10 +29,30 @@ function caminhoReal(caminho: string): string {
   }
 }
 
+/**
+ * As leituras possíveis de um caminho. O gancho recebe o caminho como o modelo o escreveu, e o
+ * Claude Code só o interpreta depois: tira os espaços das pontas e troca o "~" do começo pela pasta
+ * do usuário do motor, que na imagem é o volume, com o login dos motores e o banco. Visto no 2.1.332
+ * no `path` do Glob e do Grep; o Read e o Write chegam ao gancho já expandidos. A política confere o
+ * caminho cru e o aparado, e os dois têm de passar.
+ */
+function formasDoCaminho(caminho: string): string[] {
+  return [caminho, caminho.trim()];
+}
+
+/**
+ * O "~" no começo, também o de "~usuario", vira uma pasta que a política não conhece: nega. Um
+ * arquivo da pasta do bot cujo nome começa com "~" se alcança por "./~nome".
+ */
+const comecaComTil = (caminho: string): boolean => caminho.trim().startsWith('~');
+
 function dentroDaPasta(pasta: string, alvo: string): boolean {
+  if (comecaComTil(alvo)) return false;
   const base = caminhoReal(path.resolve(pasta));
-  const real = caminhoReal(path.resolve(base, alvo));
-  return real === base || real.startsWith(base + path.sep);
+  return formasDoCaminho(alvo).every((forma) => {
+    const real = caminhoReal(path.resolve(base, forma));
+    return real === base || real.startsWith(base + path.sep);
+  });
 }
 
 /**
@@ -42,14 +62,19 @@ function dentroDaPasta(pasta: string, alvo: string): boolean {
  */
 function ehConfiguracaoDoMotor(pasta: string, alvo: string): boolean {
   const base = caminhoReal(path.resolve(pasta));
-  const real = caminhoReal(path.resolve(base, alvo));
-  const partes = path.relative(base, real).split(path.sep).map((parte) => parte.toLowerCase());
-  return partes.includes('.claude') || partes.includes('.codex') || partes.at(-1) === '.mcp.json';
+  return formasDoCaminho(alvo).some((forma) => {
+    const real = caminhoReal(path.resolve(base, forma));
+    const partes = path.relative(base, real).split(path.sep).map((parte) => parte.toLowerCase());
+    return partes.includes('.claude') || partes.includes('.codex') || partes.at(-1) === '.mcp.json';
+  });
 }
 
-/** Padrão de busca que não sai da pasta: relativo e sem subir de nível. */
+/** Padrão de busca que não sai da pasta: relativo, sem subir de nível e sem "~" no começo. */
 function padraoContido(padrao: string): boolean {
-  return !path.isAbsolute(padrao) && !/^[A-Za-z]:/.test(padrao) && !padrao.split(/[\\/]/).includes('..');
+  if (comecaComTil(padrao)) return false;
+  return formasDoCaminho(padrao).every(
+    (forma) => !path.isAbsolute(forma) && !/^[A-Za-z]:/.test(forma) && !forma.split(/[\\/]/).includes('..'),
+  );
 }
 
 function cortar(texto: string): string {

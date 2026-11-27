@@ -27,6 +27,8 @@ describe('leitura', () => {
     ['busca sem caminho', 'Glob', { pattern: '**/*.txt' }],
     ['busca por texto, com expressão que parece caminho', 'Grep', { pattern: '^/etc/\\.\\.', path: 'sub' }],
     ['busca por texto com filtro de arquivos', 'Grep', { pattern: 'oi', glob: '*.txt' }],
+    ['arquivo da pasta cujo nome começa com til, pelo "./"', 'Read', { file_path: './~rascunho.txt' }],
+    ['arquivo com til no meio do caminho', 'Read', { file_path: 'sub/~rascunho.txt' }],
   ])('permite %s', (_caso, ferramenta, entrada) => {
     expect(acao(ferramenta, entrada)).toBe('permitir');
   });
@@ -42,6 +44,32 @@ describe('leitura', () => {
     ['busca por texto com filtro que sobe de nível', 'Grep', { pattern: 'x', glob: '../*' }],
     ['busca por texto em caminho de fora', 'Grep', { pattern: 'x', path: fora }],
     ['caminho que não é texto', 'Read', { file_path: 42 }],
+  ])('nega %s', (_caso, ferramenta, entrada) => {
+    expect(avaliarFerramenta(ferramenta, entrada, pasta)).toEqual({
+      acao: 'negar',
+      motivo: 'o bot só lê arquivos da própria pasta de trabalho',
+    });
+  });
+
+  // O gancho recebe o caminho como o modelo o escreveu; o Claude Code só o interpreta depois, tirando
+  // os espaços das pontas e trocando o "~" do começo pela pasta do usuário do motor (na imagem, o
+  // volume, com o login e o banco). No 2.1.332, o `path` do Glob e do Grep chega assim ao gancho, e a
+  // ferramenta lê o arquivo de fora; o Read e o Write chegam já expandidos.
+  it.each([
+    ['o login do motor pelo "~"', 'Read', { file_path: '~/claude/.credentials.json' }],
+    ['a pasta do usuário', 'LS', { path: '~' }],
+    ['a pasta de outro usuário', 'Read', { file_path: '~root/.ssh/id_ed25519' }],
+    ['"~" depois de espaços', 'Read', { file_path: ' \t~/claude/.credentials.json' }],
+    ['busca a partir do "~"', 'Glob', { pattern: '**/*', path: '~/claude' }],
+    ['busca com padrão que começa com "~"', 'Glob', { pattern: '~/claude/**' }],
+    ['busca com padrão que começa com "~" depois de um espaço', 'Glob', { pattern: ' ~/claude/**' }],
+    ['busca com padrão absoluto depois de um espaço', 'Glob', { pattern: ` ${fora.replaceAll('\\', '/')}/**` }],
+    ['busca por texto num arquivo do "~"', 'Grep', { pattern: '.', path: '~/claude/.credentials.json', output_mode: 'content' }],
+    ['busca por texto no "~" de outro usuário', 'Grep', { pattern: '.', path: '~awikabot/claude' }],
+    ['busca por texto no "~" depois de um espaço', 'Grep', { pattern: '.', path: ' ~/claude' }],
+    ['busca por texto num caminho absoluto de fora depois de um espaço', 'Grep', { pattern: '.', path: ` ${fora}` }],
+    ['busca num caminho absoluto de fora depois de um espaço', 'Glob', { pattern: '*.txt', path: ` ${fora}` }],
+    ['busca por texto com filtro que começa com "~"', 'Grep', { pattern: 'x', glob: '~/claude/*' }],
   ])('nega %s', (_caso, ferramenta, entrada) => {
     expect(avaliarFerramenta(ferramenta, entrada, pasta)).toEqual({
       acao: 'negar',
@@ -125,6 +153,11 @@ describe('gravação', () => {
       ['pasta com o mesmo começo de nome', `${pasta}-outro/x.txt`],
       ['caminho que não é texto', 42],
       ['caminho ausente', undefined],
+      // No 2.1.332 a gravação chega ao gancho já expandida; o "~" que chegasse cru iria ao cartão como
+      // se fosse uma pasta dentro da do bot.
+      ['caminho que começa com "~"', '~/.bashrc'],
+      ['caminho no "~" de outro usuário', '~root/.bashrc'],
+      ['subida de nível depois de um espaço', ' ../fora/x.txt'],
     ])('nega %s, sem perguntar', (_caso, caminho) => {
       expect(avaliarFerramenta(ferramenta, entradaDe(ferramenta, caminho), pasta)).toEqual({
         acao: 'negar',
@@ -139,6 +172,8 @@ describe('gravação', () => {
       ['uma pasta de configuração dentro de uma subpasta', 'sub/.claude/skills/x/SKILL.md'],
       ['os servidores MCP do projeto', '.mcp.json'],
       ['a configuração alcançada por um caminho torto', 'sub/../.claude/settings.json'],
+      ['a configuração depois de um espaço', ' .claude/settings.json'],
+      ['os servidores MCP com um espaço no fim', '.mcp.json '],
     ])('nega gravar %s, sem perguntar', (_caso, caminho) => {
       expect(avaliarFerramenta(ferramenta, entradaDe(ferramenta, caminho), pasta)).toEqual({
         acao: 'negar',
