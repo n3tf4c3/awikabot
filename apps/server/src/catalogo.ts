@@ -12,8 +12,9 @@ export const MOTOR_CODEX = 'codex';
  * lista não envelhece a cada lançamento. Os esforços são os que o binário fixado na imagem
  * (2.1.330) aceita em `--effort`; valor fora deles o binário ignora, com um aviso.
  *
- * Os papéis são os que o motor exerce hoje: sozinho, um bot é um worker. Orquestrador e decisão
- * entram quando as equipes e os decisores existirem (etapa 7 do `PLANO.md`).
+ * Os papéis são os que o motor exerce hoje: sozinho, um bot é um worker; num turno sem ferramentas,
+ * com a resposta presa a um esquema, o motor é o juiz (`juiz.ts`), o papel de decisão. O
+ * orquestrador entra com as equipes (etapa 7 do `PLANO.md`).
  *
  * O Codex tem a versão 0.172.0 fixada na imagem. Os modelos são os mais novos de cada linha que
  * esse binário listou para a conta da prova em 26/11; os esforços, os que todos esses modelos
@@ -40,7 +41,7 @@ export const CATALOGO: Catalogo = {
         { id: 'xhigh', nome: 'Muito alto' },
         { id: 'max', nome: 'Máximo' },
       ],
-      papeis: ['worker'],
+      papeis: ['worker', 'decisao'],
       pronto: true,
     },
     {
@@ -60,7 +61,7 @@ export const CATALOGO: Catalogo = {
         { id: 'xhigh', nome: 'Muito alto' },
         { id: 'max', nome: 'Máximo' },
       ],
-      papeis: ['worker'],
+      papeis: ['worker', 'decisao'],
       pronto: true,
     },
   ],

@@ -17,6 +17,11 @@ export interface PedidoMotor {
    */
   gancho: Gancho | null;
   aoTexto: (trecho: string) => void;
+  /**
+   * Turno de decisão (o juiz): sem ferramentas, e a resposta final presa a este esquema (JSON
+   * Schema). O driver a devolve crua em `estruturada`; quem confere contra o esquema é quem perguntou.
+   */
+  saida?: { esquema: Record<string, unknown> };
 }
 
 export interface Gancho {
@@ -32,6 +37,8 @@ export interface ResultadoMotor {
   estado: 'completa' | 'parada' | 'falhou';
   texto: string;
   sessao: string | null;
+  /** Num turno de decisão, a resposta final como o motor a entregou: objeto, texto ou nada. */
+  estruturada?: unknown;
 }
 
 export interface TurnoEmCurso {

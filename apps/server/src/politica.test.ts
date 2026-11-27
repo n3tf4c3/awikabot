@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { LIMITES } from '@awikabot/core';
-import { avaliarFerramenta } from './politica';
+import { avaliarFerramenta, avaliarFerramentaDoDecisor } from './politica';
 
 const raiz = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'awikabot-politica-')));
 const pasta = path.join(raiz, 'bot');
@@ -191,5 +191,19 @@ describe('pedidos do Codex', () => {
     ['gravar na configuração do Codex com outra caixa', { file_path: 'sub/.Codex/hooks.json', diff: 'x' }, 'o bot não altera a configuração do motor'],
   ])('nega %s, sem perguntar', (_caso, entrada, motivo) => {
     expect(avaliarFerramenta('Edit', entrada, pasta)).toEqual({ acao: 'negar', motivo });
+  });
+});
+
+describe('turno de um decisor', () => {
+  it('só deixa passar a entrega da resposta presa ao esquema', () => {
+    expect(avaliarFerramentaDoDecisor('StructuredOutput')).toEqual({ acao: 'permitir' });
+  });
+
+  it.each(['Read', 'Glob', 'TodoWrite', 'Bash', 'Write', 'WebSearch', 'mcp__awika__delegar', 'structuredoutput', ''])('nega %s, sem perguntar', (ferramenta) => {
+    expect(avaliarFerramentaDoDecisor(ferramenta)).toEqual({ acao: 'negar', motivo: 'o turno de um decisor não usa ferramentas' });
+  });
+
+  it('num turno de bot, a entrega da resposta não passa sozinha', () => {
+    expect(acao('StructuredOutput', {})).toBe('perguntar');
   });
 });

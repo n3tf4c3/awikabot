@@ -118,6 +118,21 @@ function resumir(ferramenta: string, entrada: Record<string, unknown>, pastaDoBo
 }
 
 /**
+ * Como o Claude Code entrega a resposta presa a um esquema (`--json-schema`): uma ferramenta que só
+ * devolve o resultado, e que passa pelo gancho como as outras.
+ */
+export const FERRAMENTA_DA_RESPOSTA = 'StructuredOutput';
+const DECISOR_SEM_FERRAMENTA = 'o turno de um decisor não usa ferramentas';
+
+/**
+ * O turno de um decisor (o juiz) não usa ferramenta nem pede aprovação: só a entrega da resposta
+ * passa; todo o resto é negado sem cartão. Nada aqui vai para a pessoa.
+ */
+export function avaliarFerramentaDoDecisor(ferramenta: string): Extract<Veredito, { acao: 'permitir' | 'negar' }> {
+  return ferramenta === FERRAMENTA_DA_RESPOSTA ? { acao: 'permitir' } : { acao: 'negar', motivo: DECISOR_SEM_FERRAMENTA };
+}
+
+/**
  * Decide sem a pessoa o que é seguro decidir: leitura dentro da pasta do bot passa; leitura e
  * gravação fora dela, e gravação na configuração do motor, são negadas. Todo o resto, inclusive
  * ferramenta desconhecida, vai para a pessoa.

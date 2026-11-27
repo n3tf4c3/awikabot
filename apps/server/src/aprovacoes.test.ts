@@ -20,7 +20,10 @@ import { expirarPendentesNaPartida, GestorDeAprovacoes } from './aprovacoes';
 import { abrirBanco } from './banco';
 import { criarCodigo, LimitadorDeTentativas } from './dispositivos';
 import { Barramento } from './eventos';
+import { subirEscada } from './decisao';
 import { criarAppDoGancho, Ganchos } from './gancho';
+import { criarJuiz } from './juiz';
+import type { Motor } from './motor';
 import { criarMotorSimulado } from './motor-simulado';
 import { GestorDeTurnos } from './turnos';
 
@@ -275,6 +278,61 @@ describe('o gancho do motor', () => {
     expect((await a.pendentes())[0]?.estado).toBe('pendente');
     a.turnos.pararTodos();
     await a.respostaDoBot();
+  });
+});
+
+describe('decisores e aprovações', () => {
+  const chamar = (porta: number, token: string, corpo: unknown) =>
+    fetch(`http://127.0.0.1:${porta}/gancho`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-awika-turno': token },
+      body: JSON.stringify(corpo),
+    });
+
+  it('o token de um decisor só deixa passar a entrega da resposta, e nada chega a um cartão', async () => {
+    const a = await montar();
+    const token = a.ganchos.registrarDecisor();
+    const ferramentas: [string, Record<string, unknown>][] = [
+      ['Bash', { command: 'echo oi' }],
+      ['Read', { file_path: 'notas.txt' }],
+      ['Write', { file_path: 'notas.txt', content: 'x' }],
+      ['WebSearch', { query: 'awikabot' }],
+      ['mcp__awika__delegar', { worker: 'redator' }],
+    ];
+    for (const [ferramenta, entrada] of ferramentas) {
+      const resposta = await chamar(a.portaDoGancho, token, { tool_name: ferramenta, tool_input: entrada });
+      expect(await resposta.json()).toEqual({ decisao: 'deny', motivo: 'o turno de um decisor não usa ferramentas' });
+    }
+    const entrega = await chamar(a.portaDoGancho, token, { tool_name: 'StructuredOutput', tool_input: { resposta: true, motivo: 'x' } });
+    expect(await entrega.json()).toMatchObject({ decisao: 'allow' });
+    expect(a.doTipo('aprovacao_pedida')).toEqual([]);
+    expect(a.banco.prepare('SELECT COUNT(*) AS n FROM aprovacoes').get()).toEqual({ n: 0 });
+  });
+
+  it('nenhuma decisão vira aprovação: um "sim" do juiz sobre o pedido pendente não o resolve', async () => {
+    const a = await montar();
+    await a.enviar('!comando echo oi');
+    await a.esperar(() => a.doTipo('aprovacao_pedida').length === 1);
+    const [pendente] = await a.pendentes();
+
+    // O juiz responde que a ação pode rodar, pelo caminho de verdade: o gancho do decisor e a escada.
+    const motor: Motor = (pedido) => ({
+      parar: () => {},
+      fim: (async () => {
+        const passagem = await chamar(pedido.gancho!.porta, pedido.gancho!.token, { tool_name: 'StructuredOutput', tool_input: {} });
+        const passou = ((await passagem.json()) as { decisao: string }).decisao === 'allow';
+        return { estado: 'completa' as const, texto: '', sessao: null, ...(passou ? { estruturada: { resposta: true, motivo: 'é só um echo' } } : {}) };
+      })(),
+    });
+    const juiz = criarJuiz({ motor, motorId: 'claude-code', modelo: null, esforco: null, pasta: pastaTemporaria, gancho: { ganchos: a.ganchos, comando: 'x', porta: a.portaDoGancho } });
+    const resultado = await subirEscada([juiz], { tipo: 'afirmacao', enunciado: 'O comando pode rodar.', contexto: pendente!.resumo });
+    expect(resultado).toMatchObject({ quem: 'decisor', decisao: { resposta: true } });
+
+    expect(await a.pendentes()).toEqual([pendente]);
+    expect(a.doTipo('aprovacao_resolvida')).toEqual([]);
+    expect(a.turnos.ativo(a.botId)).toBe(true);
+    a.turnos.pararTodos();
+    expect(await a.respostaDoBot()).not.toMatchObject({ texto: 'Comando permitido: echo oi' });
   });
 });
 

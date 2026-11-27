@@ -144,6 +144,18 @@ describe('chamada do motor', () => {
     expect(args).toContain('--effort=high');
   });
 
+  it('o turno de bot não tira ferramentas nem prende a resposta a um esquema', () => {
+    const { args } = prepararChamada(pedido, { ambiente: {}, ganchoGerenciado: true });
+    expect(args.some((arg) => arg.startsWith('--tools') || arg.startsWith('--json-schema') || arg === '--strict-mcp-config')).toBe(false);
+  });
+
+  it('o turno de decisão roda sem ferramentas nem servidor MCP, com a resposta presa ao esquema', () => {
+    const esquema = { type: 'object', properties: { resposta: { type: 'boolean' } } };
+    const { args } = prepararChamada({ ...pedido, saida: { esquema } }, { ambiente: {}, ganchoGerenciado: true });
+    expect(args).toEqual(expect.arrayContaining(['--tools=', '--strict-mcp-config', `--json-schema=${JSON.stringify(esquema)}`, '--setting-sources=user']));
+    expect(args.filter((arg) => arg !== '-p' && !/^--[a-z-]+(=|$)/.test(arg))).toEqual([]);
+  });
+
   it('sem modelo nem esforço, deixa o padrão do motor', () => {
     const { args } = prepararChamada({ ...pedido, modelo: null, esforco: null }, { ambiente: {}, ganchoGerenciado: true });
     expect(args.some((arg) => arg.startsWith('--model') || arg.startsWith('--effort'))).toBe(false);
