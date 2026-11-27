@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { LIMITES } from '@awikabot/core';
+import { EsquemaAprovacao, LIMITES } from '@awikabot/core';
 import { avaliarFerramenta, avaliarFerramentaDoDecisor } from './politica';
 
 const raiz = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'awikabot-politica-')));
@@ -143,9 +143,16 @@ describe('o que muda alguma coisa', () => {
       expect(avaliarFerramenta('Write', { file_path: 'a.txt', content: 'y'.repeat(limite * 2) }, pasta)).toEqual(GRANDE_DEMAIS);
     });
 
-    it('o conteúdo conta em unidades do contrato: um emoji conta por dois', () => {
-      expect(acao('Bash', { command: '😀'.repeat(limite / 2) })).toBe('perguntar');
-      expect(avaliarFerramenta('Bash', { command: `${'😀'.repeat(limite / 2)}x` }, pasta)).toEqual(GRANDE_DEMAIS);
+    it('o conteúdo conta como no contrato, em caracteres: um emoji vale um, e o resumo aceito passa no esquema', () => {
+      const noLimite = avaliarFerramenta('Bash', { command: '😀'.repeat(limite) }, pasta);
+      expect(noLimite.acao).toBe('perguntar');
+      if (noLimite.acao !== 'perguntar') return;
+      expect(EsquemaAprovacao.shape.resumo.safeParse(noLimite.resumo).success).toBe(true);
+
+      const umAMais = `${'😀'.repeat(limite)}x`;
+      expect(EsquemaAprovacao.shape.resumo.safeParse(umAMais).success).toBe(false);
+      expect(avaliarFerramenta('Bash', { command: umAMais }, pasta)).toEqual(GRANDE_DEMAIS);
+      expect(avaliarFerramenta('Bash', { command: 'x'.repeat(limite * 2 + 1) }, pasta)).toEqual(GRANDE_DEMAIS);
     });
   });
 

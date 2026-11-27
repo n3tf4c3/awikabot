@@ -81,6 +81,18 @@ function padraoContido(padrao: string): boolean {
   );
 }
 
+/**
+ * O limite é o do contrato, na medida dele: o esquema conta caracteres, e um emoji é um caractere,
+ * mesmo ocupando duas unidades no texto do JavaScript. O texto com mais de duas unidades por
+ * caractere do limite nem precisa ser contado.
+ */
+function cabeNoCartao(resumo: string): boolean {
+  const limite = LIMITES.resumoAprovacao;
+  if (resumo.length <= limite) return true;
+  if (resumo.length > limite * 2) return false;
+  return Array.from(resumo).length <= limite;
+}
+
 function texto(valor: unknown): string | null {
   return typeof valor === 'string' && valor.length > 0 ? valor : null;
 }
@@ -198,7 +210,7 @@ export function avaliarFerramenta(ferramenta: string, entrada: Record<string, un
   }
 
   const resumo = resumir(ferramenta, entrada, pastaDoBot);
-  // O limite é o do contrato, na mesma medida dele. Um resumo cortado deixaria a pessoa aprovar a parte que não viu.
-  if (resumo.length > LIMITES.resumoAprovacao) return { acao: 'negar', motivo: GRANDE_DEMAIS };
+  // Um resumo cortado deixaria a pessoa aprovar a parte que não viu.
+  if (!cabeNoCartao(resumo)) return { acao: 'negar', motivo: GRANDE_DEMAIS };
   return { acao: 'perguntar', resumo };
 }
