@@ -13,6 +13,9 @@
 # traz o que devia e o banco dentro dele é a cópia que o servidor conferiu. Se qualquer passo
 # falha, não fica arquivo nem .sha256.
 #
+# Duas execuções ao mesmo tempo não mexem uma na outra: cada uma tem a sua cópia do banco no
+# volume e a sua pasta de trabalho no destino, e o nome final nunca troca um arquivo que já existe.
+#
 # O arquivo leva conversas e arquivos dos bots: cifre antes de tirá-lo do host.
 set -eu
 
@@ -25,8 +28,9 @@ compose() { docker compose "$@"; }
 
 carimbo=$(date -u +%Y%m%dT%H%M%SZ)
 nome="awikabot-$carimbo.tar"
-copia="backup/awikabot-$carimbo.db"
-parcial="$destino/$nome.parcial"
+# O nome da cópia no volume leva o número deste processo: duas execuções no mesmo segundo, até
+# com destinos diferentes, não disputam o mesmo arquivo.
+copia="backup/awikabot-$carimbo-$$.db"
 
 umask 077
 mkdir -p "$destino"
@@ -39,16 +43,36 @@ falhar() {
   exit 1
 }
 
-# Desfaz só o que este script criou: a cópia do banco no volume e o que ficou pela metade.
+# Desfaz só o que esta execução criou: a cópia do banco no volume, depois de o servidor a ter
+# gravado, e a pasta de trabalho no destino. A cópia que o servidor recusou gravar é de outra execução.
+copia_no_volume=nao
+area=
 limpar() {
-  compose exec -T server rm -f "/data/$copia" </dev/null >/dev/null 2>&1 || true
-  rm -f "$parcial" "$parcial.erros" "$parcial.lista" "$parcial.sha256"
+  [ "$copia_no_volume" = nao ] || compose exec -T server rm -f "/data/$copia" </dev/null >/dev/null 2>&1 || true
+  [ -z "$area" ] || rm -rf "$area"
 }
 trap limpar EXIT
+
+# Tudo o que fica pela metade mora numa pasta só desta execução, ao lado do destino.
+area=$(mktemp -d "$destino/.awikabot-backup.XXXXXX")
+parcial="$area/arquivo.tar"
+
+# Dá o nome final sem trocar o que já existe. O link nasce inteiro ou falha; onde o sistema de
+# arquivos não tem link, uma cópia que só cria arquivo novo.
+publicar() {
+  if ln "$1" "$2" 2>/dev/null; then return 0; fi
+  [ ! -e "$2" ] || return 1
+  if (set -C; : >"$2") 2>/dev/null; then
+    cat "$1" >"$2" || { rm -f "$2"; return 1; }
+  else
+    return 1
+  fi
+}
 
 # A cópia do banco, que o servidor abre e confere. O sha256 que ele informa é o que o banco de
 # dentro do arquivo final tem de ter.
 relato=$(compose exec -T server node /app/server.mjs backup "/data/$copia" </dev/null) || falhar "o servidor não copiou o banco"
+copia_no_volume=sim
 printf '%s\n' "$relato"
 banco_esperado=$(printf '%s\n' "$relato" | sed -n 's/.*sha256 \([0-9a-f]\{64\}\).*/\1/p' | head -n 1)
 [ -n "$banco_esperado" ] || falhar "o servidor não informou o sha256 da cópia do banco"
@@ -101,6 +125,7 @@ banco_obtido=$(tar -xOf "$parcial" awikabot.db 2>/dev/null | sha256sum | cut -c1
 # O .sha256 sai dos mesmos bytes conferidos e entra antes do arquivo: um .sha256 sozinho não passa por backup.
 resumo=$(sha256sum "$parcial" | cut -c1-64)
 printf '%s  %s\n' "$resumo" "$nome" >"$parcial.sha256"
-mv "$parcial.sha256" "$destino/$nome.sha256"
-mv "$parcial" "$destino/$nome" || { rm -f "$destino/$nome.sha256"; falhar "o arquivo conferido não pôde ganhar o nome final"; }
+# Se outra execução já gravou um backup com este nome, esta para aqui, sem tocar no dela.
+publicar "$parcial.sha256" "$destino/$nome.sha256" || falhar "já existe um backup com este nome em $destino"
+publicar "$parcial" "$destino/$nome" || { rm -f "$destino/$nome.sha256"; falhar "o arquivo conferido não pôde ganhar o nome final"; }
 echo "Backup gravado em $destino/$nome"
