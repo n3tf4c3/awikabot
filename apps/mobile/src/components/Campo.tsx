@@ -1,5 +1,6 @@
 import { StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native';
 
+import { contarCaracteres, tetoDoCampoNativo } from '@/lib/texto';
 import { cores, espaco } from '@/tema';
 
 interface Props extends Omit<TextInputProps, 'value' | 'onChangeText' | 'style'> {
@@ -10,12 +11,17 @@ interface Props extends Omit<TextInputProps, 'value' | 'onChangeText' | 'style'>
   erro?: string;
   /** Texto de ajuda abaixo do campo. */
   ajuda?: string;
-  /** Mostra "usados/limite" ao lado da ajuda. Exige `maxLength`. */
-  comContador?: boolean;
+  /**
+   * O limite do contrato para este campo, em caracteres. Mostra "usados/limite" ao lado da ajuda,
+   * contando como a validação conta: um emoji é um caractere. O campo nativo conta unidades, então
+   * recebe um teto folgado; quem diz que o texto passou do limite é o erro do formulário.
+   */
+  limite?: number;
 }
 
 /** Rótulo, caixa de texto e a linha de ajuda ou de erro. */
-export function Campo({ rotulo, valor, aoMudar, erro, ajuda, comContador = false, multiline, maxLength, ...resto }: Props) {
+export function Campo({ rotulo, valor, aoMudar, erro, ajuda, limite, multiline, maxLength, ...resto }: Props) {
+  const usados = limite === undefined ? 0 : contarCaracteres(valor);
   return (
     <View style={estilos.campo}>
       <Text style={estilos.rotulo}>{rotulo}</Text>
@@ -25,7 +31,7 @@ export function Campo({ rotulo, valor, aoMudar, erro, ajuda, comContador = false
         value={valor}
         onChangeText={aoMudar}
         multiline={multiline}
-        maxLength={maxLength}
+        maxLength={limite === undefined ? maxLength : tetoDoCampoNativo(limite)}
         placeholderTextColor={cores.textoSuave}
         textAlignVertical={multiline ? 'top' : 'center'}
         style={[estilos.caixa, multiline && estilos.caixaAlta, erro !== undefined && estilos.caixaComErro]}
@@ -39,9 +45,9 @@ export function Campo({ rotulo, valor, aoMudar, erro, ajuda, comContador = false
         ) : (
           <Text style={estilos.detalhe}>{ajuda ?? ''}</Text>
         )}
-        {comContador && maxLength !== undefined ? (
-          <Text style={estilos.contador}>
-            {valor.length}/{maxLength}
+        {limite !== undefined ? (
+          <Text style={[estilos.contador, usados > limite && estilos.contadorExcedido]}>
+            {usados}/{limite}
           </Text>
         ) : null}
       </View>
@@ -91,5 +97,9 @@ const estilos = StyleSheet.create({
   contador: {
     fontSize: 13,
     color: cores.textoSuave,
+  },
+  contadorExcedido: {
+    color: cores.perigo,
+    fontWeight: '600',
   },
 });

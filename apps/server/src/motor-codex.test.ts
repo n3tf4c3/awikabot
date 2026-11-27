@@ -64,7 +64,13 @@ async function turno(
     gancho?: { porta: number };
     gerenciado?: boolean;
     binario?: string;
-    parar?: number;
+    /**
+     * Quando pedir a parada: assim que o primeiro trecho chegar, ou logo depois de o turno ser
+     * pedido, antes de qualquer trecho. Nenhum dos dois depende de quanto o processo demora a subir.
+     */
+    parar?: 'no_primeiro_trecho' | 'antes_de_qualquer_trecho';
+    /** Quanto o Codex de mentira fica calado antes do primeiro trecho do roteiro `lento`. */
+    demoraMs?: number;
     /** Como a caixa de areia responde à prova da partida; sem isto, como na imagem: não sobe. */
     caixa?: 'sobe' | 'outra';
   } = {},
@@ -78,6 +84,7 @@ async function turno(
       ...process.env,
       CODEX_DE_MENTIRA_REGISTRO: registro,
       ...(opcoes.caixa ? { CODEX_DE_MENTIRA_CAIXA: opcoes.caixa } : {}),
+      ...(opcoes.demoraMs ? { CODEX_DE_MENTIRA_DEMORA_MS: String(opcoes.demoraMs) } : {}),
     } as Record<string, string>,
     configuracaoGerenciada: opcoes.gerenciado ?? false,
     prazoDaParadaMs: 3000,
@@ -93,10 +100,13 @@ async function turno(
     esforco: 'high',
     sessao: opcoes.sessao ?? null,
     gancho: opcoes.semGancho ? null : { comando: 'nao-usado', porta: opcoes.gancho?.porta ?? porta, token },
-    aoTexto: (trecho) => trechos.push(trecho),
+    aoTexto: (trecho) => {
+      trechos.push(trecho);
+      if (opcoes.parar === 'no_primeiro_trecho' && trechos.length === 1) emCurso.parar();
+    },
   };
   const emCurso = motor(pedido);
-  if (opcoes.parar !== undefined) setTimeout(() => emCurso.parar(), opcoes.parar);
+  if (opcoes.parar === 'antes_de_qualquer_trecho') emCurso.parar();
   const resultado = await emCurso.fim;
   ganchos.remover(token);
   let linhas: Record<string, unknown>[] = [];
@@ -262,10 +272,29 @@ describe('motor do Codex', () => {
   });
 
   it('parar interrompe o turno e guarda o que já chegou', async () => {
-    const { resultado, recebidas } = await turno('lento', { parar: 300 });
+    // A parada sai quando o primeiro trecho chega, e não depois de um tempo fixo: num computador
+    // lento o processo podia nem ter falado ainda, e o teste reprovava sem o driver ter perdido nada.
+    const { resultado, recebidas, trechos } = await turno('lento', { parar: 'no_primeiro_trecho' });
     expect(resultado.estado).toBe('parada');
+    expect(trechos.length).toBeGreaterThan(0);
+    // O texto guardado é exatamente o que chegou, nem mais nem menos.
+    expect(resultado.texto).toBe(trechos.join(''));
     expect(resultado.texto).toMatch(/^(mais )+$/);
     expect(recebido(recebidas, 'turn/interrupt')).toMatchObject({ threadId: resultado.sessao });
+  });
+
+  it('com o processo lento para falar, a parada espera o primeiro trecho e guarda o que chegou', async () => {
+    // Mais calado do que os 300 ms que o teste antigo esperava antes de parar: ali o texto vinha vazio.
+    const { resultado, trechos } = await turno('lento', { parar: 'no_primeiro_trecho', demoraMs: 600 });
+    expect(resultado.estado).toBe('parada');
+    expect(resultado.texto).toBe(trechos.join(''));
+    expect(resultado.texto).toMatch(/^(mais )+$/);
+  });
+
+  it('parar antes de qualquer trecho encerra o turno como parado, com o texto que chegou até ali', async () => {
+    const { resultado, trechos } = await turno('lento', { parar: 'antes_de_qualquer_trecho' });
+    expect(resultado.estado).toBe('parada');
+    expect(resultado.texto).toBe(trechos.join(''));
   });
 
   it('a falha de login vira uma resposta que diz só a classe do erro', async () => {

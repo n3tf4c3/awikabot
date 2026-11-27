@@ -293,3 +293,39 @@ fn mandar_parar_com_a_conexao_aberta_nao_entrega_o_que_chega_depois() {
     assert_eq!(fluxo.fim(), FimDoFluxo::Parado);
     assert_eq!(servidor.pedidos().len(), 1, "parado, o fluxo não reconecta");
 }
+
+/// O servidor de mentira só responde depois de receber o corpo inteiro do pedido. Se respondesse e
+/// fechasse a conexão com o corpo por ler, o sistema mandaria um RST, e um POST cujo corpo chega
+/// depois dos cabeçalhos perdia a resposta de vez em quando: foi o que reprovou um teste da janela na CI.
+#[test]
+fn o_servidor_de_mentira_espera_o_corpo_do_pedido_antes_de_responder() {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+
+    let servidor = ServidorFalso::subir(|_, _| RespostaFalsa::json(200, r#"{"ok":true}"#));
+    let endereco = servidor.base.trim_start_matches("http://");
+    let mut conexao = TcpStream::connect(endereco).expect("conexão com o servidor de mentira");
+    let corpo = br#"{"decisao":"negar"}"#;
+    let cabecalhos =
+        format!("POST /v1/aprovacoes/aprovacao0000002 HTTP/1.1\r\nhost: {endereco}\r\ncontent-length: {}\r\n\r\n", corpo.len());
+    conexao.write_all(cabecalhos.as_bytes()).expect("cabeçalhos enviados");
+    conexao.flush().expect("cabeçalhos entregues");
+
+    // Com o corpo ainda por vir, nada de resposta.
+    conexao.set_read_timeout(Some(ms(300))).expect("prazo de leitura");
+    let mut antes_do_corpo = [0u8; 16];
+    let lido = conexao.read(&mut antes_do_corpo);
+    assert!(
+        matches!(&lido, Err(erro) if matches!(erro.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut)),
+        "o servidor respondeu antes de receber o corpo: {lido:?}"
+    );
+
+    // Chegou o corpo: a resposta vem inteira.
+    conexao.write_all(corpo).expect("corpo enviado");
+    conexao.set_read_timeout(Some(ms(5000))).expect("prazo de leitura");
+    let mut resposta = String::new();
+    conexao.read_to_string(&mut resposta).expect("resposta lida até o fim");
+    assert!(resposta.starts_with("HTTP/1.1 200 "), "resposta: {resposta}");
+    assert!(resposta.ends_with(r#"{"ok":true}"#), "resposta: {resposta}");
+    assert_eq!(servidor.pedidos().len(), 1);
+}

@@ -15,7 +15,8 @@
 //                      no contêiner); o modelo pede de novo, com aprovação
 //   busca              pesquisa na web, que não pede aprovação
 //   entrada            pede uma entrada do usuário, que o awikabot não tem
-//   lento              fala sem parar até o turno ser interrompido
+//   lento              fala sem parar até o turno ser interrompido; com CODEX_DE_MENTIRA_DEMORA_MS,
+//                      fica esse tempo calado antes do primeiro trecho, como um processo lento para subir
 //   falha              o turno falha por falta de login
 //
 // Um turno com `outputSchema` é o do juiz e não segue roteiro: responde CODEX_DE_MENTIRA_RESPOSTA
@@ -170,6 +171,7 @@ async function rodarTurno(texto: string): Promise<void> {
     await falar(resposta.error ? 'sem entrada' : 'com entrada', 'msg-final');
   } else if (roteiro === 'lento') {
     avisar('item/started', { threadId: thread, turnId: turno, item: { type: 'agentMessage', id: 'msg-lento', text: '' } });
+    await depois(Number(process.env.CODEX_DE_MENTIRA_DEMORA_MS ?? 0));
     while (!interrompido) {
       avisar('item/agentMessage/delta', { threadId: thread, turnId: turno, itemId: 'msg-lento', delta: 'mais ' });
       await depois(10);
