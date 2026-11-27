@@ -111,7 +111,7 @@ function iniciarServidor(pasta, ambiente) {
   return servico;
 }
 
-/** Roda um subcomando do servidor (`parear`, `backup`, `saude`, `julgar`) e devolve a saída e o código. */
+/** Roda um subcomando do servidor (`parear`, `backup`, `revogar-todos`, `saude`, `julgar`) e devolve a saída e o código. */
 function comandoDoServidor(args, ambiente = local.ambiente, entrada = '') {
   return spawnSync(process.execPath, ['dist/server.mjs', ...args], { cwd: local.servidor, env: ambiente, encoding: 'utf8', input: entrada });
 }
@@ -383,6 +383,11 @@ try {
           gravaDentro.pedidas.length === 1 && gravaDentro.pedidas[0].aprovacao.resumo === 'Gravar o arquivo notas.txt\n\nconteúdo de teste'
           && gravaDentro.resposta?.texto === 'Gravação permitida: notas.txt',
           `${gravaDentro.pedidas.length} pedido(s), resposta "${gravaDentro.resposta?.texto}"`);
+        // O cartão leva até 4.000 caracteres, e a aprovação libera a ação inteira: a que não cabe não é perguntada.
+        const longo = await turnoCom(`!comando echo ${'x'.repeat(4000)}; rm -rf fim-que-o-cartao-nao-mostraria`, 'aprovar');
+        registrar('F4', 'ação que não cabe inteira no cartão é negada sem cartão',
+          longo.pedidas.length === 0 && longo.resposta?.texto === 'Comando negado: a ação não cabe inteira no cartão de aprovação; divida-a em partes menores',
+          `${longo.pedidas.length} pedido(s), resposta "${longo.resposta?.texto}"`);
 
         // O lado do gancho que o motor executa: sem servidor para perguntar, nega.
         const gancho = spawnSync(process.execPath, ['dist/server.mjs', 'gancho'], {
@@ -457,16 +462,28 @@ try {
         extras.pastas.push(restaurada);
         copyFileSync(copia, path.join(restaurada, 'awikabot.db'));
         const baseRestaurada = `http://127.0.0.1:${PORTA + 2}`;
-        const segundo = iniciarServidor(local.servidor, { ...local.ambiente, AWIKA_PORTA: String(PORTA + 2), AWIKA_PORTA_GANCHO: String(PORTA + 3), AWIKA_DADOS: restaurada });
+        const ambienteRestaurado = { ...local.ambiente, AWIKA_PORTA: String(PORTA + 2), AWIKA_PORTA_GANCHO: String(PORTA + 3), AWIKA_DADOS: restaurada };
+        // Como o `deploy/restaurar.sh`: antes de o servidor restaurado subir, todo aparelho do backup sai.
+        // O arquivo não sabe quem foi revogado depois da cópia.
+        const revogacao = comandoDoServidor(['revogar-todos'], ambienteRestaurado);
+        const segundo = iniciarServidor(local.servidor, ambienteRestaurado);
         extras.processos.push(segundo);
         const subiu = await esperar(() => responde(baseRestaurada), 10_000);
+        const comTokenDoBackup = subiu ? await pedir('/v1/bots', { token, base: baseRestaurada }) : { status: 0, corpo: null };
+        registrar('O1', 'o aparelho do backup não entra no servidor restaurado',
+          revogacao.status === 0 && /aparelho\(s\) revogado\(s\)/.test(revogacao.stdout) && comTokenDoBackup.status === 401,
+          `revogar-todos: saída ${revogacao.status}; pedido com o token do backup: status ${comTokenDoBackup.status}`);
+
+        const codigoNovo = /[A-Z2-7]{4}-[A-Z2-7]{4}-[A-Z2-7]{4}/.exec(comandoDoServidor(['parear'], ambienteRestaurado).stdout ?? '')?.[0];
+        const pareadoDeNovo = subiu && codigoNovo ? await pedir('/v1/parear', { corpo: { codigo: codigoNovo, nome: 'Runbook restaurado' }, base: baseRestaurada }) : { status: 0, corpo: null };
+        const tokenNovo = pareadoDeNovo.corpo?.token;
         const original = await pedir(`/v1/bots/${botId}/mensagens`, { token });
-        const copiada = subiu ? await pedir(`/v1/bots/${botId}/mensagens`, { token, base: baseRestaurada }) : { status: 0, corpo: null };
-        const botsCopiados = subiu ? await pedir('/v1/bots', { token, base: baseRestaurada }) : { status: 0, corpo: null };
+        const copiada = tokenNovo ? await pedir(`/v1/bots/${botId}/mensagens`, { token: tokenNovo, base: baseRestaurada }) : { status: 0, corpo: null };
+        const botsCopiados = tokenNovo ? await pedir('/v1/bots', { token: tokenNovo, base: baseRestaurada }) : { status: 0, corpo: null };
         const textos = (lista) => JSON.stringify(lista.corpo?.mensagens?.map((m) => [m.seq, m.estado, m.texto]));
         registrar('O1', 'restaurar o backup numa pasta nova',
           subiu && copiada.status === 200 && botsCopiados.corpo?.bots?.length === 2 && original.corpo.mensagens.length >= 4 && textos(copiada) === textos(original),
-          `servidor restaurado ${subiu ? 'no ar' : 'não subiu'}; o mesmo aparelho entra: status ${copiada.status}; ${botsCopiados.corpo?.bots?.length} bots e ${copiada.corpo?.mensagens?.length} mensagens iguais às do original: ${textos(copiada) === textos(original)}`);
+          `servidor restaurado ${subiu ? 'no ar' : 'não subiu'}; o aparelho pareado de novo entra: status ${copiada.status}; ${botsCopiados.corpo?.bots?.length} bots e ${copiada.corpo?.mensagens?.length} mensagens iguais às do original: ${textos(copiada) === textos(original)}`);
       }
     }
   }

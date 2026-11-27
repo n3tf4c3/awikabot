@@ -18,7 +18,7 @@ pnpm verificar
 O comando faz os cinco passos e sai com código diferente de zero se algo falhar:
 
 1. **Subir**: empacota o servidor (`apps/server/build.mjs`) e inicia `dist/server.mjs` em `127.0.0.1:8795`, com o motor simulado e um banco descartável numa pasta temporária. Outra porta: `AWIKA_VERIFICAR_PORTA`. Recusa começar se a porta já responde.
-2. **Dirigir**: os fluxos F0 a F5 e O1 e O2 do mapa, pelo lado do servidor: saúde, pareamento com código gerado pelo comando `parear`, criar e editar um bot, um turno com resposta aos poucos, a parada de um turno, e a aprovação: ação aprovada, ação negada, leitura fora da pasta do bot, gravação fora da pasta e na configuração do motor, e o gancho sem servidor. Depois mata o servidor no meio de um turno, sobe de novo com os mesmos dados e confere o histórico. Por fim, faz o backup com o servidor no ar e o restaura numa pasta nova, com um segundo servidor nas duas portas seguintes.
+2. **Dirigir**: os fluxos F0 a F5 e O1 e O2 do mapa, pelo lado do servidor: saúde, pareamento com código gerado pelo comando `parear`, criar e editar um bot, um turno com resposta aos poucos, a parada de um turno, e a aprovação: ação aprovada, ação negada, leitura fora da pasta do bot, gravação fora da pasta e na configuração do motor, a ação que não cabe inteira no cartão, e o gancho sem servidor. Depois mata o servidor no meio de um turno, sobe de novo com os mesmos dados e confere o histórico. Por fim, faz o backup com o servidor no ar e o restaura numa pasta nova, com um segundo servidor nas duas portas seguintes: revoga os aparelhos com `revogar-todos`, como o `restaurar.sh`, confere que o token do backup é recusado e que um pareamento novo vê os mesmos bots e mensagens.
 3. **Observar**: status e corpo de cada resposta, e os eventos do fluxo `/v1/eventos`, contra o resultado esperado do mapa.
 4. **Encerrar**: fecha o fluxo, derruba o processo, apaga o banco temporário e confere que a porta ficou livre.
 5. **Relatar**: uma linha por verificação e a lista do que não foi verificado.
@@ -77,8 +77,8 @@ C="docker compose -f deploy/compose.yaml"
    ```
 
    Esperado: em até dois minutos o `RestartCount` sobe em um e `/healthz` volta a responder.
-3. **Backup (O1)**: `sh deploy/backup.sh <pasta>`. Esperado: um `.tar` e o `.sha256` dele; `tar -tf` não lista nenhum arquivo de login; nenhuma cópia do banco fica em `/data/backup`.
-4. **Restauração (O1)**: em outro projeto, com volume novo, `sh deploy/restaurar.sh <arquivo.tar>` e `$C up -d`. Esperado: os mesmos bots e as mesmas conversas do servidor de origem, com o token do mesmo aparelho. Repetir o comando com o servidor no ar e depois com ele parado: os dois são recusados. Para conferir que o bot lembra da conversa, o volume restaurado precisa do login do motor.
+3. **Backup (O1)**: `sh deploy/backup.sh <pasta>`. Esperado: um `.tar` e o `.sha256` dele, que confere; `tar -tf` não lista nenhum arquivo de login; nenhuma cópia do banco fica em `/data/backup`. Com o servidor parado (`$C stop server`), o mesmo comando sai com erro e a pasta fica sem arquivo e sem `.sha256`. Os defeitos do empacotamento, um por vez, são do `sh deploy/testes/testar.sh`, que não usa Docker.
+4. **Restauração (O1)**: em outro projeto, com volume novo, `sh deploy/restaurar.sh <arquivo.tar>` e `$C up -d`. Esperado: o script diz que os aparelhos do backup foram revogados; o token do aparelho de origem recebe 401; depois de parear de novo (`$C exec -T server node /app/server.mjs parear`), aparecem os mesmos bots e as mesmas conversas do servidor de origem. Repetir o comando com o servidor no ar e depois com ele parado: os dois são recusados. Para conferir que o bot lembra da conversa, o volume restaurado precisa do login do motor.
 5. **Encerrar**: `$C down -v` nos projetos de ensaio e apagar a pasta do backup, que tem conversas.
 
 ## App de desktop
