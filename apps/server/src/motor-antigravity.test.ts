@@ -62,7 +62,11 @@ async function turno(
     semGancho?: boolean;
     gancho?: { porta: number };
     binario?: string;
-    parar?: number;
+    /**
+     * Quando pedir a parada: assim que o primeiro trecho chegar, ou logo depois de o turno ser
+     * pedido, antes de qualquer trecho. Nenhum dos dois depende de quanto o processo demora a subir.
+     */
+    parar?: 'no_primeiro_trecho' | 'antes_de_qualquer_trecho';
     modelo?: string;
     ambiente?: Record<string, string>;
   } = {},
@@ -88,10 +92,13 @@ async function turno(
     esforco: 'high',
     sessao: opcoes.sessao ?? null,
     gancho: opcoes.semGancho ? null : { comando: 'nao-usado', porta: opcoes.gancho?.porta ?? porta, token },
-    aoTexto: (trecho) => trechos.push(trecho),
+    aoTexto: (trecho) => {
+      trechos.push(trecho);
+      if (opcoes.parar === 'no_primeiro_trecho' && trechos.length === 1) emCurso.parar();
+    },
   };
   const emCurso = motor(pedido);
-  if (opcoes.parar !== undefined) setTimeout(() => emCurso.parar(), opcoes.parar);
+  if (opcoes.parar === 'antes_de_qualquer_trecho') emCurso.parar();
   const resultado = await emCurso.fim;
   ganchos.remover(token);
   let linhas: Record<string, unknown>[] = [];
@@ -328,10 +335,21 @@ describe('motor do Antigravity', () => {
   });
 
   it('parar cancela o turno e guarda o que já chegou', async () => {
-    const { resultado, recebidas } = await turno('lento', { parar: 300 });
+    // A parada sai quando o primeiro trecho chega, e não depois de um tempo fixo: num computador
+    // lento o processo podia nem ter falado ainda, e o teste reprovava sem o driver ter perdido nada.
+    const { resultado, recebidas, trechos } = await turno('lento', { parar: 'no_primeiro_trecho' });
     expect(resultado.estado).toBe('parada');
+    expect(trechos.length).toBeGreaterThan(0);
+    // O texto guardado é exatamente o que chegou, nem mais nem menos.
+    expect(resultado.texto).toBe(trechos.join(''));
     expect(resultado.texto).toMatch(/^(mais )+$/);
     expect(recebido(recebidas, 'session/cancel')).toEqual({ sessionId: resultado.sessao });
+  });
+
+  it('parar antes de qualquer trecho encerra o turno como parado, com o texto que chegou até ali', async () => {
+    const { resultado, trechos } = await turno('lento', { parar: 'antes_de_qualquer_trecho' });
+    expect(resultado.estado).toBe('parada');
+    expect(resultado.texto).toBe(trechos.join(''));
   });
 
   it('a falha de login vira uma resposta que diz só a classe do erro', async () => {
