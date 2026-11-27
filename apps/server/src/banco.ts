@@ -64,7 +64,15 @@ const MIGRACOES: string[] = [
   ALTER TABLE bots ADD COLUMN motor TEXT NOT NULL DEFAULT 'claude-code';
   ALTER TABLE bots ADD COLUMN esforco TEXT;
   `,
+  // Cada página do histórico busca os pedidos resolvidos das mensagens dela. Sem este índice, a busca
+  // percorre as aprovações de todas as conversas, com o servidor inteiro esperando.
+  `
+  CREATE INDEX aprovacoes_por_mensagem ON aprovacoes (mensagem_id);
+  `,
 ];
+
+/** A versão do esquema que este servidor grava: o `user_version` depois de todas as migrações. */
+export const VERSAO_DO_ESQUEMA = MIGRACOES.length;
 
 /** `ate` aplica só as primeiras migrações: serve ao teste que abre um banco de uma versão anterior. */
 export function abrirBanco(arquivo: string, ate = MIGRACOES.length): Banco {

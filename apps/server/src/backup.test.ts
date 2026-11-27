@@ -4,7 +4,7 @@ import { copyFileSync, existsSync, mkdtempSync, mkdirSync, readdirSync, readFile
 import { afterAll, describe, expect, it } from 'vitest';
 import { normalizarCodigoPareamento } from '@awikabot/core';
 import { BackupRecusado, conferirBanco, fazerBackup } from './backup';
-import { abrirBanco } from './banco';
+import { abrirBanco, VERSAO_DO_ESQUEMA } from './banco';
 import { criarBot, listarBots } from './bots';
 import { inserirMensagem, listarMensagens } from './conversa';
 import { autenticar, criarCodigo, listarDispositivos, parear, revogar, revogarTodos } from './dispositivos';
@@ -32,7 +32,7 @@ describe('backup do banco', () => {
     const destino = path.join(pasta, 'copias', 'a.db');
 
     const resumo = fazerBackup(origem.banco, destino);
-    expect(resumo).toMatchObject({ arquivo: destino, versaoDoEsquema: 3, bots: 1, mensagens: 2, aparelhosAtivos: 1 });
+    expect(resumo).toMatchObject({ arquivo: destino, versaoDoEsquema: VERSAO_DO_ESQUEMA, bots: 1, mensagens: 2, aparelhosAtivos: 1 });
     expect(resumo.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(resumo.bytes).toBe(readFileSync(destino).length);
 
@@ -163,7 +163,7 @@ describe('backup do banco', () => {
     origem.banco.close();
     const antes = readFileSync(copia);
 
-    expect(conferirBanco(copia)).toEqual({ versaoDoEsquema: 3, bots: 1, mensagens: 2, aparelhosAtivos: 1 });
+    expect(conferirBanco(copia)).toEqual({ versaoDoEsquema: VERSAO_DO_ESQUEMA, bots: 1, mensagens: 2, aparelhosAtivos: 1 });
     expect(readFileSync(copia).equals(antes)).toBe(true);
     expect(readdirSync(path.dirname(copia))).toEqual(['a.db']);
 

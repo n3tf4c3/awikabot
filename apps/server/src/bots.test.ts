@@ -4,7 +4,7 @@ import path from 'node:path';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { afterAll, describe, expect, it } from 'vitest';
 import { EsquemaBot, EsquemaCatalogo, MOTOR_PADRAO } from '@awikabot/core';
-import { abrirBanco } from './banco';
+import { abrirBanco, VERSAO_DO_ESQUEMA } from './banco';
 import { criarBot, editarBot, listarBots, obterBot, paraContrato } from './bots';
 import { CATALOGO, esforcoValido, MOTOR_ANTIGRAVITY, MOTOR_CODEX, motorDoCatalogo, motorParaCriarBot } from './catalogo';
 import { Barramento } from './eventos';
@@ -30,7 +30,7 @@ describe('bot criado antes do motor por bot', () => {
     antigo.close();
 
     const banco = abrirBanco(arquivo);
-    expect((banco.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(VERSAO_SEM_MOTOR + 1);
+    expect((banco.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(VERSAO_DO_ESQUEMA);
     const bot = obterBot(banco, 'abcdefgh12345678');
     expect(bot).toEqual({
       id: 'abcdefgh12345678',
