@@ -1,9 +1,9 @@
 import os from 'node:os';
 import path from 'node:path';
-import { copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { afterAll, describe, expect, it } from 'vitest';
 import { normalizarCodigoPareamento } from '@awikabot/core';
-import { BackupRecusado, fazerBackup } from './backup';
+import { BackupRecusado, conferirBanco, fazerBackup } from './backup';
 import { abrirBanco } from './banco';
 import { criarBot, listarBots } from './bots';
 import { inserirMensagem, listarMensagens } from './conversa';
@@ -107,9 +107,73 @@ describe('backup do banco', () => {
 
   it('não deixa arquivo pela metade quando a cópia falha', () => {
     const origem = bancoComDados('falha');
-    const destino = path.join(pasta, 'falha.db');
+    const destino = path.join(pasta, 'falha-copias', 'falha.db');
     origem.banco.close();
     expect(() => fazerBackup(origem.banco, destino)).toThrow();
     expect(existsSync(destino)).toBe(false);
+    expect(readdirSync(path.dirname(destino))).toEqual([]);
+  });
+
+  it('a cópia boa não deixa a pasta de trabalho da execução ao lado dela', () => {
+    const origem = bancoComDados('limpa');
+    const destino = path.join(pasta, 'limpa-copias', 'a.db');
+    try {
+      fazerBackup(origem.banco, destino);
+      expect(readdirSync(path.dirname(destino))).toEqual(['a.db']);
+    } finally {
+      origem.banco.close();
+    }
+  });
+
+  // Duas execuções com o mesmo destino: as duas passam pela conferência de que o destino não existe,
+  // e a outra termina primeiro. A que perde é recusada e não pode apagar nem trocar a cópia da outra.
+  it('a execução que perde a corrida pelo destino não apaga a cópia da que ganhou', () => {
+    const origem = bancoComDados('corrida');
+    const destino = path.join(pasta, 'corrida-copias', 'a.db');
+    const daOutra = 'cópia que a outra execução terminou primeiro';
+    // A outra execução grava o destino depois da conferência desta e antes de ela copiar o banco.
+    const comRival = new Proxy(origem.banco, {
+      get(alvo, nome) {
+        if (nome !== 'prepare') return Reflect.get(alvo, nome, alvo) as unknown;
+        return (sql: string) => {
+          const consulta = alvo.prepare(sql);
+          if (!sql.startsWith('VACUUM INTO')) return consulta;
+          return {
+            run: (arquivo: string) => {
+              writeFileSync(destino, daOutra);
+              return consulta.run(arquivo);
+            },
+          };
+        };
+      },
+    });
+    try {
+      expect(() => fazerBackup(comRival, destino)).toThrow(BackupRecusado);
+      expect(readFileSync(destino, 'utf8')).toBe(daOutra);
+      expect(readdirSync(path.dirname(destino))).toEqual(['a.db']);
+    } finally {
+      origem.banco.close();
+    }
+  });
+
+  it('confere um banco sem gravar nada nele, e recusa o que não é um banco inteiro', () => {
+    const origem = bancoComDados('conferencia');
+    const copia = path.join(pasta, 'conferencia-copias', 'a.db');
+    fazerBackup(origem.banco, copia);
+    origem.banco.close();
+    const antes = readFileSync(copia);
+
+    expect(conferirBanco(copia)).toEqual({ versaoDoEsquema: 3, bots: 1, mensagens: 2, aparelhosAtivos: 1 });
+    expect(readFileSync(copia).equals(antes)).toBe(true);
+    expect(readdirSync(path.dirname(copia))).toEqual(['a.db']);
+
+    const cortado = path.join(pasta, 'conferencia-copias', 'cortado.db');
+    writeFileSync(cortado, antes.subarray(0, antes.length - 8192));
+    expect(() => conferirBanco(cortado)).toThrow();
+    const lixo = path.join(pasta, 'conferencia-copias', 'lixo.db');
+    writeFileSync(lixo, 'isto não é um banco');
+    expect(() => conferirBanco(lixo)).toThrow();
+    expect(() => conferirBanco(path.join(pasta, 'conferencia-copias', 'nao-existe.db'))).toThrow(BackupRecusado);
+    expect(existsSync(path.join(pasta, 'conferencia-copias', 'nao-existe.db'))).toBe(false);
   });
 });

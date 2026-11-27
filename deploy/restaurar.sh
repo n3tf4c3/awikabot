@@ -7,6 +7,10 @@
 # conversas do motor que vêm no arquivo: nunca escreve por cima de um servidor com
 # dados. O volume pode já ter o login dos motores, que não vem no backup.
 #
+# O arquivo é extraído e conferido numa pasta à parte, dentro do volume, e só depois
+# vai para o lugar. Se a extração ou uma conferência falha, o volume fica como estava
+# e a restauração pode ser tentada de novo.
+#
 # Todo aparelho pareado no backup sai revogado: o arquivo não sabe quem foi revogado
 # depois da cópia. Cada aparelho pareia de novo, com o comando `parear`.
 #
@@ -22,23 +26,53 @@ aqui=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 # Outro arquivo de compose, ou um a mais, entra por COMPOSE_FILE, como no próprio Docker Compose.
 export COMPOSE_FILE="${COMPOSE_FILE:-$aqui/compose.yaml}"
 compose() { docker compose "$@"; }
+# Um contêiner novo do serviço, com o volume, sem subir o servidor.
+no_volume() { compose run --rm -T --no-deps "$@"; }
 
+recusar() {
+  echo "$1; nada foi restaurado" >&2
+  exit 1
+}
+
+# A pasta à parte, dentro do volume, onde o arquivo é extraído e conferido. Só esta execução a usa.
+area=".restaurando-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+area_no_volume=nao
+anotacoes=
+# Desfaz só o que esta execução criou: as anotações no host e a pasta à parte no volume.
+limpar() {
+  [ -z "$anotacoes" ] || rm -rf "$anotacoes"
+  [ "$area_no_volume" = nao ] || no_volume --entrypoint rm server -rf "/data/$area" </dev/null >/dev/null 2>&1 || true
+}
+trap limpar EXIT
+anotacoes=$(mktemp -d)
+lista="$anotacoes/lista"
+
+# O .sha256 vale pelos bytes do arquivo escolhido, não pelo nome escrito dentro dele: o nome
+# poderia apontar para outro arquivo da mesma pasta, e o escolhido passaria sem conferência.
 if [ -f "$arquivo.sha256" ]; then
-  (cd "$(dirname -- "$arquivo")" && sha256sum -c "$(basename -- "$arquivo").sha256" >/dev/null) \
-    || { echo "o arquivo não confere com o .sha256 dele" >&2; exit 1; }
+  [ "$(grep -c '' "$arquivo.sha256")" -eq 1 ] || recusar "o .sha256 do arquivo não tem exatamente uma linha"
+  esperado=$(sed -n 's/^\([0-9a-f]\{64\}\) [ *].*$/\1/p' "$arquivo.sha256")
+  [ -n "$esperado" ] || recusar "o .sha256 do arquivo não tem o formato esperado"
+  obtido=$(sha256sum <"$arquivo" | cut -c1-64)
+  [ "$obtido" = "$esperado" ] || recusar "o arquivo não confere com o .sha256 dele"
 else
   echo "aviso: sem $arquivo.sha256; a integridade do arquivo não foi conferida" >&2
 fi
 
+# O arquivo é listado uma vez, até o fim, e tem de terminar com a marca de fim do tar: uma listagem
+# que falha no meio não pode passar por arquivo com poucas entradas.
+tar -tf "$arquivo" >"$lista" 2>/dev/null || recusar "o arquivo não é um tar legível até o fim"
+[ "$(tail -c 1024 "$arquivo" | tr -d '\000' | wc -c)" -eq 0 ] || recusar "o arquivo não termina com a marca de fim do tar"
+
 # O arquivo só pode trazer o que o backup.sh põe nele. Qualquer outra entrada, como um
 # arquivo de configuração do motor, faz a restauração ser recusada antes de tocar no volume.
-estranhas=$(tar -tf "$arquivo" | awk '
+estranhas=$(awk '
   $0 ~ /(^|\/)\.\.(\/|$)/ { print; next }
   $0 == "awikabot.db" || $0 == "trabalho" || index($0, "trabalho/") == 1 { next }
   $0 == "claude/projects" || index($0, "claude/projects/") == 1 { next }
   $0 == "codex/sessions" || index($0, "codex/sessions/") == 1 { next }
   { print }
-' | head -n 3)
+' "$lista" | head -n 3)
 if [ -n "$estranhas" ]; then
   echo "o arquivo traz entradas que um backup do awikabot não tem; nada foi restaurado. Primeiras:" >&2
   printf '%s\n' "$estranhas" >&2
@@ -53,45 +87,65 @@ fi
 # O que o arquivo traz, no nível que identifica cada coisa: o banco, a pasta de cada bot e a
 # conversa de cada bot (no Codex, cada arquivo de conversa). Se qualquer um já existe no volume,
 # nada é restaurado.
-itens=$(tar -tf "$arquivo" | awk -F/ '
+itens=$(awk -F/ '
   $1 == "awikabot.db" { print $1 }
   $1 == "trabalho" && $2 != "" { print $1 "/" $2 }
   $1 == "claude" && $2 == "projects" && $3 != "" { print $1 "/" $2 "/" $3 }
   $1 == "codex" && $2 == "sessions" && NF > 3 && $NF != "" { print }
-' | sort -u)
+' "$lista" | sort -u)
 printf '%s\n' "$itens" | grep -qx 'awikabot.db' || { echo "o arquivo não tem o banco; não parece um backup do awikabot" >&2; exit 1; }
 
 # shellcheck disable=SC2016
-livre='while IFS= read -r item; do [ ! -e "/data/$item" ] || exit 1; done'
-if ! printf '%s\n' "$itens" | compose run --rm -T --no-deps --entrypoint sh server -c "$livre"; then
+livre='while IFS= read -r item; do [ ! -e "/data/$item" ] || exit 1; done
+for sobra in /data/.restaurando-*; do
+  [ ! -e "$sobra" ] || echo "aviso: o volume tem a sobra de uma restauração interrompida: $sobra" >&2
+done'
+if ! printf '%s\n' "$itens" | no_volume --entrypoint sh server -c "$livre"; then
   echo "o volume já tem o banco, uma pasta de bot ou uma conversa do motor deste backup; restaure só num volume sem esses dados" >&2
   exit 1
 fi
 
-# Do momento em que o banco entra no volume até a revogação passar, o volume guarda aparelhos que
-# podem já ter sido revogados no servidor de origem. Se o script parar nesse intervalo, avisa.
-revogar='docker compose run --rm --no-deps server revogar-todos'
-banco_no_volume=nao
-aparelhos_revogados=nao
-avisar() {
-  if [ "$banco_no_volume" = sim ] && [ "$aparelhos_revogados" = nao ]; then
-    echo "ATENÇÃO: o volume pode ter recebido o banco do backup, e os aparelhos pareados nele ainda valem." >&2
-    echo "Não suba o servidor antes de rodar, com o mesmo projeto e o mesmo arquivo de compose: $revogar" >&2
-  fi
-}
-trap avisar EXIT
-
-# -k: se, apesar da conferência, algum arquivo já existir, o tar para em vez de trocá-lo.
-membros=$(tar -tf "$arquivo" | awk -F/ '$1 == "awikabot.db" || $1 == "trabalho" { print $1 } $1 == "claude" { print "claude/projects" } $1 == "codex" { print "codex/sessions" }' | sort -u)
-banco_no_volume=sim
+# A extração vai para a pasta à parte. Uma falha de leitura ou de espaço no meio dela não deixa
+# nada no lugar do banco nem das pastas dos bots.
+membros=$(awk -F/ '$1 == "awikabot.db" || $1 == "trabalho" { print $1 } $1 == "claude" { print "claude/projects" } $1 == "codex" { print "codex/sessions" }' "$lista" | sort -u)
+area_no_volume=sim
+# shellcheck disable=SC2016
+extrair='area=$1; shift; mkdir "/data/$area" && exec tar -C "/data/$area" -xf - "$@"'
 # shellcheck disable=SC2086
-compose run --rm -T --no-deps --entrypoint tar server -C /data -k -xf - $membros <"$arquivo"
+no_volume --entrypoint sh server -c "$extrair" sh "$area" $membros <"$arquivo" \
+  || recusar "a extração do arquivo falhou, e o volume ficou como estava"
+
+# O banco extraído é aberto e conferido inteiro antes de ir para o lugar.
+no_volume server conferir-banco "/data/$area/awikabot.db" </dev/null \
+  || recusar "o banco do arquivo não passou na conferência, e o volume ficou como estava"
 
 # O backup traz os aparelhos pareados como estavam no dia da cópia: um aparelho revogado depois
 # dela voltaria a entrar com o token antigo. Não há registro das revogações fora do banco, então
-# todos saem antes de o servidor subir, e cada aparelho pareia de novo.
-compose run --rm -T --no-deps server revogar-todos </dev/null
-aparelhos_revogados=sim
+# todos saem, ainda na pasta à parte: o banco só chega ao lugar já sem aparelho ativo.
+no_volume -e "AWIKA_DADOS=/data/$area" server revogar-todos </dev/null \
+  || recusar "não foi possível revogar os aparelhos do backup, e o volume ficou como estava"
+
+# A troca para o lugar é só de nome, dentro do mesmo volume, com o banco por último. Se um item
+# não puder ir, os que já foram voltam para a pasta à parte.
+# shellcheck disable=SC2016
+promover='cd "/data/$1" || exit 1
+[ ! -s awikabot.db-wal ] || { echo "o banco extraído ficou com gravação pendente" >&2; exit 1; }
+rm -f awikabot.db-wal awikabot.db-shm
+: >.movidos
+desfazer() {
+  while IFS= read -r feito; do mv "/data/$feito" "/data/$1/$feito"; done <.movidos
+  exit 1
+}
+while IFS= read -r item; do
+  [ -e "$item" ] || { echo "falta no que foi extraído: $item" >&2; desfazer "$1"; }
+  [ ! -e "/data/$item" ] || { echo "apareceu no volume durante a restauração: $item" >&2; desfazer "$1"; }
+  { mkdir -p "/data/$(dirname "$item")" && mv "$item" "/data/$item"; } || desfazer "$1"
+  printf "%s\n" "$item" >>.movidos
+done
+rm -f .movidos'
+{ printf '%s\n' "$itens" | grep -vxF 'awikabot.db' || true; echo 'awikabot.db'; } \
+  | no_volume --entrypoint sh server -c "$promover" sh "$area" \
+  || recusar "a troca para o lugar falhou e foi desfeita, e o volume ficou como estava"
 
 echo "Restaurado. Os aparelhos pareados no backup foram revogados: depois de subir o servidor, pareie cada um de novo (comando parear)."
 echo "Se o volume é novo, faça o login do motor (ver deploy/compose.yaml) antes de subir o servidor."
