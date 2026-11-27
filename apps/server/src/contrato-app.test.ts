@@ -15,6 +15,7 @@ import { mensagensVisiveis } from '../../mobile/src/lib/conversa';
 import { criarArmazemDados } from '../../mobile/src/lib/dados';
 import { iniciarFluxoEventos, type BuscarFluxo, type FluxoEventos } from '../../mobile/src/lib/fluxo-eventos';
 import { criarOperacoes } from '../../mobile/src/lib/operacoes';
+import { criarRecarga } from '../../mobile/src/lib/recarga';
 import type { Sessao } from '../../mobile/src/lib/sessao';
 import { criarApp } from './app';
 import { GestorDeAprovacoes } from './aprovacoes';
@@ -192,6 +193,44 @@ describe('cliente do app contra o servidor', () => {
     const posicao = itens.findIndex((item) => ehAprovacao(item));
     expect(itens[posicao + 1]).toMatchObject({ id: resolvidas[0]!.mensagemId, texto: 'Comando permitido: echo oi' });
     expect(situacaoDoBot({ id: botId, turnoAtivo: false }, estado.aprovacoes)).toBeNull();
+  });
+
+  it('o pedido que já esperava aparece mesmo se a primeira busca dos pendentes falha, sem ninguém pedir de novo', async () => {
+    const botId = (await api.listarBots()).bots[0]!.id;
+    // O bot fica parado num pedido de aprovação antes de o app abrir: nenhum evento vai contar isso a ele.
+    const pedidasAntes = doTipo('aprovacao_pedida').length;
+    await api.enviarTurno(botId, { texto: '!comando echo esperando' });
+    await esperar(() => doTipo('aprovacao_pedida').length === pedidasAntes + 1);
+
+    // Um app recém-aberto, cuja primeira busca dos pendentes cai. O fluxo de eventos segue de pé.
+    let quedas = 2;
+    const comQueda: Buscar = (url, pedido) => {
+      if (url.endsWith('/v1/aprovacoes') && quedas > 0) {
+        quedas -= 1;
+        return Promise.reject(new TypeError('rede fora'));
+      }
+      return fetch(url, pedido);
+    };
+    const armazem = criarArmazemDados();
+    const operacoes = criarOperacoes(criarApi({ buscar: comQueda, sessaoAtual: () => sessao, aoNaoAutenticado: () => {} }), armazem);
+    const recarga = criarRecarga({ carregar: operacoes.carregarAprovacoes, esperasMs: [5] });
+    try {
+      recarga.pedir();
+      await esperar(() => armazem.estado().cargaDeAprovacoes === 'falhou');
+      expect(aprovacoesDoBot(armazem.estado().aprovacoes, botId)).toEqual([]);
+
+      await esperar(() => armazem.estado().cargaDeAprovacoes === 'pronta');
+      expect(quedas).toBe(0);
+      expect(aprovacoesDoBot(armazem.estado().aprovacoes, botId).filter((a) => a.estado === 'pendente')).toMatchObject([
+        { botId, ferramenta: 'Bash', resumo: 'echo esperando', estado: 'pendente' },
+      ]);
+      expect(situacaoDoBot({ id: botId, turnoAtivo: true }, armazem.estado().aprovacoes)).not.toBeNull();
+    } finally {
+      recarga.parar();
+      const pendente = (await api.listarAprovacoes()).aprovacoes[0];
+      if (pendente) await api.decidirAprovacao(pendente.id, { decisao: 'negar' });
+      await esperar(() => !turnos.ativo(botId));
+    }
   });
 
   it('desparear revoga o token: a API e o fluxo passam a ser recusados', async () => {

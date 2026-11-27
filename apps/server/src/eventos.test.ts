@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Evento } from '@awikabot/core';
-import { Barramento, type EventoNumerado } from './eventos';
+import { Barramento, FilaDeEventos, type EventoNumerado } from './eventos';
 
 const id = 'abcdefgh12345678';
 const texto = (trecho: string): Evento => ({ tipo: 'texto', botId: id, mensagemId: id, posicao: 0, trecho });
@@ -68,5 +68,73 @@ describe('Barramento', () => {
     const recebidos: EventoNumerado[] = [];
     barramento.assinar(desde.replace('EPOCA', barramento.epoca), (item) => recebidos.push(item));
     expect(trechos(recebidos)).toEqual(['ressincronizar']);
+  });
+});
+
+describe('FilaDeEventos', () => {
+  const item = (numero: number, trecho = 'x'): EventoNumerado => ({ id: `epoca-${numero}`, evento: texto(trecho) });
+  const esvaziar = (fila: FilaDeEventos): { id: string; tipo: string }[] => {
+    const saida: { id: string; tipo: string }[] = [];
+    for (let proximo = fila.tirar(); proximo !== undefined; proximo = fila.tirar()) {
+      saida.push({ id: proximo.id, tipo: (JSON.parse(proximo.dados) as Evento).tipo });
+    }
+    return saida;
+  };
+
+  it('entrega na ordem o que cabe, já pronto para escrever', () => {
+    const fila = new FilaDeEventos({ itens: 3, caracteres: 10_000 });
+    fila.por(item(1, 'um'));
+    fila.por(item(2, 'dois'));
+    expect(fila.itens).toBe(2);
+    expect(fila.tirar()).toEqual({ id: 'epoca-1', dados: JSON.stringify(texto('um')) });
+    expect(fila.tirar()).toEqual({ id: 'epoca-2', dados: JSON.stringify(texto('dois')) });
+    expect(fila.tirar()).toBeUndefined();
+    expect(fila.caracteres).toBe(0);
+  });
+
+  it('com a escrita parada, a fila não passa do teto de itens por mais que se publique', () => {
+    const fila = new FilaDeEventos({ itens: 5, caracteres: 1_000_000 });
+    for (let numero = 1; numero <= 10_000; numero += 1) {
+      fila.por(item(numero));
+      expect(fila.itens).toBeLessThanOrEqual(5);
+    }
+    // O que se acumulou foi solto: sai um aviso só, com o id do último evento, para o app buscar tudo de novo.
+    expect(esvaziar(fila)).toEqual([{ id: 'epoca-10000', tipo: 'ressincronizar' }]);
+  });
+
+  it('depois do aviso, o que chega volta a ser entregue na ordem', () => {
+    const fila = new FilaDeEventos({ itens: 2, caracteres: 1_000_000 });
+    for (let numero = 1; numero <= 3; numero += 1) fila.por(item(numero));
+    expect(fila.tirar()).toMatchObject({ id: 'epoca-3' });
+    fila.por(item(4));
+    fila.por(item(5));
+    expect(esvaziar(fila)).toEqual([
+      { id: 'epoca-4', tipo: 'texto' },
+      { id: 'epoca-5', tipo: 'texto' },
+    ]);
+  });
+
+  it('o que chega antes de o aviso sair não se acumula atrás dele', () => {
+    const fila = new FilaDeEventos({ itens: 2, caracteres: 1_000_000 });
+    for (let numero = 1; numero <= 50; numero += 1) fila.por(item(numero));
+    expect(fila.itens).toBe(1);
+    expect(esvaziar(fila)).toEqual([{ id: 'epoca-50', tipo: 'ressincronizar' }]);
+  });
+
+  it('o teto de caracteres vale para o que está acumulado', () => {
+    const fila = new FilaDeEventos({ itens: 1000, caracteres: 500 });
+    const grande = 'y'.repeat(200);
+    fila.por(item(1, grande));
+    fila.por(item(2, grande));
+    expect(fila.caracteres).toBeLessThanOrEqual(500);
+    fila.por(item(3, grande));
+    expect(fila.caracteres).toBeLessThanOrEqual(500);
+    expect(esvaziar(fila)).toEqual([{ id: 'epoca-3', tipo: 'ressincronizar' }]);
+  });
+
+  it('um evento sozinho passa, mesmo maior que o teto de caracteres: sem fila, não há o que soltar', () => {
+    const fila = new FilaDeEventos({ itens: 1000, caracteres: 100 });
+    fila.por(item(1, 'z'.repeat(5000)));
+    expect(esvaziar(fila)).toEqual([{ id: 'epoca-1', tipo: 'texto' }]);
   });
 });

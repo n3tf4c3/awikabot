@@ -79,7 +79,11 @@ export function criarOperacoes(api: Api, armazem: ArmazemDados): Operacoes {
 
   const carregarAprovacoes = cargaUnica(async () => {
     const revisao = armazem.estado().aprovacoes.revisao;
-    const { aprovacoes } = await api.listarAprovacoes();
+    const { aprovacoes } = await api.listarAprovacoes().catch((falha: unknown) => {
+      // A tela precisa saber que os pendentes podem estar faltando; quem chamou decide se tenta de novo.
+      armazem.despachar({ tipo: 'aprovacoes_falharam' });
+      throw falha;
+    });
     // O armazém compara a revisão: lista que pode ser velha não tira nem troca pedido nenhum.
     armazem.despachar({ tipo: 'aprovacoes_carregadas', pendentes: aprovacoes, revisao });
     return armazem.estado().aprovacoes.revisao !== revisao;

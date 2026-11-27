@@ -35,6 +35,12 @@ interface Conversa {
   decidir(id: string, decisao: Decisao): void;
   /** O erro foi ao buscar as mensagens e a conversa continua sem elas: cabe um "Tentar de novo". */
   falhaDeCarga: boolean;
+  /**
+   * A busca dos pedidos de aprovação pendentes falhou: pode haver um pedido esperando sem cartão
+   * na tela. O app continua tentando sozinho; `conferirAprovacoes` tenta agora.
+   */
+  aprovacoesSemConferir: boolean;
+  conferirAprovacoes(): void;
   /** Devolve `true` se o servidor aceitou a mensagem. */
   enviar(texto: string): Promise<boolean>;
   parar(): void;
@@ -44,11 +50,12 @@ interface Conversa {
 
 /** Tudo o que a tela da conversa mostra e faz, para o bot `botId`. */
 export function useConversa(botId: string): Conversa {
-  const { operacoes } = useDados();
+  const { operacoes, recargaDeAprovacoes } = useDados();
   const bot = useBot(botId);
   const conversa = useSelecao((estado) => estado.conversas[botId]) ?? CONVERSA_VAZIA;
   const conexao = useSelecao((estado) => estado.conexao);
   const aprovacoes = useSelecao((estado) => estado.aprovacoes);
+  const aprovacoesSemConferir = useSelecao((estado) => estado.cargaDeAprovacoes === 'falhou');
   // Dois erros separados: uma busca que dá certo não apaga a recusa de um envio, e vice-versa.
   const [erroDeCarga, definirErroDeCarga] = useState<string | null>(null);
   const [erroDeAcao, definirErroDeAcao] = useState<string | null>(null);
@@ -141,6 +148,8 @@ export function useConversa(botId: string): Conversa {
     decidindo,
     decidir,
     falhaDeCarga: erroDeCarga !== null && precisa,
+    aprovacoesSemConferir,
+    conferirAprovacoes: () => recargaDeAprovacoes.pedir(),
     enviar,
     parar,
     carregarAnteriores,

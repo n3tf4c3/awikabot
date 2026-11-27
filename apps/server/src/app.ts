@@ -21,7 +21,7 @@ import { criarBot, editarBot, listarBots, obterBot, paraContrato } from './bots'
 import { CATALOGO, esforcoValido, motorDoCatalogo, motorParaCriarBot } from './catalogo';
 import { listarMensagens } from './conversa';
 import { autenticar, dispositivoAtivo, origemDoPedido, parear, revogar, type LimitadorDeTentativas } from './dispositivos';
-import type { Barramento, EventoNumerado } from './eventos';
+import { FilaDeEventos, type Barramento, type LimitesDaFila } from './eventos';
 import type { GestorDeTurnos } from './turnos';
 
 export interface Dependencias {
@@ -35,6 +35,8 @@ export interface Dependencias {
   motoresEmProva?: readonly string[];
   /** Intervalo do sinal de vida do fluxo de eventos. Menor nos testes. */
   intervaloPingMs?: number;
+  /** Quanto a fila de cada app conectado ao fluxo de eventos guarda. Menor nos testes. */
+  limitesDaFilaDeEventos?: LimitesDaFila;
 }
 
 type Ambiente = { Variables: { dispositivo: Dispositivo; token: string } };
@@ -230,12 +232,13 @@ export function criarApp(deps: Dependencias): Hono<Ambiente> {
     const desde = c.req.header('last-event-id') ?? c.req.query('desde');
 
     return streamSSE(c, async (fluxo) => {
-      const fila: EventoNumerado[] = [];
+      // O app que lê devagar não faz o servidor guardar eventos sem teto: a fila solta o que passar dele.
+      const fila = new FilaDeEventos(deps.limitesDaFilaDeEventos);
       let acordar: (() => void) | null = null;
       // Quem conecta sem ponto de retomada recebe o ponto atual no primeiro sinal de vida.
       const cursorInicial = desde === undefined ? deps.barramento.cursor() : undefined;
       const cancelar = deps.barramento.assinar(desde, (item) => {
-        fila.push(item);
+        fila.por(item);
         acordar?.();
       });
       fluxo.onAbort(() => {
@@ -248,14 +251,14 @@ export function criarApp(deps: Dependencias): Hono<Ambiente> {
         await fluxo.writeSSE({ id: cursorInicial, event: 'ping', data: '' });
         let revogado = false;
         while (!revogado && !fluxo.aborted && !fluxo.closed) {
-          for (let item = fila.shift(); item !== undefined; item = fila.shift()) {
+          for (let item = fila.tirar(); item !== undefined; item = fila.tirar()) {
             // Aparelho revogado não recebe mais nada, nem no meio de um turno: a conferência é
             // a cada evento, e vale também para a revogação feita pelo comando do servidor.
             if (!dispositivoAtivo(deps.banco, aparelho)) {
               revogado = true;
               break;
             }
-            await fluxo.writeSSE({ id: item.id, event: 'evento', data: JSON.stringify(item.evento) });
+            await fluxo.writeSSE({ id: item.id, event: 'evento', data: item.dados });
           }
           if (revogado) break;
           const semNovidade = await new Promise<boolean>((ok) => {
