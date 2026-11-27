@@ -12,7 +12,16 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { GestorDeAprovacoes } from './aprovacoes';
 import { criarAppDoGancho, Ganchos } from './gancho';
 import { despacharPorMotor, type PedidoMotor, type ResultadoMotor } from './motor';
-import { argumentosDoCodex, classificarFalhaDoCodex, criarMotorCodex, instrucoesDoTurno, ORIENTACAO_DO_AMBIENTE, prepararCasaDoCodex } from './motor-codex';
+import {
+  agiuSemPedido,
+  argumentosDoCodex,
+  classificarFalhaDoCodex,
+  criarMotorCodex,
+  instrucoesDoTurno,
+  ORIENTACAO_DO_AMBIENTE,
+  prepararCasaDoCodex,
+  SAIDA_DA_CAIXA_QUE_NAO_SOBE,
+} from './motor-codex';
 
 const MENTIRA = fileURLToPath(new URL('./codex-de-mentira.ts', import.meta.url));
 const raiz = mkdtempSync(path.join(os.tmpdir(), 'awika-codex-'));
@@ -190,10 +199,27 @@ describe('motor do Codex', () => {
     expect(resultado.texto).toBe('negado');
   });
 
-  it('um comando que roda sem pedir aprovação corta o turno, e a saída dele não chega', async () => {
-    const { resultado } = await turno('escapa');
+  it.each([
+    ['um comando que termina bem', 'escapa', 'um comando'],
+    ['um comando que sai com erro depois de ler', 'escapa-falha', 'um comando'],
+    ['um comando que imita a caixa de areia que não sobe, com o que leu', 'escapa-imita', 'um comando'],
+    ['uma edição que falha no meio', 'escapa-edicao', 'uma edição'],
+  ])('%s, sem pedir aprovação, corta o turno, e a saída dele não chega', async (_caso, roteiro, acao) => {
+    cartoes.length = 0;
+    const { resultado } = await turno(roteiro);
+    expect(cartoes).toHaveLength(0);
     expect(resultado.estado).toBe('falhou');
-    expect(resultado.texto).toBe('[awikabot] Turno interrompido: o Codex executou um comando sem pedir aprovação.');
+    expect(resultado.texto).toBe(`[awikabot] Turno interrompido: o Codex executou ${acao} sem pedir aprovação.`);
+  });
+
+  it('a tentativa que a caixa de areia não deixou começar não corta o turno, e o pedido seguinte vai ao cartão', async () => {
+    decisao = 'aprovar';
+    cartoes.length = 0;
+    const { resultado, recebidas } = await turno('caixa-nao-sobe ls');
+    expect(cartoes).toHaveLength(1);
+    expect(cartoes[0]).toMatchObject({ ferramenta: 'Bash', resumo: "/bin/bash -lc 'ls'" });
+    expect(respostas(recebidas)).toEqual([{ decision: 'accept' }]);
+    expect(resultado).toMatchObject({ estado: 'completa', texto: 'rodou' });
   });
 
   it('a busca na web, que não passa por aprovação, corta o turno', async () => {
@@ -224,6 +250,25 @@ describe('motor do Codex', () => {
   it('sem o binário, o turno falha e diz isso', async () => {
     const { resultado } = await turno('eco oi', { binario: path.join(raiz, 'nao-existe') });
     expect(resultado).toEqual({ estado: 'falhou', texto: 'O Codex não iniciou neste servidor.', sessao: null });
+  });
+});
+
+describe('agiuSemPedido', () => {
+  const comando = { type: 'commandExecution', id: 'c' };
+  it.each([
+    ['comando que terminou bem', { ...comando, status: 'completed', exitCode: 0, aggregatedOutput: 'x' }, true],
+    ['comando que falhou depois de rodar', { ...comando, status: 'failed', exitCode: 3, aggregatedOutput: 'lido\n' }, true],
+    ['comando que falhou sem código', { ...comando, status: 'failed', exitCode: null, aggregatedOutput: null }, true],
+    ['saída da caixa de areia com outro código', { ...comando, status: 'failed', exitCode: 2, aggregatedOutput: SAIDA_DA_CAIXA_QUE_NAO_SOBE }, true],
+    ['saída da caixa de areia com algo a mais', { ...comando, status: 'failed', exitCode: 1, aggregatedOutput: `${SAIDA_DA_CAIXA_QUE_NAO_SOBE}lido\n` }, true],
+    ['estado desconhecido', { ...comando, status: 'inProgress' }, true],
+    ['edição que falhou', { type: 'fileChange', id: 'e', status: 'failed' }, true],
+    ['edição com a saída da caixa de areia', { type: 'fileChange', id: 'e', status: 'failed', exitCode: 1, aggregatedOutput: SAIDA_DA_CAIXA_QUE_NAO_SOBE }, true],
+    ['comando recusado', { ...comando, status: 'declined' }, false],
+    ['edição recusada', { type: 'fileChange', id: 'e', status: 'declined' }, false],
+    ['comando que a caixa de areia não deixou começar', { ...comando, status: 'failed', exitCode: 1, aggregatedOutput: SAIDA_DA_CAIXA_QUE_NAO_SOBE }, false],
+  ])('%s', (_caso, item, agiu) => {
+    expect(agiuSemPedido(item)).toBe(agiu);
   });
 });
 
