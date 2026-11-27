@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import type { Dispositivo } from '@awikabot/core';
 import type { Banco } from './banco';
 import { formatarCodigo, novoCodigo, novoId, novoToken, resumo } from './ids';
@@ -82,23 +83,95 @@ export function revogar(banco: Banco, id: string, agora = Date.now()): boolean {
   return Number(resultado.changes) === 1;
 }
 
-/** Trava o pareamento depois de várias tentativas erradas, para o servidor inteiro. */
+/** Os oito grupos de um IPv6 já validado, sem zeros à esquerda, com o IPv4 do fim em dois grupos. */
+function gruposIpv6(endereco: string): string[] {
+  let texto = endereco;
+  const ipv4 = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(texto);
+  if (ipv4) {
+    const [a, b, c, d] = ipv4.slice(1).map(Number) as [number, number, number, number];
+    texto = `${texto.slice(0, ipv4.index)}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  }
+  const [antes = '', depois] = texto.split('::');
+  const cabeca = antes === '' ? [] : antes.split(':');
+  const cauda = depois === undefined || depois === '' ? [] : depois.split(':');
+  const meio = depois === undefined ? [] : Array<string>(8 - cabeca.length - cauda.length).fill('0');
+  return [...cabeca, ...meio, ...cauda].map((grupo) => parseInt(grupo, 16).toString(16));
+}
+
+/** A chave de um endereço: o IPv4 inteiro, o IPv6 pelo /64. `null` se não é endereço. */
+function chaveDoEndereco(bruto: string | undefined): string | null {
+  const endereco = bruto?.trim().replace(/%.*$/, '') ?? '';
+  if (isIP(endereco) === 4) return endereco;
+  if (isIP(endereco) !== 6) return null;
+  const grupos = gruposIpv6(endereco);
+  // O Node entrega o IPv4 de um soquete de dupla pilha como `::ffff:a.b.c.d`.
+  if (grupos.slice(0, 5).every((grupo) => grupo === '0') && grupos[5] === 'ffff') {
+    const [alto, baixo] = grupos.slice(6).map((grupo) => parseInt(grupo, 16)) as [number, number];
+    return [alto >> 8, alto & 0xff, baixo >> 8, baixo & 0xff].join('.');
+  }
+  return `${grupos.slice(0, 4).join(':')}::/64`;
+}
+
+/**
+ * De onde vem um pedido de pareamento, para a trava. Pelo túnel, toda conexão é a do cloudflared, e
+ * quem pediu vem no `CF-Connecting-IP`, que a Cloudflare escreve por cima do que o cliente mandar.
+ * Sem esse cabeçalho, ou com um valor que não é endereço, vale o endereço da conexão. O IPv6 conta
+ * pelo /64, que costuma ser inteiro de uma pessoa: cada endereço dele seria uma origem nova.
+ *
+ * O cabeçalho só é de confiança porque o servidor só se alcança pelo túnel e por loopback. Quem abre
+ * a porta para a rede local deixa um vizinho trocar de origem a cada pedido; aí vale só o teto do
+ * servidor inteiro, e o código, com 60 bits e cinco minutos de validade, continua impossível de adivinhar.
+ */
+export function origemDoPedido(cabecalhoDaCloudflare: string | undefined, conexao: string | undefined): string {
+  return chaveDoEndereco(cabecalhoDaCloudflare) ?? chaveDoEndereco(conexao) ?? 'desconhecida';
+}
+
+/**
+ * Trava o pareamento depois de tentativas erradas: cinco erros de uma origem travam essa origem, e
+ * mil erros no servidor inteiro travam todas, na mesma janela de dez minutos. Uma trava só, para o
+ * servidor inteiro, deixava qualquer um de fora bloquear o pareamento de todos com cinco pedidos.
+ *
+ * O teto do servidor não é o que impede adivinhar o código: com 60 bits, mil tentativas acertam um
+ * código vivo com chance da ordem de 1e-15. Ele limita o que um atacante com muitas origens consegue,
+ * e também a memória, porque um erro só entra depois de `bloqueado` dizer que não.
+ */
 export class LimitadorDeTentativas {
-  private falhas: number[] = [];
-  private readonly maximo: number;
+  private readonly porOrigem = new Map<string, number[]>();
+  private todas: number[] = [];
+  private readonly maximoPorOrigem: number;
+  private readonly maximoTotal: number;
   private readonly janelaMs: number;
 
-  constructor(maximo = 5, janelaMs = 10 * 60_000) {
-    this.maximo = maximo;
-    this.janelaMs = janelaMs;
+  constructor(opcoes: { porOrigem?: number; total?: number; janelaMs?: number } = {}) {
+    this.maximoPorOrigem = opcoes.porOrigem ?? 5;
+    this.maximoTotal = opcoes.total ?? 1000;
+    this.janelaMs = opcoes.janelaMs ?? 10 * 60_000;
   }
 
-  bloqueado(agora = Date.now()): boolean {
-    this.falhas = this.falhas.filter((instante) => agora - instante < this.janelaMs);
-    return this.falhas.length >= this.maximo;
+  bloqueado(origem: string, agora = Date.now()): boolean {
+    this.esquecer(agora);
+    return this.todas.length >= this.maximoTotal || (this.porOrigem.get(origem)?.length ?? 0) >= this.maximoPorOrigem;
   }
 
-  registrarFalha(agora = Date.now()): void {
-    this.falhas.push(agora);
+  registrarFalha(origem: string, agora = Date.now()): void {
+    this.esquecer(agora);
+    this.todas.push(agora);
+    this.porOrigem.set(origem, [...(this.porOrigem.get(origem) ?? []), agora]);
+  }
+
+  /** Quantas origens têm erro dentro da janela. */
+  get origensGuardadas(): number {
+    return this.porOrigem.size;
+  }
+
+  /** Tira o que saiu da janela; a origem sem erro nela deixa de ser guardada. */
+  private esquecer(agora: number): void {
+    const dentro = (instante: number): boolean => agora - instante < this.janelaMs;
+    this.todas = this.todas.filter(dentro);
+    for (const [origem, instantes] of this.porOrigem) {
+      const restantes = instantes.filter(dentro);
+      if (restantes.length === 0) this.porOrigem.delete(origem);
+      else this.porOrigem.set(origem, restantes);
+    }
   }
 }

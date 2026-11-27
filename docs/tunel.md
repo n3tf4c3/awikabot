@@ -48,7 +48,7 @@ Sem o perfil, `docker compose up -d` sobe só o servidor, como antes. Com o perf
 ## O que passa a ficar exposto
 
 - `GET /healthz` responde a qualquer um, e só diz o estado.
-- `POST /v1/parear` responde a qualquer um. Cinco códigos errados bloqueiam o pareamento por dez minutos, para o servidor inteiro: de fora, qualquer pessoa consegue manter o pareamento bloqueado. Os aparelhos já pareados não são afetados. Um limite de pedidos por origem, se for preciso, é regra do painel da Cloudflare.
+- `POST /v1/parear` responde a qualquer um. Cinco códigos errados de uma origem bloqueiam o pareamento dessa origem por dez minutos; a origem é o endereço que a Cloudflare manda no `CF-Connecting-IP`, e o IPv6 conta pelo /64. Mil erros no servidor inteiro, na mesma janela, bloqueiam todas as origens: para manter o pareamento bloqueado para todos, alguém de fora precisa errar de duzentas origens diferentes a cada dez minutos. Os aparelhos já pareados não são afetados. Um limite de pedidos por origem antes do servidor, se for preciso, é regra do painel da Cloudflare.
 - Todo o resto de `/v1` pede o token de um aparelho.
 - A Cloudflare termina o HTTPS: o tráfego passa por ela em claro, inclusive o token do aparelho e as conversas.
 

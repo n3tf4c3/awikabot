@@ -52,15 +52,32 @@ function montar(opcoes: { atrasoMs?: number; limite?: number; intervaloPingMs?: 
     motoresEmProva: opcoes.motoresEmProva,
   });
 
-  const pedir = (caminho: string, opcoesPedido: { metodo?: string; corpo?: unknown; token?: string | null } = {}) => {
+  const pedir = (
+    caminho: string,
+    opcoesPedido: {
+      metodo?: string;
+      corpo?: unknown;
+      token?: string | null;
+      /** O `CF-Connecting-IP`, que a Cloudflare escreve nos pedidos que chegam pelo túnel. */
+      ipDaCloudflare?: string;
+      /** O endereço de quem abriu a conexão; pelo túnel, é sempre o do cloudflared. */
+      conexao?: string;
+    } = {},
+  ) => {
     const cabecalhos: Record<string, string> = {};
     if (opcoesPedido.corpo !== undefined) cabecalhos['content-type'] = 'application/json';
     if (opcoesPedido.token) cabecalhos.authorization = `Bearer ${opcoesPedido.token}`;
-    return app.request(caminho, {
-      method: opcoesPedido.metodo ?? (opcoesPedido.corpo === undefined ? 'GET' : 'POST'),
-      headers: cabecalhos,
-      body: opcoesPedido.corpo === undefined ? undefined : JSON.stringify(opcoesPedido.corpo),
-    });
+    if (opcoesPedido.ipDaCloudflare !== undefined) cabecalhos['cf-connecting-ip'] = opcoesPedido.ipDaCloudflare;
+    return app.request(
+      caminho,
+      {
+        method: opcoesPedido.metodo ?? (opcoesPedido.corpo === undefined ? 'GET' : 'POST'),
+        headers: cabecalhos,
+        body: opcoesPedido.corpo === undefined ? undefined : JSON.stringify(opcoesPedido.corpo),
+      },
+      // Como o servidor do Node entrega a conexão ao Hono.
+      opcoesPedido.conexao === undefined ? undefined : { incoming: { socket: { remoteAddress: opcoesPedido.conexao } } },
+    );
   };
 
   const parearAparelho = async (nome = 'Celular de teste') => {
@@ -164,6 +181,48 @@ describe('pareamento (F1)', () => {
     const certo = await ambiente.pedir('/v1/parear', { corpo: { codigo: criarCodigo(ambiente.banco), nome: 'A' } });
     expect(certo.status).toBe(429);
     expect(await erroDe(certo)).toBe('muitas_tentativas');
+  });
+
+  describe('trava por origem', () => {
+    const ERRADO = { codigo: 'AAAA-AAAA-AAAA', nome: 'A' };
+    const CLOUDFLARED = '172.30.0.3';
+    const errarCinco = async (origem: { ipDaCloudflare?: string; conexao?: string }): Promise<void> => {
+      for (let i = 0; i < 5; i += 1) expect((await ambiente.pedir('/v1/parear', { corpo: ERRADO, ...origem })).status).toBe(401);
+    };
+    const parearDe = async (origem: { ipDaCloudflare?: string; conexao?: string }): Promise<number> =>
+      (await ambiente.pedir('/v1/parear', { corpo: { codigo: criarCodigo(ambiente.banco), nome: 'B' }, ...origem })).status;
+
+    it('pelo túnel, quem errou cinco vezes fica travado e outra pessoa ainda pareia', async () => {
+      await errarCinco({ ipDaCloudflare: '203.0.113.7', conexao: CLOUDFLARED });
+      expect(await parearDe({ ipDaCloudflare: '203.0.113.7', conexao: CLOUDFLARED })).toBe(429);
+      expect(await parearDe({ ipDaCloudflare: '198.51.100.9', conexao: CLOUDFLARED })).toBe(200);
+    });
+
+    it('sem o cabeçalho da Cloudflare, a origem é o endereço da conexão', async () => {
+      await errarCinco({ conexao: '192.168.0.20' });
+      expect(await parearDe({ conexao: '192.168.0.20' })).toBe(429);
+      expect(await parearDe({ conexao: '192.168.0.21' })).toBe(200);
+    });
+
+    it('no IPv6, o mesmo /64 é uma origem só', async () => {
+      await errarCinco({ ipDaCloudflare: '2001:db8:1:2::a', conexao: CLOUDFLARED });
+      expect(await parearDe({ ipDaCloudflare: '2001:db8:1:2:ffff:ffff:ffff:1', conexao: CLOUDFLARED })).toBe(429);
+      expect(await parearDe({ ipDaCloudflare: '2001:db8:1:3::a', conexao: CLOUDFLARED })).toBe(200);
+    });
+
+    it('um cabeçalho que não é endereço não cria origem nova', async () => {
+      await errarCinco({ ipDaCloudflare: 'qualquer-coisa-1', conexao: '192.168.0.30' });
+      expect(await parearDe({ ipDaCloudflare: 'qualquer-coisa-2', conexao: '192.168.0.30' })).toBe(429);
+    });
+
+    it('pedidos simultâneos da mesma origem não passam de cinco erros', async () => {
+      const respostas = await Promise.all(
+        Array.from({ length: 12 }, () => ambiente.pedir('/v1/parear', { corpo: ERRADO, ipDaCloudflare: '203.0.113.7', conexao: CLOUDFLARED })),
+      );
+      const estados = respostas.map((resposta) => resposta.status);
+      expect(estados.filter((estado) => estado === 401)).toHaveLength(5);
+      expect(estados.filter((estado) => estado === 429)).toHaveLength(7);
+    });
   });
 
   it('guarda só o hash do token e do código', async () => {
