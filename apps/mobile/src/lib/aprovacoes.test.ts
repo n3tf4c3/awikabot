@@ -308,6 +308,59 @@ describe('intercalarAprovacoes', () => {
     expect(chaves(itens)).toEqual(['m4', 'm3', 'm2', 'm1']);
   });
 
+  /** A montagem de antes, que comparava cada mensagem com todas as aprovações: a referência do resultado. */
+  function referencia(msgs: readonly Mensagem[], aprs: readonly Aprovacao[]): ReturnType<typeof intercalarAprovacoes> {
+    if (aprs.length === 0) return [...msgs];
+    const conhecidas = new Set(msgs.map((m) => m.id));
+    const ordem = (a: Aprovacao, b: Aprovacao): number => a.criadaEm - b.criadaEm || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+    const daMaisNova = [...aprs].sort(ordem).reverse();
+    const itens: ReturnType<typeof intercalarAprovacoes> = daMaisNova.filter((a) => a.estado === 'pendente' && !conhecidas.has(a.mensagemId));
+    for (const m of msgs) {
+      for (const a of daMaisNova) if (a.mensagemId === m.id) itens.push(a);
+      itens.push(m);
+    }
+    return itens;
+  }
+
+  it('dá o mesmo resultado da montagem de antes, com pedidos pendentes, resolvidos, empatados e de mensagem ausente', () => {
+    const muitas = Array.from({ length: 40 }, (_, i) => mensagem(40 - i));
+    const estadosPossiveis = ['pendente', 'aprovada', 'negada', 'expirada'] as const;
+    const pedidos = Array.from({ length: 120 }, (_, i) => {
+      const n = i + 1;
+      // Mensagens de 1 a 48: as de 41 a 48 o app não tem. Vários pedidos por mensagem, alguns criados no mesmo instante.
+      const extra = { mensagemId: idMensagem(((n * 7) % 48) + 1), criadaEm: Math.floor(n / 3) };
+      const estado = estadosPossiveis[n % 4]!;
+      return estado === 'pendente' ? aprovacao(n, extra) : resolvida(n, estado, extra);
+    });
+    const embaralhados = [...pedidos].sort((a, b) => ((a.criadaEm * 31 + a.id.length) % 7) - ((b.criadaEm * 31 + b.id.length) % 7) || (a.id < b.id ? 1 : -1));
+    const itens = intercalarAprovacoes(muitas, embaralhados);
+    expect(itens.map(chaveDoItem)).toEqual(referencia(muitas, embaralhados).map(chaveDoItem));
+    expect(itens.filter(ehAprovacao).length).toBeGreaterThan(80);
+    expect(itens.filter(ehAprovacao).length).toBeLessThan(120);
+  });
+
+  it('olha cada aprovação um número fixo de vezes, por mais mensagens que a conversa tenha', () => {
+    const QUANTAS = 300;
+    const muitas = Array.from({ length: QUANTAS }, (_, i) => mensagem(QUANTAS - i));
+    let leituras = 0;
+    const pedidos = Array.from({ length: QUANTAS }, (_, i) => {
+      const base = resolvida(i + 1, 'aprovada', { criadaEm: i });
+      const mensagemId = idMensagem(i + 1);
+      // Conta quantas vezes a montagem pergunta de qual mensagem é o pedido.
+      return Object.defineProperty({ ...base }, 'mensagemId', {
+        enumerable: true,
+        get: () => {
+          leituras += 1;
+          return mensagemId;
+        },
+      }) as Aprovacao;
+    });
+    const itens = intercalarAprovacoes(muitas, pedidos);
+    expect(itens).toHaveLength(QUANTAS * 2);
+    // A montagem de antes lia 300 × 300 vezes; agora o número de leituras cresce só com os pedidos.
+    expect(leituras).toBeLessThanOrEqual(QUANTAS * 3);
+  });
+
   it('reaproveita os objetos de mensagem e de aprovação', () => {
     const pendente = aprovacao(1, { mensagemId: idMensagem(4) });
     const itens = intercalarAprovacoes(mensagens, [pendente]);

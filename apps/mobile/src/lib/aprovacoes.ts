@@ -141,12 +141,24 @@ export function chaveDoItem(item: ItemDaConversa): string {
 export function intercalarAprovacoes(mensagens: readonly Mensagem[], aprovacoes: readonly Aprovacao[]): ItemDaConversa[] {
   if (aprovacoes.length === 0) return [...mensagens];
   const conhecidas = new Set(mensagens.map((mensagem) => mensagem.id));
-  const daMaisNova = [...aprovacoes].sort(porCriacao).reverse();
-  const itens: ItemDaConversa[] = daMaisNova.filter((aprovacao) => pendente(aprovacao) && !conhecidas.has(aprovacao.mensagemId));
-  for (const mensagem of mensagens) {
-    for (const aprovacao of daMaisNova) {
-      if (aprovacao.mensagemId === mensagem.id) itens.push(aprovacao);
+  // Uma passagem só pelas aprovações, da mais nova para a mais antiga: cada uma vai para a lista da
+  // mensagem dela, já na ordem em que aparece. Comparar cada mensagem com todas as aprovações
+  // custava mensagens vezes aprovações a cada montagem da conversa.
+  const porMensagem = new Map<string, Aprovacao[]>();
+  const itens: ItemDaConversa[] = [];
+  for (const aprovacao of [...aprovacoes].sort(porCriacao).reverse()) {
+    const mensagemId = aprovacao.mensagemId;
+    if (!conhecidas.has(mensagemId)) {
+      if (pendente(aprovacao)) itens.push(aprovacao);
+      continue;
     }
+    const daMensagem = porMensagem.get(mensagemId);
+    if (daMensagem) daMensagem.push(aprovacao);
+    else porMensagem.set(mensagemId, [aprovacao]);
+  }
+  for (const mensagem of mensagens) {
+    const daMensagem = porMensagem.get(mensagem.id);
+    if (daMensagem) itens.push(...daMensagem);
     itens.push(mensagem);
   }
   return itens;

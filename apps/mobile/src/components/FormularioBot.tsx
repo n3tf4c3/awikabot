@@ -89,8 +89,7 @@ export function FormularioBot({ inicial, motorFixo = false, aoSalvar }: Props) {
           valor={campos.nome}
           aoMudar={mudar('nome')}
           erro={erros.nome}
-          maxLength={LIMITES.nomeBot}
-          comContador
+          limite={LIMITES.nomeBot}
           editable={!salvando}
         />
         <Campo
@@ -100,8 +99,7 @@ export function FormularioBot({ inicial, motorFixo = false, aoSalvar }: Props) {
           erro={erros.instrucoes}
           ajuda="Como o bot deve se comportar. Pode ficar em branco."
           multiline
-          maxLength={LIMITES.instrucoes}
-          comContador
+          limite={LIMITES.instrucoes}
           editable={!salvando}
         />
         {motorFixo ? (
