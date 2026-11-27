@@ -95,7 +95,7 @@ Um bot executa comandos, então o servidor equivale a um terminal remoto no Pi.
 4. Concluída em 23/11, no lado do servidor. Robustez no Pi: retomada depois de queda, backup do banco e health check vigiado.
    Verificar: derrubar o contêiner no meio de um turno e conferir o fluxo 5 na volta; restaurar o backup num ambiente descartável.
 5. Revisão de segurança e distribuição por TestFlight e teste interno da Play.
-6. App de desktop para Windows e Mac, em Rust com GPUI. No Windows, as versões 0.1.0 a 0.1.3 foram publicadas entre 24 e 26/11; o Mac ainda não tem pacote. Ver "Etapa 6: plano do app de desktop".
+6. App de desktop para Windows e Mac, em Rust com GPUI. No Windows, as versões 0.1.0 a 0.1.4 foram publicadas entre 24 e 27/11; o Mac ainda não tem pacote. Ver "Etapa 6: plano do app de desktop".
    Verificar: os fluxos 1 a 5 percorridos no Windows e num Mac, com o app instalado pelo pacote assinado.
 7. Papéis, motores e decisores: mais de um motor, escolhido em cada bot; equipes em que um bot orquestra e outros executam; e modelos de decisão que respondem a perguntas fechadas. Em 26/11 rodou o passo 1, a prova dos motores, no Docker local, e foi feito o passo 2, o catálogo e o motor por bot; o resto não está feito. Ver "Etapa 7: plano dos papéis, dos motores e dos decisores", "Etapa 7, passo 1: resultado da prova" e "Etapa 7, passo 2: resultado do catálogo e do motor por bot".
    Verificar: um pedido feito a uma equipe, no aparelho, com dois motores diferentes, cada ação aprovada pela pessoa e a entrega conferida por um decisor.
@@ -683,6 +683,22 @@ Ainda em 26/11, os dois roteiros que rodam dentro do Sandbox ganharam uma guarda
 
 Não coberto: nenhum dos dois roteiros foi rodado fora do Sandbox para provar a recusa, de propósito; a prova é o teste. A guarda confere o nome da conta, e não mais que isso: é uma rede para o engano, não uma barreira.
 
+Em 27/11 saiu a versão 0.1.4, de `0c2d15f` (merge do PR 43). Leva a quem já instalou o formulário de bot com as listas de motor, modelo e esforço, e com elas o Codex (ver "Etapa 7, passo 2: resultado do catálogo e do motor por bot"). O roteiro rodou inteiro pela quinta vez.
+
+| Verificação | Resultado |
+|---|---|
+| Verificação de segurança | Emitida sobre `f3258a8`, o commit do PR, cuja árvore é a do merge (diff vazio conferido). Desde a 0.1.3 entraram o driver do Codex, a configuração gerenciada dele, o `Dockerfile` e os scripts de backup e restauração. Aprovada como gate, sem achado novo e com quatro observações. Feita por um subagente que não escreveu o passo 2, sem teste dinâmico. Uma das observações, o corte do Codex só no item que termina bem, foi corrigida depois, pelo PR 45, que não entra no app de desktop. |
+| Conferências do candidato, em `0c2d15f` | 14 de 14 passos, sem mudança pendente. |
+| Pacote assinado e conferência dos artefatos | Executável e instalador assinados com o mesmo certificado da 0.1.3; o app aceitou o pacote pela regra do atualizador. |
+| Sandbox, pacote assinado, partindo da 0.1.3 publicada | 26 de 26 passos nas duas rodadas, sem rede e com rede e marca de download, com o Smart App Control ligado. |
+| Rascunho no GitHub | Criado com os três arquivos, baixado de volta e comparado com os conferidos. |
+| Publicação | Feita pelo titular em 27/11. Lido no GitHub depois: o release é público, a etiqueta `desktop-v0.1.4` aponta para `0c2d15f`, e o `publicado.json` foi gravado. |
+| Atualização vista num app instalado, com `-Clicar` | 6 de 6 passos, sem ninguém na frente. A 0.1.3 instalada registrou a consulta, o roteiro clicou em "Baixar" e em "Instalar e reabrir", o executável e o registro passaram a 0.1.4 e o app reabriu em outro processo. As capturas mostram "Versão 0.1.4 disponível" e "Versão 0.1.4 baixada e conferida" com "Instalar e reabrir". |
+
+A terceira captura, a do app reaberto, não saiu: a instalação foi rápida, o script de fora viu a sequência inteira um segundo depois de o app reabrir e desligou o Sandbox antes da espera de 1,5 s do roteiro de dentro para fotografar. O veredito vem do disco e do registro e vale; a corrida é do roteiro de conferência. A primeira aprovação do titular não chegou a rodar, e o release seguia em rascunho, sem etiqueta: a leitura que vale é a de depois do "PUBLICADO" no terminal.
+
+Não coberto, desta versão: as listas de motor, modelo e esforço no app instalado, que só foram vistas no app de desenvolvimento; a terceira captura da conferência depois de publicar, pela corrida acima.
+
 Não coberto ainda: a linha do pedido resolvido no app de desktop de verdade depois de reabrir, que é o motivo da 0.1.3 e só tem o teste da janela; o ícone novo no atalho, no instalador e no aviso do sistema, que nenhuma conferência olha; os cliques do roteiro em outra escala de tela, em outro tamanho de janela e no tema escuro, e o painel da lateral da conversa, com o app pareado; a conferência de revogação com o computador sem rede; a recusa do roteiro do instalador diante de outra versão do Inno Setup. No Sandbox a conta é administradora, e a instalação sem privilégios é conferida pelo lugar dos arquivos e do registro, não com um usuário comum. A assinatura e a publicação só rodaram neste PC; a CI monta o pacote sem assinatura no Windows a cada PR.
 
 ### Decisões que são do titular
@@ -935,7 +951,7 @@ Os dois apps ganharam as listas no formulário de bot: o motor, só ao criar; o 
 | Chamada do motor | `--effort=high` vai na forma `--nome=valor`; sem esforço nem modelo, nenhuma das duas opções vai (`gancho.test.ts`). |
 | As listas na tela do desktop | Vistas depois do passo 3, no app de desenvolvimento da `main` em `da258a7`, no Windows, nos temas claro e escuro, contra um servidor local com o motor simulado. Ao criar, aparecem o motor (Claude Code e Codex), o modelo ("Auto", os sugeridos e "Outro") e o esforço ("Padrão" e os cinco níveis), e trocar para o Codex troca os modelos. Claude Code, Opus e Alto gravaram `claude-code`, `opus` e `high` no servidor. Na edição, o motor aparece só como texto e Opus e Alto vêm marcados; "Outro" esvaziou o campo e levou o teclado a ele, e um modelo fora da lista com o esforço em "Padrão" gravou esse modelo e o esforço nulo. Reaberta, a edição marca "Outro" com o texto. As teclas e os cliques foram por mensagem à janela, como na prova visual, por um roteiro avulso que não ficou no repositório. |
 
-Não coberto: as listas no app de desktop instalado, que só as terá numa versão nova, e na prova visual, que não passa pelo formulário (as do celular foram vistas num Android depois do passo 3); o motor real com um esforço escolhido; o binário de Linux arm64 da imagem rodado com `--effort`; o formulário da janela diante de um servidor sem a rota do catálogo, coberto só pela lógica das listas; o desktop num Mac, que fica para a CI. O desktop 0.1.3 ignora os campos novos: quem o usa cria bots no motor padrão, sem esforço, e a edição feita nele não mexe no esforço. Nenhum teste novo foi rodado contra o código sem a mudança.
+Não coberto: as listas no app de desktop instalado, que as recebeu na 0.1.4, publicada em 27/11, e na prova visual, que não passa pelo formulário (as do celular foram vistas num Android depois do passo 3); o motor real com um esforço escolhido; o binário de Linux arm64 da imagem rodado com `--effort`; o formulário da janela diante de um servidor sem a rota do catálogo, coberto só pela lógica das listas; o desktop num Mac, que fica para a CI. O desktop 0.1.3 ignora os campos novos: quem o usa cria bots no motor padrão, sem esforço, e a edição feita nele não mexe no esforço. A 0.1.4 já os tem. Nenhum teste novo foi rodado contra o código sem a mudança.
 
 ## Etapa 7, passo 3: resultado do segundo motor (2026-11-26)
 
