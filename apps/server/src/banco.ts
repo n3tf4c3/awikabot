@@ -86,3 +86,20 @@ export function abrirBanco(arquivo: string, ate = MIGRACOES.length): Banco {
   }
   return banco;
 }
+
+/**
+ * Roda as gravações de `passos` como uma só: ou todas ficam no banco, ou nenhuma. A transação já
+ * começa com a trava de escrita, para um comando de administração em outro processo não se meter
+ * no meio. Não se usa dentro de outra transação.
+ */
+export function emTransacao<T>(banco: Banco, passos: () => T): T {
+  banco.exec('BEGIN IMMEDIATE');
+  try {
+    const resultado = passos();
+    banco.exec('COMMIT');
+    return resultado;
+  } catch (erro) {
+    banco.exec('ROLLBACK');
+    throw erro;
+  }
+}
