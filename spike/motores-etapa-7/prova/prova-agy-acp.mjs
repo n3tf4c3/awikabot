@@ -30,6 +30,8 @@ const AJUSTES = process.env.AWIKA_AGY_AJUSTES ? JSON.parse(process.env.AWIKA_AGY
 const COM_CHAVE = existsSync(ARQ_CHAVE);
 // Gancho PreToolUse opcional: "nega:<regex>" nega as ferramentas que casam; "quebra:<regex>" quebra nelas.
 const GANCHO = process.env.AWIKA_AGY_GANCHO ?? '';
+// Prazo, em segundos, que o agy dá ao gancho antes de cortá-lo.
+const PRAZO_GANCHO_S = Number(process.env.AWIKA_PRAZO_GANCHO_S ?? 20);
 const ARQ_ESTADO = path.join(REGISTROS, 'estado-agy-acp.json');
 const log = (texto) => process.stdout.write(`${texto}\n`);
 const depois = (ms, valor) => new Promise((ok) => setTimeout(() => ok(valor), ms));
@@ -66,10 +68,15 @@ function prepararAjustes() {
   const ganchos = path.join(process.env.HOME, '.gemini', 'config', 'hooks.json');
   rmSync(ganchos, { force: true });
   rmSync('/tmp/awika-gancho-nega.log', { force: true });
+  rmSync('/tmp/awika-gancho-lista.log', { force: true });
   if (GANCHO) {
     const [modo, ...resto] = GANCHO.split(':');
     mkdirSync(path.dirname(ganchos), { recursive: true });
-    writeFileSync(ganchos, JSON.stringify({ hooks: { PreToolUse: [{ matcher: resto.join(':') || '.*', hooks: [{ type: 'command', command: `node /opt/prova/gancho-nega.mjs ${modo}`, timeout: 20 }] }] } }, null, 2));
+    // "lista:<modo>" usa o gancho que nega o que não conhece, para toda ferramenta; os outros modos
+    // usam o gancho de um defeito só, nas ferramentas que casam com a expressão.
+    const daLista = modo === 'lista';
+    const comando = daLista ? `node /opt/prova/gancho-lista.mjs ${resto.join(':') || 'nega'}` : `node /opt/prova/gancho-nega.mjs ${modo}`;
+    writeFileSync(ganchos, JSON.stringify({ hooks: { PreToolUse: [{ matcher: daLista ? '.*' : (resto.join(':') || '.*'), hooks: [{ type: 'command', command: comando, timeout: PRAZO_GANCHO_S }] }] } }, null, 2));
   }
 }
 
@@ -89,7 +96,8 @@ class Cliente {
     this.aoAviso = () => {};
     this.picoRssMb = 0;
     this.stderr = '';
-    const ambiente = { ...process.env };
+    // O token do turno vai pelo ambiente, para a prova ver se ele chega ao gancho.
+    const ambiente = { ...process.env, AWIKA_TURNO_TOKEN: 'token-do-turno-da-prova' };
     if (COM_CHAVE) ambiente.GEMINI_API_KEY = readFileSync(ARQ_CHAVE, 'utf8').trim();
     this.filho = spawn('agy', ['acp', ...ARGS], { cwd: DIR, env: ambiente, stdio: ['pipe', 'pipe', 'pipe'] });
     this.saiu = new Promise((ok) => this.filho.on('close', (codigo) => { this.codigo = codigo; ok(codigo); }));
@@ -342,6 +350,33 @@ const TESTES = {
     arquivo: path.join(FORA, 'acp-fora-edicao.txt'),
     prompt: `Crie o arquivo ${path.join(FORA, 'acp-fora-edicao.txt')} com o conteúdo "awika-fora", usando a sua ferramenta de escrita de arquivos, não o terminal. Não tente outro caminho se for recusado. Responda só "feito" ou "negado".`,
   }),
+  // Faz o agente usar as ferramentas de arquivo uma a uma, para o gancho anotar o nome de cada.
+  ferramentas: () => testeComando('ferramentas', 'Usar as ferramentas de arquivo, uma a uma, com o cliente permitindo', (m) => depois(300, escolher(m, 'allow_once')), 'observar', {
+    prompt: 'Faça estes passos, um por vez, cada um com a ferramenta própria e nunca com o terminal: 1) liste o conteúdo da pasta /data/work; 2) procure arquivos com nome terminado em .txt em /data/work; 3) procure o texto "awika" dentro dos arquivos de /data/work; 4) crie o arquivo /data/work/acp-nomes.txt com o conteúdo "linha um"; 5) edite esse arquivo trocando "um" por "dois"; 6) leia o arquivo e diga o conteúdo; 7) acesse o endereço https://example.com e diga o título da página. Se algum passo for recusado, siga para o próximo. No fim, responda com o resultado de cada passo em uma linha.',
+  }),
+  url: () => testeComando('url', 'Pedir a leitura de um endereço, com o cliente negando: chega pedido?', (m) => escolher(m, 'reject_once'), 'observar', {
+    prompt: 'Leia o conteúdo de https://example.com com a sua ferramenta de leitura de endereços, não com o terminal, e responda só com o título da página. Se não for permitido, responda só "negado".',
+  }),
+  subagente: () => testeComando('subagente', 'Pedir a busca na web por um subagente, com o cliente negando', (m) => escolher(m, 'reject_once'), 'observar', {
+    prompt: 'Não pesquise você mesmo. Crie um subagente e peça a ele que pesquise na web qual é a versão estável mais recente do Node.js. Responda só com o número da versão que ele trouxer; se não for permitido, responda só "negado".',
+  }),
+  agendar: () => testeComando('agendar', 'Pedir um agendamento, com o cliente negando', (m) => escolher(m, 'reject_once'), 'observar', {
+    prompt: 'Use a sua ferramenta de agendamento (schedule) para repetir daqui a 30 segundos, uma vez só, o pedido "diga oi". Responda só "agendado"; se não for permitido, responda só "negado".',
+  }),
+  // O arquivo do gancho some no meio do turno, como faria um comando aprovado: o gancho continua
+  // valendo nesse turno? E no seguinte? Quem apaga é a própria prova, ao receber o pedido do comando.
+  'gancho-apagado': async () => {
+    log('\n[gancho-apagado] O hooks.json pessoal é apagado no meio do turno');
+    const arquivo = path.join(process.env.HOME, '.gemini', 'config', 'hooks.json');
+    const c = await abrir('gancho-apagado');
+    c.aoPedido = (m) => { rmSync(arquivo, { force: true }); log(`    hooks.json apagado pela prova ao receber o pedido; ainda existe: ${existsSync(arquivo)}`); return depois(500, escolher(m, 'allow_once')); };
+    const resumo = (t) => `${JSON.stringify(t.ferramentas.map((f) => `${f.tipo}:${f.estado}`))}; texto "${t.texto.replace(/\s+/g, ' ').slice(0, 60)}"`;
+    const a = await c.turno('Rode no terminal exatamente: ls -la /data/work. Depois de ele terminar, pesquise na web, com a sua ferramenta de busca, qual é a versão estável mais recente do Node.js. Responda só com o número da versão; se a busca não for permitida, responda só "negado".');
+    registrar('gancho-apagado', null, `no mesmo turno, depois de apagado: ${resumo(a)}`, c, a);
+    const b = await c.turno('Pesquise na web, com a sua ferramenta de busca, qual é a versão estável mais recente do Python. Responda só com o número da versão; se a busca não for permitida, responda só "negado".');
+    registrar('gancho-apagado-turno-seguinte', null, `no turno seguinte da mesma sessão: ${resumo(b)}`, c, b);
+    await c.fechar();
+  },
   busca: () => testeComando('busca', 'Pedir uma busca na web, com o cliente negando: chega pedido?', (m) => escolher(m, 'reject_once'), 'observar', {
     prompt: 'Pesquise na web qual é a versão estável mais recente do Node.js e responda só com o número da versão. Use a sua ferramenta de busca na web; não use o terminal. Se não for permitido, responda só "negado".',
   }),
@@ -399,6 +434,7 @@ if (desconhecido) { log(`Teste desconhecido: ${desconhecido}. Testes: ${Object.k
 mkdirSync(DIR, { recursive: true });
 mkdirSync(REGISTROS, { recursive: true });
 prepararAjustes();
+process.on('exit', () => { try { const d = readFileSync('/tmp/awika-gancho-lista.log', 'utf8').trim(); if (d) log(`  gancho da lista: ${d.split(/\r?\n/).join(' | ').slice(0, 900)}`); } catch { /* sem gancho */ } });
 process.on('exit', () => { try { const d = readFileSync('/tmp/awika-gancho-nega.log', 'utf8').trim(); if (d) log(`  gancho da prova chamado: ${d.split(/\r?\n/).join('; ')}`); } catch { /* sem gancho */ } });
 log(`Prova do Antigravity pelo ACP — gancho "${GANCHO}", acesso por ${COM_CHAVE ? 'chave da API do Gemini' : 'conta guardada pelo agy'}; ajustes ${JSON.stringify(AJUSTES)}, opções ${JSON.stringify(ARGS)}, testes: ${lista.join(', ')}`);
 for (const nome of lista) {

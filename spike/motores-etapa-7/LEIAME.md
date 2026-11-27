@@ -22,7 +22,7 @@ O servidor de aprovação da prova faz o papel do servidor do awikabot e do celu
 
 `prova/prova-codex-servidor.mjs` dirige o Codex pelo servidor de aplicativo (`codex app-server`), que é onde o texto sai em trechos e onde a aprovação chega como pedido ao programa que o dirige. O `codex exec`, que o `prova.mjs` usa, nunca pede aprovação. Os testes são os mesmos, mais `cliente-morre`, `leitura`, `leitura-fora`, `dentro-edicao`, `fora-terminal`, `fora-edicao`, `busca` e `esquema`.
 
-`prova/prova-agy-acp.mjs` dirige o Antigravity pelo ACP (`agy acp`), que também traz o pedido de permissão ao programa que o dirige. Usa a chave da API do Gemini, se ela estiver no volume, ou a conta guardada com `agy acp --login`. `AWIKA_AGY_AJUSTES` leva ajustes ao `settings.json` dele, e `AWIKA_AGY_GANCHO` instala um gancho que nega, permite ou quebra de um jeito escolhido (`prova/gancho-nega.mjs`). `prova/gancho-da-pasta.sh` planta um gancho e um servidor MCP numa pasta e confere se rodaram; com `AWIKA_TRABALHO` a sessão abre em outra pasta, que é como se prova que a configuração da subpasta do bot não é lida.
+`prova/prova-agy-acp.mjs` dirige o Antigravity pelo ACP (`agy acp`), que também traz o pedido de permissão ao programa que o dirige. Usa a chave da API do Gemini, se ela estiver no volume, ou a conta guardada com `agy acp --login`. `AWIKA_AGY_AJUSTES` leva ajustes ao `settings.json` dele, e `AWIKA_AGY_GANCHO` instala um gancho que nega, permite ou quebra de um jeito escolhido (`prova/gancho-nega.mjs`). Com `AWIKA_AGY_GANCHO=lista:<modo>` o gancho é o `prova/gancho-lista.mjs`, que vale para toda ferramenta e nega o que não conhece: os modos são `nega`, `espera-permite:<s>` e `espera-nega:<s>`, e dizem o que ele faz com a busca na web. `AWIKA_PRAZO_GANCHO_S` é o prazo que o `agy` dá ao gancho, e `AWIKA_GANCHO_SO_ANOTA=1` faz o gancho só anotar o nome de cada ferramenta, que é como se levantam os nomes de verdade. `prova/gancho-da-pasta.sh` planta um gancho e um servidor MCP numa pasta e confere se rodaram; com `AWIKA_TRABALHO` a sessão abre em outra pasta, que é como se prova que a configuração da subpasta do bot não é lida.
 
 `orquestrador/prova-orquestrador.mjs` é a parte do Claude Code: compara a ferramenta própria, dada por um servidor MCP na linha de comando, com a lista no fim da resposta, conferida por esquema.
 
@@ -52,6 +52,8 @@ docker compose run --rm -it prova agy acp --login
 docker compose run --rm prova node /opt/prova/prova-agy-acp.mjs tudo
 docker compose run --rm prova node /opt/prova/prova-agy-acp.mjs retomar
 docker compose run --rm -e 'AWIKA_AGY_GANCHO=nega:search_web|read_url_content' prova node /opt/prova/prova-agy-acp.mjs busca
+docker compose run --rm -e AWIKA_AGY_GANCHO=lista:nega prova node /opt/prova/prova-agy-acp.mjs busca subagente agendar aprovar
+docker compose run --rm -e AWIKA_AGY_GANCHO=lista:nega -e AWIKA_GANCHO_SO_ANOTA=1 prova node /opt/prova/prova-agy-acp.mjs ferramentas
 
 # Um teste avulso.
 docker compose run --rm prova node /opt/prova/prova.mjs agy gancho-trava

@@ -1122,6 +1122,44 @@ Não coberto:
 - o trabalho do bot com a sessão na pasta de cima: os comandos partem dela, e a prova não rodou um turno de verdade assim com as instruções dizendo a pasta;
 - as opções `--gemini-dir` e `--app-data-dir`, que mudam onde a CLI guarda as coisas dela.
 
+## Etapa 7: a busca na web do Antigravity (2026-11-27)
+
+Pedido do titular em 27/11: fechar a busca na web, que na prova pelo ACP rodou sem pedido de permissão. Rodada no mesmo contêiner, com o mesmo roteiro e um gancho novo, `prova/gancho-lista.mjs`. O acesso foi de novo pela assinatura do titular, em 22 turnos. Nada em `apps/` mudou: é desenho do driver que ainda não existe.
+
+A página de ganchos (`antigravity.google/docs/hooks`, lida em 27/11, sem data) lista as ferramentas pelo nome, entre elas `search_web`, `read_url_content`, `invoke_subagent` e `schedule`, que agenda um pedido para depois. Os nomes das ferramentas de arquivo que ela traz não são os que o `agy` 1.5.18 usa.
+
+| Verificação | Resultado |
+|---|---|
+| Sem gancho | A busca na web roda sem pedido. Um subagente (`invoke_subagent`) também roda sem pedido, pesquisou na web e trouxe a resposta. Um agendamento (`schedule`) rodou sem pedido e disparou sozinho 30 s depois. |
+| Nomes de verdade das ferramentas | `read_file`, `write_file`, `edit_file`, `run_command`, `search_web`, `invoke_subagent` e `schedule`. A página fala em `view_file` e `write_to_file`. Nesta sessão não apareceu ferramenta de ler endereço, de listar pasta nem de procurar em arquivos: o modelo disse que não as tinha. |
+| Gancho que nega o que não conhece | Fecha os três: a busca, o subagente e o agendamento não rodaram. O comando de terminal e a gravação de arquivo continuaram chegando ao cliente como pedido de permissão, e a leitura na própria pasta continuou passando. |
+| Lista com um nome errado | Com os nomes da documentação na lista, o gancho negou também ler e gravar arquivo. Errar a lista fecha demais, não abre. |
+| Gancho que espera e permite | Passa. O gancho segurou cada busca por 100 s e depois permitiu: a busca rodou. Ele recebe o termo, o domínio e, pelo ambiente, o token do turno. |
+| Gancho que espera e nega | Passa: depois de 20 s de espera, a busca não rodou. |
+| Espera longa | Passa. Com o prazo do gancho em 900 s, ele segurou a busca por 600 s e depois permitiu: a busca rodou e o turno terminou normalmente. |
+| Arquivo do gancho apagado no meio do turno | O gancho continuou valendo até o fim daquele turno: a busca seguinte foi negada. No turno seguinte, sem o arquivo, a busca rodou. A configuração pessoal também só é lida no começo de cada turno. |
+
+Como fecha, no driver do Antigravity:
+
+- **Um gancho `PreToolUse` para toda ferramenta, que nega o que não conhece.** As de arquivo e a de terminal saem do gancho sem opinião, porque o pedido de permissão do protocolo já cuida delas. A busca na web fica com o gancho. O resto é negado: o subagente, o agendamento e o que uma versão nova trouxer.
+- **A busca na web ganha cartão pelo gancho, como no Claude Code.** O gancho pergunta ao servidor, com o token do turno, e espera: o termo da busca é o que o cartão mostra. Sem servidor, com resposta ilegível ou sem resposta no prazo, o gancho nega. É o `executarGancho` que já existe.
+- **O servidor confere o arquivo do gancho antes de cada turno**, junto com a pasta de cima. Como a configuração só vale a partir do turno seguinte, um comando aprovado que o apague ou troque não tira o gancho do turno em curso, e a conferência o repõe ou recusa o turno seguinte.
+- **A lista de nomes sai da versão fixada, não da documentação.** Trocar a versão do `agy` é rodar de novo o teste que levanta os nomes.
+
+O gancho do Antigravity nega quando quebra com erro, com saída ilegível ou por tempo, como a prova pelo ACP mediu. Só não nega quando sai com 0 sem dizer nada, e por isso a regra de negar vem primeiro no gancho: ele só sai calado para os nomes da lista.
+
+Com isto e com a pasta de cima, o que falta para o Antigravity entrar como worker é o acesso por chave de API e o driver.
+
+Não coberto:
+
+- a ferramenta de ler endereço (`read_url_content`), que não apareceu nesta sessão, e as do navegador;
+- as chamadas feitas por um subagente: com o gancho, o subagente nem nasce, e não foi visto se as ferramentas dele passariam pelo gancho;
+- ferramentas de servidor MCP;
+- o gancho de verdade, que consulta o servidor: a prova usou um gancho que só espera um tempo fixo;
+- espera acima de 600 s, e o prazo máximo que o `agy` aceita para um gancho;
+- o que a sessão oferece com a chave de API do Gemini, que pode não ser a mesma lista de ferramentas;
+- a conferência do arquivo do gancho antes de cada turno, que é código do driver.
+
 ## Riscos
 
 - Aprovação: um comando aprovado roda com os direitos do contêiner e alcança tudo o que está no volume, inclusive o login do motor. A proteção é a pessoa ler o comando no cartão.
