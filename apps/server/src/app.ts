@@ -20,7 +20,7 @@ import type { Banco } from './banco';
 import { criarBot, editarBot, listarBots, obterBot, paraContrato } from './bots';
 import { CATALOGO, esforcoValido, motorDoCatalogo, motorParaCriarBot } from './catalogo';
 import { listarMensagens } from './conversa';
-import { autenticar, dispositivoAtivo, parear, revogar, type LimitadorDeTentativas } from './dispositivos';
+import { autenticar, dispositivoAtivo, origemDoPedido, parear, revogar, type LimitadorDeTentativas } from './dispositivos';
 import type { Barramento, EventoNumerado } from './eventos';
 import type { GestorDeTurnos } from './turnos';
 
@@ -103,12 +103,18 @@ export function criarApp(deps: Dependencias): Hono<Ambiente> {
 
   // Único ponto sem token: troca um código de uso único pelo token do aparelho.
   app.post('/v1/parear', async (c) => {
-    if (deps.limitador.bloqueado()) return c.json({ erro: 'muitas_tentativas' }, 429);
+    // O servidor do Node entrega a conexão ao Hono em `env.incoming`.
+    const conexao = (c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined)?.incoming?.socket?.remoteAddress;
+    const origem = origemDoPedido(c.req.header('cf-connecting-ip'), conexao);
+    if (deps.limitador.bloqueado(origem)) return c.json({ erro: 'muitas_tentativas' }, 429);
     const corpo = await lerCorpo(c, EsquemaPedidoPareamento);
     if ('resposta' in corpo) return corpo.resposta;
+    // De novo depois da leitura: pedidos simultâneos passaram juntos pela conferência de cima. Daqui
+    // até registrar a falha não há espera, então nenhum outro pedido se encaixa no meio.
+    if (deps.limitador.bloqueado(origem)) return c.json({ erro: 'muitas_tentativas' }, 429);
     const pareado = parear(deps.banco, corpo.dados.codigo, corpo.dados.nome);
     if (!pareado) {
-      deps.limitador.registrarFalha();
+      deps.limitador.registrarFalha(origem);
       return c.json({ erro: 'codigo_invalido' }, 401);
     }
     return c.json({ token: pareado.token, dispositivo: pareado.dispositivo, servidor: servidor() });
