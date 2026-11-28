@@ -60,6 +60,16 @@ export const EsquemaDispositivo = z.object({
 });
 export type Dispositivo = z.infer<typeof EsquemaDispositivo>;
 
+/**
+ * Corpo de `PUT /v1/dispositivo/aviso`: o endereço de aviso push deste aparelho, que o serviço de
+ * push da Expo entrega. Com ele, o servidor avisa o aparelho de um pedido de aprovação mesmo com o
+ * app fechado. O aviso leva só o nome do bot, nunca o pedido.
+ */
+export const EsquemaAvisoDoDispositivo = z.object({
+  endereco: z.string().regex(/^(ExponentPushToken|ExpoPushToken)\[[A-Za-z0-9_-]{8,200}\]$/),
+});
+export type AvisoDoDispositivo = z.infer<typeof EsquemaAvisoDoDispositivo>;
+
 /** O token só aparece aqui, uma vez. O servidor guarda apenas o hash dele. */
 export const EsquemaRespostaPareamento = z.object({
   token: z.string().min(43).max(64),

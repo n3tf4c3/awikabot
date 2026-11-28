@@ -80,11 +80,38 @@ export function listarDispositivos(banco: Banco): DispositivoAdmin[] {
   }));
 }
 
+/** O aparelho revogado também deixa de receber aviso: o endereço dele é esquecido junto. */
 export function revogar(banco: Banco, id: string, agora = Date.now()): boolean {
   const resultado = banco
-    .prepare('UPDATE dispositivos SET revogado_em = ? WHERE id = ? AND revogado_em IS NULL')
+    .prepare('UPDATE dispositivos SET revogado_em = ?, aviso_endereco = NULL WHERE id = ? AND revogado_em IS NULL')
     .run(agora, id);
   return Number(resultado.changes) === 1;
+}
+
+/**
+ * Guarda o endereço de aviso push do aparelho; `null` o esquece. O mesmo endereço sai de qualquer
+ * outro aparelho: é o mesmo celular, pareado de novo, e o aviso não deve chegar duas vezes.
+ */
+export function gravarEnderecoDeAviso(banco: Banco, id: string, endereco: string | null): void {
+  emTransacao(banco, () => {
+    if (endereco !== null) {
+      banco.prepare('UPDATE dispositivos SET aviso_endereco = NULL WHERE aviso_endereco = ? AND id <> ?').run(endereco, id);
+    }
+    banco.prepare('UPDATE dispositivos SET aviso_endereco = ? WHERE id = ? AND revogado_em IS NULL').run(endereco, id);
+  });
+}
+
+/** Esquece um endereço que o serviço de push disse não existir mais, se ainda for o do aparelho. */
+export function esquecerEnderecoDeAviso(banco: Banco, id: string, endereco: string): void {
+  banco.prepare('UPDATE dispositivos SET aviso_endereco = NULL WHERE id = ? AND aviso_endereco = ?').run(id, endereco);
+}
+
+/** Os endereços de aviso dos aparelhos que ainda valem. */
+export function enderecosDeAviso(banco: Banco): { dispositivoId: string; endereco: string }[] {
+  const linhas = banco
+    .prepare('SELECT id, aviso_endereco FROM dispositivos WHERE revogado_em IS NULL AND aviso_endereco IS NOT NULL ORDER BY criado_em, id')
+    .all() as unknown as { id: string; aviso_endereco: string }[];
+  return linhas.map((linha) => ({ dispositivoId: linha.id, endereco: linha.aviso_endereco }));
 }
 
 /**
@@ -95,6 +122,7 @@ export function revogar(banco: Banco, id: string, agora = Date.now()): boolean {
  */
 export function revogarTodos(banco: Banco, agora = Date.now()): number {
   banco.prepare('DELETE FROM codigos_pareamento').run();
+  banco.prepare('UPDATE dispositivos SET aviso_endereco = NULL').run();
   return Number(banco.prepare('UPDATE dispositivos SET revogado_em = ? WHERE revogado_em IS NULL').run(agora).changes);
 }
 

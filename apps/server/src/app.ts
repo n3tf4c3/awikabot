@@ -4,6 +4,7 @@ import { streamSSE } from 'hono/streaming';
 import {
   EsquemaBotEdicao,
   EsquemaBotEntrada,
+  EsquemaAvisoDoDispositivo,
   EsquemaDecisaoAprovacao,
   EsquemaPedidoPareamento,
   EsquemaPedidoTurno,
@@ -20,7 +21,15 @@ import type { Banco } from './banco';
 import { criarBot, editarBot, listarBots, obterBot, paraContrato } from './bots';
 import { CATALOGO, esforcoValido, motorDoCatalogo, motorParaCriarBot } from './catalogo';
 import { listarMensagens } from './conversa';
-import { autenticar, dispositivoAtivo, origemDoPedido, parear, revogar, type LimitadorDeTentativas } from './dispositivos';
+import {
+  autenticar,
+  dispositivoAtivo,
+  gravarEnderecoDeAviso,
+  origemDoPedido,
+  parear,
+  revogar,
+  type LimitadorDeTentativas,
+} from './dispositivos';
 import { FilaDeEventos, type Barramento, type LimitesDaFila } from './eventos';
 import type { GestorDeTurnos } from './turnos';
 
@@ -135,6 +144,19 @@ export function criarApp(deps: Dependencias): Hono<Ambiente> {
   // "Desparear": o próprio aparelho invalida o token dele no servidor.
   app.delete('/v1/dispositivo', (c) => {
     revogar(deps.banco, c.get('dispositivo').id);
+    return c.body(null, 204);
+  });
+
+  // O endereço de aviso push deste aparelho: com ele, o pedido de aprovação chega com o app fechado.
+  app.put('/v1/dispositivo/aviso', async (c) => {
+    const corpo = await lerCorpo(c, EsquemaAvisoDoDispositivo);
+    if ('resposta' in corpo) return corpo.resposta;
+    gravarEnderecoDeAviso(deps.banco, c.get('dispositivo').id, corpo.dados.endereco);
+    return c.body(null, 204);
+  });
+
+  app.delete('/v1/dispositivo/aviso', (c) => {
+    gravarEnderecoDeAviso(deps.banco, c.get('dispositivo').id, null);
     return c.body(null, 204);
   });
 

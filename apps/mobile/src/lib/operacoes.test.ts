@@ -71,6 +71,8 @@ function montar(parcial: Partial<Api> = {}) {
     listarAprovacoes: naoUsada('listarAprovacoes'),
     decidirAprovacao: naoUsada('decidirAprovacao'),
     revogarDispositivo: naoUsada('revogarDispositivo'),
+    registrarAviso: naoUsada('registrarAviso'),
+    esquecerAviso: naoUsada('esquecerAviso'),
     ...parcial,
   };
   const armazem = criarArmazemDados();

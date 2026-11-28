@@ -310,3 +310,9 @@ pub enum DecisaoAprovacaoDecisao {
 pub struct DecisaoAprovacao {
     pub decisao: DecisaoAprovacaoDecisao,
 }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AvisoDoDispositivo {
+    pub endereco: String,
+}

@@ -2,6 +2,18 @@ import path from 'node:path';
 import { z } from 'zod';
 import { motorDoCatalogo } from './catalogo';
 
+function avisoPushValido(valor: string): boolean {
+  if (valor === 'expo' || valor === 'desligado') return true;
+  try {
+    const endereco = new URL(valor);
+    if (endereco.username !== '' || endereco.password !== '') return false;
+    if (endereco.protocol === 'https:') return true;
+    return endereco.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(endereco.hostname);
+  } catch {
+    return false;
+  }
+}
+
 const EsquemaEnv = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -36,6 +48,12 @@ const EsquemaEnv = z
      * `opcao`: pela linha de comando.
      */
     AWIKA_GANCHO: z.enum(['opcao', 'gerenciado']).default('opcao'),
+    /**
+     * Para onde vão os avisos push de pedido de aprovação. `expo`: o serviço de push da Expo, que os
+     * entrega à Apple e ao Google. `desligado`: nenhum aviso sai do servidor. Um endereço serve a um
+     * serviço de mentira, como o do `pnpm verificar`: só `https://`, ou `http://` em loopback.
+     */
+    AWIKA_AVISO_PUSH: z.string().default('expo').refine(avisoPushValido),
   })
   // O motor simulado só existe para teste; em produção ele derruba a partida.
   .refine((env) => !(env.NODE_ENV === 'production' && env.AWIKA_MOTOR === 'simulado'), { path: ['AWIKA_MOTOR'] })

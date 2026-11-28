@@ -7,6 +7,7 @@ import { EsquemaBotEntrada, MOTOR_PADRAO } from '@awikabot/core';
 import pacote from '../package.json' with { type: 'json' };
 import { criarApp } from './app';
 import { expirarPendentesNaPartida, GestorDeAprovacoes } from './aprovacoes';
+import { AvisoPush } from './aviso';
 import { BackupRecusado, conferirBanco, fazerBackup } from './backup';
 import { abrirBanco, type Banco } from './banco';
 import { marcarInterrompidas } from './conversa';
@@ -84,6 +85,15 @@ function servir(env: Env, banco: Banco): void {
 
   const barramento = new Barramento();
   const aprovacoes = new GestorDeAprovacoes({ banco, barramento });
+  // Cada pedido de aprovação também vira aviso push, para chegar ao celular com o app fechado.
+  if (env.AWIKA_AVISO_PUSH !== 'desligado') {
+    const avisoPush = new AvisoPush({ banco, endereco: env.AWIKA_AVISO_PUSH === 'expo' ? undefined : env.AWIKA_AVISO_PUSH });
+    barramento.assinar(undefined, (item) => {
+      if (item.evento.tipo === 'aprovacao_pedida') {
+        avisoPush.avisarPedido(item.evento.aprovacao).catch(() => console.error('aviso push: falha inesperada'));
+      }
+    });
+  }
   const ganchos = new Ganchos();
   const turnos = new GestorDeTurnos({
     banco,

@@ -90,7 +90,7 @@ Um bot executa comandos, então o servidor equivale a um terminal remoto no Pi.
    Verificar: typecheck, lint, testes e build passam; o contêiner sobe no Pi e responde ao health check; o app abre no iPhone e no Android.
 2. Protocolo e conversa: pareamento, bots e turno com streaming.
    Verificar: fluxos 1 a 3 no aparelho, passando pelo túnel. Em 26/11, num Android: o pareamento e a conversa pelo túnel, com o motor real; de bots, só a lista.
-3. Aprovações e push.
+3. Aprovações e push. Os cartões entraram em 23/11; o aviso push foi escrito e testado em 28/11, sem chegar ainda a um aparelho. Ver "Etapa 3: resultado do aviso push".
    Verificar: fluxo 4 com o app fechado e o celular bloqueado.
 4. Concluída em 23/11, no lado do servidor. Robustez no Pi: retomada depois de queda, backup do banco e health check vigiado.
    Verificar: derrubar o contêiner no meio de um turno e conferir o fluxo 5 na volta; restaurar o backup num ambiente descartável.
@@ -195,6 +195,29 @@ Não coberto:
 - o aviso push e a espera acima de 15 minutos;
 - os cartões em aparelho com o motor de verdade: em 25/11 foram vistos num Android, com o motor simulado;
 - o acesso pelo túnel.
+
+## Etapa 3: resultado do aviso push (2026-11-28)
+
+Pedido do titular em 28/11. O aviso push foi escrito como o plano previa: pelo serviço de push da Expo, que entrega à Apple e ao Google, e só com nomes.
+
+- **Servidor** (`apps/server/src/aviso.ts`): cada pedido de aprovação vira um aviso para cada aparelho que deixou o endereço, com "<bot> pede aprovação", o id do bot, o canal `aprovacoes` do Android e prazo de entrega igual ao do pedido, 15 minutos. Nada do pedido vai junto. Os endereços ficam numa coluna nova dos aparelhos (quinta migração), entram por `PUT /v1/dispositivo/aviso`, saem por `DELETE`, com a revogação e com a resposta `DeviceNotRegistered` do serviço. `AWIKA_AVISO_PUSH` escolhe o destino: `expo`, `desligado` ou o endereço de um serviço de mentira.
+- **Contrato**: `EsquemaAvisoDoDispositivo`, com o formato do endereço da Expo. O contrato em Rust foi gerado de novo; o desktop não usa.
+- **App**: `expo-notifications` e `expo-device`, pelo instalador do Expo. A cada sessão aberta, `prepararAviso` cria o canal do Android, pede a permissão a quem ainda não respondeu, pega o endereço no serviço da Expo e o entrega ao servidor. Com o app aberto o aviso não aparece por cima, porque o pedido já está no cartão; o toque num aviso abre a conversa do bot.
+
+| Verificação | Resultado |
+|---|---|
+| Testes | servidor 604, celular 1.098, core 59. Novos: `aviso.test.ts` (o aviso não leva o pedido; revogado não recebe; endereço morto esquecido; serviço fora do ar, lento, recusando ou com resposta estranha não derruba nada), `aviso-push.test.ts` e os casos da rota, do ambiente e do cliente contra o servidor. |
+| `pnpm verificar`, motor simulado | 34 de 34. O runbook sobe um serviço de push de mentira: o aparelho registra o endereço, um pedido de aprovação vira um aviso só, com o nome do bot e sem o comando. |
+| Expo | `expo install --check` passa, Expo Doctor com 20 de 20, e o app empacota para Android e iOS. |
+
+Não coberto, e o que falta para o aviso chegar a um aparelho, tudo do titular:
+
+- **Projeto na conta Expo** (`eas init`, com o login do titular): grava o `projectId` no `app.json`. Sem ele o app não registra endereço nenhum.
+- **Identificador de pacote do Android e do iPhone**, que ainda não foi escolhido.
+- **Android**: um projeto no Firebase, com a chave de serviço do FCM enviada ao projeto da Expo, e o `google-services.json` no app. O Expo Go não recebe aviso push no Android: é preciso um build de desenvolvimento.
+- **iPhone**: a conta de desenvolvedor da Apple, a mesma do TestFlight, para a chave de APNs.
+- **Depois disso**, o F4 com o app fechado e o celular bloqueado, num aparelho de verdade.
+- O servidor não lê os recibos de entrega da Expo, e a permissão negada não aparece na tela.
 
 ## Etapa 4: resultado (2026-11-23)
 

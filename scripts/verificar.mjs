@@ -10,6 +10,7 @@
 // está no ar, com o motor real, e um código de pareamento gerado nele. Gasta
 // uso da conta do motor e deixa um bot de teste no banco desse servidor.
 import { spawn, spawnSync } from 'node:child_process';
+import { createServer } from 'node:http';
 import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -119,7 +120,29 @@ function comandoDoServidor(args, ambiente = local.ambiente, entrada = '') {
 // 1. Subir (só no modo local).
 let local = null;
 /** O que o runbook cria além do servidor principal: desfeito no encerramento, passe ou falhe. */
-const extras = { processos: [], pastas: [] };
+const extras = { processos: [], pastas: [], servicos: [] };
+/**
+ * Um serviço de push de mentira, no lugar do da Expo: guarda os avisos que o servidor manda e
+ * responde como o de verdade. Só no modo local; com o motor real, o servidor manda para a Expo.
+ */
+const avisosRecebidos = [];
+let enderecoDoServicoDePush = null;
+if (!motorReal) {
+  const servicoDePush = createServer((pedidoHttp, respostaHttp) => {
+    let corpo = '';
+    pedidoHttp.on('data', (parte) => { corpo += parte; });
+    pedidoHttp.on('end', () => {
+      let mensagens = [];
+      try { mensagens = JSON.parse(corpo); } catch { mensagens = []; }
+      avisosRecebidos.push(...mensagens);
+      respostaHttp.writeHead(200, { 'content-type': 'application/json' });
+      respostaHttp.end(JSON.stringify({ data: mensagens.map((_, indice) => ({ status: 'ok', id: `recibo-${indice}` })) }));
+    });
+  });
+  await new Promise((pronto) => servicoDePush.listen(0, '127.0.0.1', pronto));
+  extras.servicos.push(servicoDePush);
+  enderecoDoServicoDePush = `http://127.0.0.1:${servicoDePush.address().port}/push`;
+}
 if (!motorReal) {
   if (await responde()) {
     console.error(`FALHOU  a porta ${PORTA} já tem um servidor respondendo; encerre-o ou mude AWIKA_VERIFICAR_PORTA.`);
@@ -141,6 +164,7 @@ if (!motorReal) {
     AWIKA_PORTA_GANCHO: String(PORTA + 1),
     AWIKA_DADOS: dados,
     AWIKA_MOTOR: 'simulado',
+    AWIKA_AVISO_PUSH: enderecoDoServicoDePush,
   };
   local = { servidor, dados, ambiente, ...iniciarServidor(servidor, ambiente) };
 }
@@ -360,10 +384,22 @@ try {
             `resposta (${busca.resposta?.estado}) "${textoDaBusca.slice(0, 80)}"; ${busca.pedidas.length} pedido(s) negado(s)`);
         }
       } else {
+        // O aparelho deixa o endereço de aviso push: cada pedido de aprovação também vira aviso.
+        const enderecoDeAviso = 'ExponentPushToken[verificarverificarverif]';
+        const registro = await pedir('/v1/dispositivo/aviso', { metodo: 'PUT', corpo: { endereco: enderecoDeAviso }, token });
+        const avisosAntes = avisosRecebidos.length;
         const aprovado = await turnoCom('!comando echo oi', 'aprovar');
         registrar('F4', 'ação aprovada roda',
           aprovado.pedidas.length === 1 && aprovado.decididas === 1 && aprovado.resposta?.texto === 'Comando permitido: echo oi',
           `${aprovado.pedidas.length} pedido(s), resposta "${aprovado.resposta?.texto}"`);
+        await esperar(() => avisosRecebidos.length > avisosAntes, 5000);
+        const aviso = avisosRecebidos[avisosAntes];
+        const semOPedido = aviso !== undefined && !JSON.stringify(aviso).includes('echo') && !JSON.stringify(aviso).includes('Bash');
+        registrar('F4', 'pedido de aprovação vira aviso push, só com o nome do bot',
+          registro.status === 204 && avisosRecebidos.length - avisosAntes === 1 && aviso?.to === enderecoDeAviso
+          && /pede aprovação$/.test(String(aviso?.title)) && aviso?.data?.botId === botId && semOPedido,
+          `registro: status ${registro.status}; ${avisosRecebidos.length - avisosAntes} aviso(s): "${aviso?.title}"; sem o pedido: ${semOPedido}`);
+        await pedir('/v1/dispositivo/aviso', { metodo: 'DELETE', token });
         const negado = await turnoCom('!comando rm -rf tudo', 'negar');
         registrar('F4', 'ação negada não roda',
           negado.pedidas.length === 1 && String(negado.resposta?.texto).startsWith('Comando negado'),
@@ -511,6 +547,7 @@ try {
     extra.processo.kill();
     await extra.saiu;
   }
+  for (const servico of extras.servicos) servico.close();
   // Só pastas que este comando criou com `mkdtempSync`.
   for (const pasta of extras.pastas) rmSync(pasta, { recursive: true, force: true });
   if (local) {
@@ -531,5 +568,5 @@ const falhas = resultados.filter((resultado) => !resultado.passou);
 console.log(`\n${resultados.length - falhas.length} de ${resultados.length} verificações passaram em ${((Date.now() - inicio) / 1000).toFixed(1)}s, com o motor ${motorReal ? `real (${MOTOR})` : 'simulado'}.`);
 console.log(motorReal
   ? 'Não verificado por este comando: o app no aparelho; o aviso push; a queda (F5), o backup e a vigia da saúde, que têm ensaio próprio no host.'
-  : 'Não verificado por este comando: o app no aparelho; o motor real; o aviso push; o reinício do contêiner pelo Docker e a vigia derrubando um servidor travado.');
+  : 'Não verificado por este comando: o app no aparelho; o motor real; o aviso push entregue pela Expo a um aparelho; o reinício do contêiner pelo Docker e a vigia derrubando um servidor travado.');
 process.exit(falhas.length === 0 ? 0 : 1);
