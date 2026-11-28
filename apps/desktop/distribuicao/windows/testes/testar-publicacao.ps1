@@ -169,6 +169,9 @@ try {
     Recusa-Ao-Publicar 'ja ha rascunho com a etiqueta' 'ja ha um rascunho com a etiqueta' { param($c) Mudar-Releases $c { param($l) $l + (Um-Release $etiqueta $true) } }
     Recusa-Ao-Publicar 'versao ja publica' 'ja ha um release publico com a etiqueta' { param($c) Mudar-Releases $c { param($l) $l + (Um-Release $etiqueta $false) } }
     Recusa-Ao-Publicar 'versao menor que a ultima publica' 'nao e maior que a ultima publica' { param($c) Mudar-Releases $c { param($l) $l + (Um-Release "$($destino.Prefixo)99.0.0" $false) } }
+    # A lista de releases vem em páginas: a versão maior está depois de cem releases de outro produto.
+    Recusa-Ao-Publicar 'versao menor que a ultima publica, que so aparece depois da primeira pagina' 'nao e maior que a ultima publica, 99.0.0' { param($c)
+        Mudar-Releases $c { param($l) @(1..100 | ForEach-Object { Um-Release "server-v1.$_.0" $false }) + (Um-Release "$($destino.Prefixo)99.0.0" $false) } }
     Recusa-Ao-Publicar 'etiqueta ja existe' "a etiqueta $etiqueta ja existe" { param($c) Write-TextoSemBom (Join-Path $c.Estado 'etiquetas.json') "[{`"ref`":`"refs/tags/$etiqueta`",`"object`":{`"sha`":`"$commit`"}}]" }
 
     # Com uma versão já pública: as duas rodadas de QA têm de ter partido dela, do instalador publicado.

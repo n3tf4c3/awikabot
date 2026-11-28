@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use awikabot_cliente::atualizacao::{self, Atualizador, ErroDeAtualizacao, Oferta, Origem, Versao};
+use awikabot_cliente::atualizacao::{self, Atualizador, ErroDeAtualizacao, Oferta, Origem, UsoDaPastaDePacotes, Versao};
 use awikabot_cliente::preferencias::{self, Preferencias};
 use gpui::{Context, SharedString, Window, div, prelude::*};
 
@@ -104,6 +104,12 @@ pub struct PainelDeAtualizacao {
     configuracao: Configuracao,
     preferencias: Preferencias,
     estado: Estado,
+    /// Muda a cada vez que a pessoa liga ou desliga o aviso. Uma consulta só vale enquanto esta
+    /// for a geração em que ela foi agendada: desligar cancela a que espera e descarta a resposta
+    /// da que já saiu.
+    geracao_do_aviso: u64,
+    /// Enquanto o painel existir, outra instância do app não esvazia a pasta de pacotes.
+    _uso_dos_pacotes: UsoDaPastaDePacotes,
 }
 
 /// Baixa o pacote e confere de quem ele é e que é o da versão oferecida. O que não passa não fica no disco.
@@ -126,9 +132,11 @@ enum ErroNoDownload {
 impl PainelDeAtualizacao {
     pub fn new(configuracao: Configuracao, cx: &mut Context<Self>) -> Self {
         let preferencias = preferencias::carregar(&configuracao.preferencias());
-        // O que ficou de uma execução anterior não foi conferido por esta: começa do zero.
-        let _ = std::fs::remove_dir_all(configuracao.pacotes());
-        let mut painel = Self { configuracao, preferencias, estado: Estado::Parado };
+        // O que ficou de uma execução anterior não foi conferido por esta: começa do zero. Menos
+        // com outra instância do app aberta, que pode estar com um pacote pronto na mesma pasta.
+        let uso_dos_pacotes = atualizacao::ocupar_pasta_de_pacotes(&configuracao.pacotes());
+        let mut painel =
+            Self { configuracao, preferencias, estado: Estado::Parado, geracao_do_aviso: 0, _uso_dos_pacotes: uso_dos_pacotes };
         painel.consultar_se_for_hora(cx);
         painel
     }
@@ -138,13 +146,25 @@ impl PainelDeAtualizacao {
             return;
         }
         let configuracao = self.configuracao.clone();
+        let geracao = self.geracao_do_aviso;
         cx.spawn(async move |painel, cx| {
             cx.background_executor().timer(configuracao.espera).await;
+            // A pessoa desligou o aviso durante a espera: nenhum pedido sai.
+            if !painel.read_with(cx, |painel, _| painel.geracao_do_aviso == geracao).unwrap_or(false) {
+                return;
+            }
             let resultado = cx
                 .background_executor()
                 .spawn(async move { Atualizador::new(configuracao.origem, &configuracao.plataforma).consultar(configuracao.atual) })
                 .await;
-            painel.update(cx, |painel, cx| painel.ao_consultar(resultado, cx)).ok();
+            painel
+                .update(cx, |painel, cx| {
+                    // Desligou com o pedido já feito: a resposta não é mostrada nem registrada.
+                    if painel.geracao_do_aviso == geracao {
+                        painel.ao_consultar(resultado, cx);
+                    }
+                })
+                .ok();
         })
         .detach();
     }
@@ -168,6 +188,8 @@ impl PainelDeAtualizacao {
 
     fn alternar_aviso(&mut self, cx: &mut Context<Self>) {
         self.preferencias.avisar_de_versao_nova = !self.preferencias.avisar_de_versao_nova;
+        // A consulta agendada antes desta troca, ou já a caminho, deixa de valer.
+        self.geracao_do_aviso += 1;
         self.guardar_preferencias();
         self.consultar_se_for_hora(cx);
         cx.notify();
@@ -325,7 +347,7 @@ mod testes {
     use std::time::Instant;
 
     use awikabot_cliente::servidor_de_teste::{PedidoRecebido, RespostaFalsa, ServidorFalso};
-    use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
+    use gpui::{Entity, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, TestAppContext, VisualTestContext};
     use sha2::{Digest, Sha256};
 
     use super::*;
@@ -354,7 +376,7 @@ mod testes {
         let (do_manifesto, do_pacote) =
             (format!("{do_release}/awikabot-desktop-{PLATAFORMA}.json"), format!("{do_release}/awikabot-{versao}-{PLATAFORMA}.exe"));
         ServidorFalso::subir(move |_, pedido| match caminho(pedido) {
-            pedido if pedido == "/repos/dono/repositorio/releases?per_page=30" => RespostaFalsa::json(200, &lista),
+            pedido if pedido == "/repos/dono/repositorio/releases?per_page=30&page=1" => RespostaFalsa::json(200, &lista),
             pedido if pedido == do_manifesto => RespostaFalsa::json(200, &manifesto),
             pedido if pedido == do_pacote => pacote.clone(),
             _ => RespostaFalsa::html(404),
@@ -537,6 +559,79 @@ mod testes {
         assert!(!pasta.preferencias().avisar_de_versao_nova, "desligar fica gravado");
     }
 
+    /// Quantas vezes a lista de versões foi pedida.
+    fn consultas(servidor: &ServidorFalso) -> usize {
+        servidor.pedidos().iter().filter(|pedido| caminho(pedido).starts_with("/repos/")).count()
+    }
+
+    #[gpui::test]
+    fn desligar_o_aviso_durante_a_espera_cancela_a_consulta_agendada(cx: &mut TestAppContext) {
+        let conteudo = b"pacote de teste";
+        let servidor = publicar(RespostaFalsa::bytes(200, conteudo), conteudo);
+        let pasta = Pasta::nova();
+        let (mut configuracao, _) = configurar(&servidor, &pasta, de_ninguem());
+        // O relógio dos testes só anda a pedido: até lá, a consulta fica agendada.
+        configuracao.espera = Duration::from_secs(5);
+        let (painel, mut cx) = abrir(configuracao, cx);
+
+        clicar(&mut cx, "alternar-aviso-de-versao");
+        assert!(!pasta.preferencias().avisar_de_versao_nova);
+        cx.executor().advance_clock(Duration::from_secs(6));
+        assentar(&mut cx);
+        assert_eq!(servidor.pedidos().len(), 0, "desligado durante a espera, nenhum pedido sai");
+        painel.read_with(&cx, |painel, _| assert!(matches!(painel.estado, Estado::Parado), "{:?}", painel.estado));
+
+        // Ligar agenda outra consulta. Desligar e ligar de novo, ainda na espera, não faz sair duas.
+        for _ in 0..3 {
+            clicar(&mut cx, "alternar-aviso-de-versao");
+        }
+        assert!(pasta.preferencias().avisar_de_versao_nova);
+        cx.executor().advance_clock(Duration::from_secs(6));
+        esperar(&mut cx, &painel, "aviso da versão 0.2.0", disponivel);
+        assentar(&mut cx);
+        assert_eq!(consultas(&servidor), 1, "só a consulta de quando o aviso ficou ligado");
+    }
+
+    #[gpui::test]
+    fn desligar_o_aviso_com_a_resposta_a_caminho_nao_mostra_a_oferta(cx: &mut TestAppContext) {
+        let conteudo = b"pacote de teste";
+        let servidor = publicar(RespostaFalsa::bytes(200, conteudo), conteudo);
+        let pasta = Pasta::nova();
+        let (mut configuracao, _) = configurar(&servidor, &pasta, de_ninguem());
+        configuracao.espera = Duration::from_secs(5);
+        let (painel, mut cx) = abrir(configuracao, cx);
+        cx.run_until_parked();
+        let alvo = cx.debug_bounds("alternar-aviso-de-versao").expect("o aviso está na tela").center();
+
+        // O clique é um só, e a consulta acontece no meio dele: o botão do mouse desce com a
+        // consulta ainda agendada e só sobe com a resposta pronta, antes de o painel a receber.
+        cx.simulate_event(MouseDownEvent {
+            position: alvo,
+            modifiers: Modifiers::none(),
+            button: MouseButton::Left,
+            click_count: 1,
+            first_mouse: false,
+        });
+        assert_eq!(servidor.pedidos().len(), 0);
+        // A lista e o manifesto: a consulta inteira, feita fora da tela.
+        while servidor.pedidos().len() < 2 {
+            if !cx.executor().tick() {
+                assert!(cx.dispatcher.advance_clock_to_next_timer(), "a consulta agendada não saiu");
+            }
+        }
+        painel.read_with(&cx, |painel, _| {
+            assert!(painel.preferencias.avisar_de_versao_nova && matches!(painel.estado, Estado::Parado), "{:?}", painel.estado);
+        });
+        cx.simulate_event(MouseUpEvent { position: alvo, modifiers: Modifiers::none(), button: MouseButton::Left, click_count: 1 });
+        assentar(&mut cx);
+
+        assert!(!pasta.preferencias().avisar_de_versao_nova, "o clique desligou o aviso");
+        painel.read_with(&cx, |painel, _| assert!(matches!(painel.estado, Estado::Parado), "{:?}", painel.estado));
+        assert!(!na_tela(&mut cx, "baixar-atualizacao"), "a resposta de uma consulta cancelada não vira oferta");
+        assert_eq!(pasta.preferencias().ultima_consulta_s, None, "nem fica registrada como consulta feita");
+        assert_eq!(servidor.pedidos().len(), 2, "nenhum outro pedido saiu");
+    }
+
     #[gpui::test]
     fn pacote_sem_a_assinatura_esperada_e_apagado_e_nao_ha_como_instalar(cx: &mut TestAppContext) {
         // O pacote chega inteiro, com o tamanho e o hash publicados: quem publicou é que não é quem devia.
@@ -679,6 +774,53 @@ mod testes {
         esperar(&mut cx, &painel, "a instalação é recusada", |painel| matches!(painel.estado, Estado::Falhou { .. }));
         assert!(chamadas.lock().expect("trava").is_empty(), "o instalador não foi chamado");
         assert_eq!(pasta.pacotes(), Vec::<String>::new(), "o arquivo trocado foi apagado");
+    }
+
+    #[cfg(windows)]
+    #[gpui::test]
+    fn o_pacote_pronto_num_painel_continua_instalavel_depois_de_outro_painel_abrir_na_mesma_pasta(cx: &mut TestAppContext) {
+        let (servidor, conteudo, da_microsoft, nome) = publicar_o_pacote_assinado();
+        let pasta = Pasta::nova();
+        let (configuracao, chamadas) = configurar(&servidor, &pasta, da_microsoft);
+        let (painel, mut cx) = abrir(configuracao.clone(), cx);
+        esperar(&mut cx, &painel, "aviso da versão nova", |painel| matches!(painel.estado, Estado::Disponivel(_)));
+        clicar(&mut cx, "baixar-atualizacao");
+        esperar(&mut cx, &painel, "pacote pronto", |painel| matches!(painel.estado, Estado::Pronta { .. }));
+
+        // Outra instância do app abre, com a mesma pasta de dados.
+        let (_outro, mut do_outro) = abrir(configuracao, &mut cx);
+        assentar(&mut do_outro);
+        assert_eq!(pasta.pacotes(), vec![nome.clone()], "o painel que abriu depois apagou o pacote do primeiro");
+
+        clicar(&mut cx, "instalar-atualizacao");
+        esperar(&mut cx, &painel, "o instalador é chamado", |_| !chamadas.lock().expect("trava").is_empty());
+        let chamado = chamadas.lock().expect("trava").clone();
+        assert_eq!(chamado, vec![pasta.0.join("atualizacoes").join(&nome)]);
+        assert_eq!(std::fs::read(&chamado[0]).expect("ler"), conteudo, "o que roda é o que o primeiro painel conferiu");
+    }
+
+    #[gpui::test]
+    fn quem_abre_sozinho_limpa_a_pasta_de_pacotes_e_quem_abre_depois_nao_apaga_nada(cx: &mut TestAppContext) {
+        let servidor = ServidorFalso::subir(|_, _| RespostaFalsa::html(503));
+        let pasta = Pasta::nova();
+        let pacotes = pasta.0.join("atualizacoes");
+        let guardar = |nome: &str| {
+            std::fs::create_dir_all(&pacotes).expect("criar a pasta de pacotes");
+            std::fs::write(pacotes.join(nome), b"um pacote").expect("gravar");
+        };
+        let (configuracao, _) = configurar(&servidor, &pasta, de_ninguem());
+
+        // O que ficou de uma execução anterior não foi conferido por esta: sai.
+        guardar("resto-de-outra-execucao.exe");
+        let (_primeiro, mut cx) = abrir(configuracao.clone(), cx);
+        assentar(&mut cx);
+        assert_eq!(pasta.pacotes(), Vec::<String>::new(), "sem outra instância, o painel começa do zero");
+
+        // Com o primeiro painel aberto, o que está na pasta pode ser dele.
+        guardar("pacote-do-primeiro.exe");
+        let (_segundo, mut do_segundo) = abrir(configuracao, &mut cx);
+        assentar(&mut do_segundo);
+        assert_eq!(pasta.pacotes(), vec!["pacote-do-primeiro.exe".to_owned()], "com outra instância aberta, nada é apagado");
     }
 
     #[test]

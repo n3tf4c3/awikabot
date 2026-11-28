@@ -13,7 +13,7 @@ use std::fmt;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use serde::Deserialize;
@@ -28,8 +28,15 @@ const REPOSITORIO: &str = "n3tf4c3/awikabot";
 pub const PREFIXO_DA_ETIQUETA: &str = "desktop-v";
 /// Um pacote maior que isto não é um instalador deste app.
 const TAMANHO_MAXIMO_DO_PACOTE: u64 = 300 * 1024 * 1024;
+/// O limite de cada página da lista de releases.
 const TAMANHO_MAXIMO_DA_LISTA: u64 = 2 * 1024 * 1024;
 const TAMANHO_MAXIMO_DO_MANIFESTO: u64 = 64 * 1024;
+/// A lista de releases vem em páginas, e todas são lidas: os releases de outros produtos do
+/// repositório podem encher a primeira. Os scripts de release leem estes dois valores daqui
+/// (`Get-PaginacaoDosReleases`, em `comum.ps1`), para as duas pontas percorrerem a lista igual.
+const RELEASES_POR_PAGINA: usize = 30;
+/// Uma lista que não acaba, por defeito ou por malícia de quem responde, para aqui.
+const TETO_DE_PAGINAS: usize = 20;
 /// O app consulta no máximo uma vez por dia.
 const INTERVALO_ENTRE_CONSULTAS_S: u64 = 24 * 60 * 60;
 
@@ -225,22 +232,35 @@ impl Atualizador {
     }
 
     /// Consulta as versões publicadas. Devolve a mais nova, se for maior que `atual`.
+    ///
+    /// A lista vem em páginas, e a versão mais nova pode estar em qualquer uma. O número da página
+    /// é montado aqui: o cabeçalho `Link` da resposta não é seguido, porque nada do que a rede
+    /// respondeu vira parte de um endereço. A última página é a que vem com menos que uma página
+    /// cheia. Erro em qualquer página é erro da consulta: lista pela metade não vira oferta.
     pub fn consultar(&self, atual: Versao) -> Result<Option<Oferta>, ErroDeAtualizacao> {
-        let endereco = format!("{}/repos/{}/releases?per_page=30", self.origem.api, self.origem.repositorio);
-        let texto = Self::obter_texto(&self.consultas, &endereco, "application/vnd.github+json", TAMANHO_MAXIMO_DA_LISTA)?;
-        let lancamentos: Vec<Lancamento> =
-            serde_json::from_str(&texto).map_err(|_| ErroDeAtualizacao::RespostaInvalida("a lista de versões não é a esperada"))?;
-
         let manifesto = nome_do_manifesto(&self.plataforma);
-        let mais_nova = lancamentos
-            .iter()
-            .filter(|lancamento| !lancamento.draft && !lancamento.prerelease)
-            .filter_map(|lancamento| {
-                let versao = Versao::ler(lancamento.tag_name.strip_prefix(PREFIXO_DA_ETIQUETA)?)?;
-                // Só vale um release que tenha pacote para esta plataforma.
-                lancamento.assets.iter().any(|arquivo| arquivo.name == manifesto).then_some(versao)
-            })
-            .max();
+        let mut mais_nova: Option<Versao> = None;
+        // Passar do teto não é erro: vale a maior versão achada até ali.
+        for pagina in 1..=TETO_DE_PAGINAS {
+            let endereco =
+                format!("{}/repos/{}/releases?per_page={RELEASES_POR_PAGINA}&page={pagina}", self.origem.api, self.origem.repositorio);
+            let texto = Self::obter_texto(&self.consultas, &endereco, "application/vnd.github+json", TAMANHO_MAXIMO_DA_LISTA)?;
+            let lancamentos: Vec<Lancamento> =
+                serde_json::from_str(&texto).map_err(|_| ErroDeAtualizacao::RespostaInvalida("a lista de versões não é a esperada"))?;
+            let da_pagina = lancamentos
+                .iter()
+                .filter(|lancamento| !lancamento.draft && !lancamento.prerelease)
+                .filter_map(|lancamento| {
+                    let versao = Versao::ler(lancamento.tag_name.strip_prefix(PREFIXO_DA_ETIQUETA)?)?;
+                    // Só vale um release que tenha pacote para esta plataforma.
+                    lancamento.assets.iter().any(|arquivo| arquivo.name == manifesto).then_some(versao)
+                })
+                .max();
+            mais_nova = mais_nova.max(da_pagina);
+            if lancamentos.len() < RELEASES_POR_PAGINA {
+                break;
+            }
+        }
         match mais_nova {
             Some(versao) if versao > atual => self.ler_manifesto(versao).map(Some),
             _ => Ok(None),
@@ -291,7 +311,7 @@ impl Atualizador {
         let do_disco = |erro: std::io::Error| ErroDeAtualizacao::Disco(erro.to_string());
         fs::create_dir_all(pasta).map_err(do_disco)?;
         let destino = pasta.join(&oferta.arquivo);
-        let parcial = pasta.join(format!("{}.part", oferta.arquivo));
+        let parcial = pasta.join(nome_do_parcial(&oferta.arquivo));
 
         let baixado = self.baixar_para(oferta, &parcial, cancelar, progresso).and_then(|()| {
             // Um pacote de uma tentativa anterior com o mesmo nome dá lugar ao que acabou de ser conferido.
@@ -357,6 +377,58 @@ impl Atualizador {
         }
         arquivo.sync_all().map_err(do_disco)
     }
+}
+
+/// O uso da pasta de pacotes por uma instância do app. Enquanto este valor existir, nenhuma
+/// outra instância esvazia a pasta.
+#[derive(Debug)]
+pub struct UsoDaPastaDePacotes {
+    /// A trava é do sistema e dura enquanto o arquivo estiver aberto: some quando o app fecha,
+    /// mesmo que ele morra sem avisar.
+    _trava: Option<fs::File>,
+}
+
+/// Marca a pasta de pacotes como em uso por esta instância do app e, se nenhuma outra a estiver
+/// usando, a esvazia: o que ficou de uma execução anterior não foi conferido por esta. Com outra
+/// instância aberta nada é apagado, porque o pacote que está lá pode ser o que ela mostra como pronto.
+///
+/// A marca é uma trava do sistema num arquivo ao lado da pasta. Cada instância aberta segura a
+/// trava compartilhada; só quem a consegue sozinho, por um instante, limpa. Sem conseguir criar
+/// ou pegar a trava, nada é apagado: um pacote que sobra não é usado por ninguém, e um pacote
+/// apagado de outra instância faz falta a ela.
+pub fn ocupar_pasta_de_pacotes(pasta: &Path) -> UsoDaPastaDePacotes {
+    let Some(trava) = abrir_trava(pasta) else { return UsoDaPastaDePacotes { _trava: None } };
+    if trava.try_lock().is_ok() {
+        let _ = fs::remove_dir_all(pasta);
+        let _ = trava.unlock();
+    }
+    // Entre soltar a trava de quem limpa e pegar a de quem usa, outra instância pode limpar a
+    // pasta: não faz mal, esta ainda não baixou nada. Se ela estiver no meio da limpeza, a espera
+    // é curta e tem fim.
+    for _ in 0..50 {
+        if trava.try_lock_shared().is_ok() {
+            return UsoDaPastaDePacotes { _trava: Some(trava) };
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    UsoDaPastaDePacotes { _trava: None }
+}
+
+/// O arquivo da trava: ao lado da pasta de pacotes, com o nome dela. Fica fora da pasta para
+/// que nela só haja pacotes, e para a limpeza não o apagar.
+fn abrir_trava(pasta: &Path) -> Option<fs::File> {
+    let mut nome = pasta.file_name()?.to_owned();
+    nome.push(".trava");
+    let arquivo = pasta.with_file_name(nome);
+    fs::create_dir_all(arquivo.parent()?).ok()?;
+    fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(arquivo).ok()
+}
+
+/// O nome do arquivo provisório de um download. Cada download tem o dele: duas instâncias do app
+/// baixando a mesma versão ao mesmo tempo não gravam uma por cima da outra.
+fn nome_do_parcial(arquivo: &str) -> String {
+    static DOWNLOADS: AtomicU64 = AtomicU64::new(0);
+    format!("{arquivo}.{}-{}.part", std::process::id(), DOWNLOADS.fetch_add(1, Ordering::Relaxed))
 }
 
 #[cfg(test)]
@@ -426,6 +498,16 @@ mod testes {
     fn os_nomes_dos_arquivos_saem_da_versao_e_da_plataforma() {
         assert_eq!(nome_do_manifesto("windows-x64"), "awikabot-desktop-windows-x64.json");
         assert_eq!(nome_do_pacote(v(0, 2, 0), "windows-x64"), "awikabot-0.2.0-windows-x64.exe");
+    }
+
+    #[test]
+    fn cada_download_tem_o_arquivo_provisorio_dele() {
+        let (um, outro) = (nome_do_parcial("awikabot-0.2.0-windows-x64.exe"), nome_do_parcial("awikabot-0.2.0-windows-x64.exe"));
+        assert_ne!(um, outro);
+        for nome in [um, outro] {
+            // O nome continua dizendo de que pacote é, e que ainda não é o pacote.
+            assert!(nome.starts_with("awikabot-0.2.0-windows-x64.exe.") && nome.ends_with(".part"), "{nome}");
+        }
     }
 
     #[test]

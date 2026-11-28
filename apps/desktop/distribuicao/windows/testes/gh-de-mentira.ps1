@@ -1,4 +1,4 @@
-# Um `gh` de mentira para o teste dos scripts de publicação: guarda releases, etiquetas e
+# Um `gh` de mentira para os testes dos scripts de release: guarda releases, etiquetas e
 # arquivos numa pasta, e nunca fala com a rede. Só responde aos pedidos que os scripts fazem.
 #
 # A pasta vem em AWIKA_GH_DE_MENTIRA. Um arquivo vazio com um destes nomes, nela, planta um defeito:
@@ -23,8 +23,12 @@ function Opcao([string[]]$linha, [string]$nome) {
 }
 $linha = [string[]]$args
 
-if ($linha[0] -eq 'api' -and $linha[1] -match '^repos/[^/]+/[^/]+/releases\?per_page=100$') {
-    Get-Content -Raw $arquivoDosReleases
+# A lista de releases sai em páginas, como no GitHub: `per_page` diz quantos e `page`, qual página.
+if ($linha[0] -eq 'api' -and $linha[1] -match '^repos/[^/]+/[^/]+/releases\?per_page=(\d+)&page=([1-9]\d*)$') {
+    $porPagina = [int]$Matches[1]
+    $pagina = [int]$Matches[2]
+    $daPagina = @(@(Ler-Lista $arquivoDosReleases) | Select-Object -Skip (($pagina - 1) * $porPagina) -First $porPagina)
+    ConvertTo-Json -InputObject @($daPagina) -Depth 6
     exit 0
 }
 if ($linha[0] -eq 'api' -and $linha[1] -match '^repos/[^/]+/[^/]+/git/matching-refs/tags/(.+)$') {
