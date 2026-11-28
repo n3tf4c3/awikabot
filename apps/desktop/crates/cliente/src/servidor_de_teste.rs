@@ -133,11 +133,21 @@ pub struct RespostaFalsa {
     cabecalhos: Vec<(String, String)>,
     /// O tamanho que a resposta diz ter, quando não é o do corpo: uma resposta cortada no caminho.
     tamanho_declarado: Option<usize>,
+    /// Quanto esperar entre a primeira metade do corpo e o resto.
+    pausa_no_meio: Duration,
 }
 
 impl RespostaFalsa {
     fn com(status: u16, tipo: &'static str, corpo: Vec<u8>) -> Self {
-        Self { status, tipo, corpo, segurar: Duration::ZERO, cabecalhos: Vec::new(), tamanho_declarado: None }
+        Self {
+            status,
+            tipo,
+            corpo,
+            segurar: Duration::ZERO,
+            cabecalhos: Vec::new(),
+            tamanho_declarado: None,
+            pausa_no_meio: Duration::ZERO,
+        }
     }
 
     /// Um fluxo de eventos que manda `corpo` e fecha.
@@ -166,6 +176,12 @@ impl RespostaFalsa {
         resposta
     }
 
+    /// Um cabeçalho a mais na resposta, como o `Link` de uma lista que vem em páginas.
+    pub fn com_cabecalho(mut self, nome: &str, valor: &str) -> Self {
+        self.cabecalhos.push((nome.to_owned(), valor.to_owned()));
+        self
+    }
+
     /// Diz ter `tamanho` bytes, mande o corpo o que mandar: é como uma resposta cortada chega ao cliente.
     pub fn declarando(mut self, tamanho: usize) -> Self {
         self.tamanho_declarado = Some(tamanho);
@@ -174,6 +190,13 @@ impl RespostaFalsa {
 
     pub fn segurando(mut self, duracao: Duration) -> Self {
         self.segurar = duracao;
+        self
+    }
+
+    /// Manda a primeira metade do corpo, espera e só então manda o resto: uma resposta que
+    /// chega inteira, mas demora, e fica um tempo pela metade do lado de quem a recebe.
+    pub fn em_duas_partes(mut self, pausa: Duration) -> Self {
+        self.pausa_no_meio = pausa;
         self
     }
 }
@@ -238,8 +261,19 @@ fn atender(
     let extras: String = resposta.cabecalhos.iter().map(|(nome, valor)| format!("{nome}: {valor}\r\n")).collect();
     let cabecalho =
         format!("HTTP/1.1 {} X\r\ncontent-type: {}\r\n{tamanho}{extras}connection: close\r\n\r\n", resposta.status, resposta.tipo);
-    if conexao.write_all(cabecalho.as_bytes()).and_then(|()| conexao.write_all(&resposta.corpo)).and_then(|()| conexao.flush()).is_err() {
+    let (comeco, resto) =
+        resposta.corpo.split_at(if resposta.pausa_no_meio.is_zero() { resposta.corpo.len() } else { resposta.corpo.len() / 2 });
+    if conexao.write_all(cabecalho.as_bytes()).and_then(|()| conexao.write_all(comeco)).and_then(|()| conexao.flush()).is_err() {
         return;
+    }
+    if !resto.is_empty() {
+        let meio = Instant::now() + resposta.pausa_no_meio;
+        while Instant::now() < meio && !parar.load(Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        if conexao.write_all(resto).and_then(|()| conexao.flush()).is_err() {
+            return;
+        }
     }
     let fim = Instant::now() + resposta.segurar;
     while Instant::now() < fim && !parar.load(Ordering::Relaxed) {

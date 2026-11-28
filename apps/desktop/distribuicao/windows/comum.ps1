@@ -194,11 +194,34 @@ function Get-DestinoDosReleases {
     return [pscustomobject]@{ Repositorio = $repositorio.Groups[1].Value; Prefixo = $prefixo.Groups[1].Value }
 }
 
-# Os releases do repositório no GitHub, rascunhos inclusive, como a API os devolve.
+# Como a lista de releases é percorrida, lido de onde o atualizador do app o lê: quantos releases
+# vêm por página e em quantas páginas a leitura para. As duas pontas têm de ver a mesma lista.
+function Get-PaginacaoDosReleases {
+    $fonte = Get-Content -Raw (Join-Path $script:PastaDoDesktop 'crates\cliente\src\atualizacao.rs')
+    $porPagina = [regex]::Match($fonte, '(?m)^const RELEASES_POR_PAGINA: usize = (\d{1,3});')
+    $teto = [regex]::Match($fonte, '(?m)^const TETO_DE_PAGINAS: usize = (\d{1,3});')
+    if (-not $porPagina.Success -or -not $teto.Success) { throw 'nao achei em atualizacao.rs como a lista de releases e percorrida' }
+    $paginacao = [pscustomobject]@{ PorPagina = [int]$porPagina.Groups[1].Value; Teto = [int]$teto.Groups[1].Value }
+    if ($paginacao.PorPagina -lt 1 -or $paginacao.Teto -lt 1) { throw 'a paginacao dos releases em atualizacao.rs nao faz sentido' }
+    return $paginacao
+}
+
+# Os releases do repositório no GitHub, rascunhos inclusive, como a API os devolve. A lista vem em
+# páginas, e todas são lidas, com a regra do atualizador do app (`consultar`, em atualizacao.rs):
+# o número da página é montado aqui, e a última página é a que vem com menos que uma página
+# cheia. No teto de páginas o script para: uma etapa do release não decide com a lista pela metade.
 function Get-Releases {
     param([string]$Gh, [string]$Repositorio)
-    $texto = (Invoke-Programa $Gh @('api', "repos/$Repositorio/releases?per_page=100") $script:RaizDoRepositorio) -join "`n"
-    return @($texto | ConvertFrom-Json | ForEach-Object { $_ })
+    $paginacao = Get-PaginacaoDosReleases
+    $todos = @()
+    for ($pagina = 1; $pagina -le $paginacao.Teto; $pagina++) {
+        $pedido = "repos/$Repositorio/releases?per_page=$($paginacao.PorPagina)&page=$pagina"
+        $texto = (Invoke-Programa $Gh @('api', $pedido) $script:RaizDoRepositorio) -join "`n"
+        $daPagina = @($texto | ConvertFrom-Json | ForEach-Object { $_ })
+        $todos += $daPagina
+        if ($daPagina.Count -lt $paginacao.PorPagina) { return $todos }
+    }
+    throw "a lista de releases nao acabou em $($paginacao.Teto) paginas de $($paginacao.PorPagina): o teto esta em atualizacao.rs"
 }
 
 # A etiqueta existe no repositório do GitHub? Devolve o commit para onde ela aponta, ou nada.

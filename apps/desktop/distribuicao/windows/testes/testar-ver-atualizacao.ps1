@@ -1,7 +1,8 @@
 # Teste do que a conferência depois de publicar (ver-atualizacao.ps1) decide sem o Sandbox: o
-# julgamento do histórico, de quem a evidência diz que foram os cliques, e as recusas da versão
-# anterior, que o QA também usa. E da guarda que abre os dois roteiros de dentro do Sandbox, o
-# desta conferência e o do QA: eles começam por ela, e ela para fora da conta do Sandbox.
+# julgamento do histórico, de quem a evidência diz que foram os cliques, as recusas da versão
+# anterior, que o QA também usa, e qual é a última versão pública quando a lista de releases não
+# cabe numa página. E da guarda que abre os dois roteiros de dentro do Sandbox, o desta
+# conferência e o do QA: eles começam por ela, e ela para fora da conta do Sandbox.
 #
 #   powershell -ExecutionPolicy Bypass -File apps/desktop/distribuicao/windows/testes/testar-ver-atualizacao.ps1
 #
@@ -171,6 +172,68 @@ try {
     Esperar-Recusa 'anterior: sem o instalador' 'falta o instalador da versao anterior' { Resolve-VersaoAnterior (Montar-Anterior $de { param($m, $p) Remove-Item -LiteralPath (Join-Path $p $m.arquivo) }) $para $false }
     Esperar-Recusa 'anterior: instalador trocado' 'nao e o do manifesto dela' { Resolve-VersaoAnterior (Montar-Anterior $de { param($m, $p) Add-Content -LiteralPath (Join-Path $p $m.arquivo) -Value 'x' }) $para $false }
     Esperar-Recusa 'anterior: instalador sem assinatura, com o Smart App Control ligado' 'nao tem assinatura valida' { Resolve-VersaoAnterior (Montar-Anterior) $para $true }
+
+    # --- A última versão pública, com a lista de releases em mais de uma página ---
+    # A versão nova é a maior da lista inteira, e a lista vem em páginas. O `gh` é o de mentira:
+    # guarda os releases numa pasta temporária, entrega-os em páginas como o GitHub e anota cada
+    # pedido. A regra é a do atualizador do app, e os números são lidos de onde ele os lê.
+    $gh = Join-Path $PSScriptRoot 'gh-de-mentira.ps1'
+    $paginacao = Get-PaginacaoDosReleases
+    $prefixo = (Get-DestinoDosReleases).Prefixo
+    $listagens = 0
+    function Listar-Releases([string]$json) {
+        $script:listagens++
+        $estado = Join-Path $area "gh-$script:listagens"
+        New-Item -ItemType Directory -Force $estado | Out-Null
+        Write-TextoSemBom (Join-Path $estado 'releases.json') $json
+        $visto = [pscustomobject]@{ Releases = @(); Erro = ''; Paginas = @() }
+        $env:AWIKA_GH_DE_MENTIRA = $estado
+        try { $visto.Releases = @(Get-Releases $gh 'dono/repositorio') } catch { $visto.Erro = "$_" }
+        finally { Remove-Item Env:\AWIKA_GH_DE_MENTIRA -ErrorAction SilentlyContinue }
+        $pedidos = Join-Path $estado 'chamadas.log'
+        if (Test-Path $pedidos) { $visto.Paginas = @(Get-Content $pedidos | ForEach-Object { $_ -replace '^api repos/dono/repositorio/releases\?', '' }) }
+        return $visto
+    }
+    # Releases de outro produto, que o atualizador do desktop não enxerga.
+    function De-OutroProduto([int]$quantos) {
+        return @(1..$quantos | ForEach-Object { [pscustomobject]@{ tag_name = "server-v1.$_.0"; draft = $false; prerelease = $false; assets = @() } })
+    }
+    function Do-Desktop([string]$versao) { return [pscustomobject]@{ tag_name = "$prefixo$versao"; draft = $false; prerelease = $false; assets = @() } }
+    function Em-Json($releases) { return ConvertTo-Json -InputObject @($releases) -Depth 4 }
+    function Paginas-Pedidas([int]$quantas) { return @(1..$quantas | ForEach-Object { "per_page=$($paginacao.PorPagina)&page=$_" }) }
+    function Esperar-Listagem([string]$nome, $visto, [int]$releases, [int]$paginas, $maior) {
+        $motivos = @()
+        if ($visto.Erro) { $motivos += "a listagem parou: $($visto.Erro)" }
+        if ($visto.Releases.Count -ne $releases) { $motivos += "vieram $($visto.Releases.Count) releases, e nao $releases" }
+        if (($visto.Paginas -join ' ') -cne ((Paginas-Pedidas $paginas) -join ' ')) { $motivos += "os pedidos foram: $($visto.Paginas -join ' ')" }
+        $achada = Get-MaiorVersaoPublica $visto.Releases $prefixo
+        if ("$achada" -ne "$maior") { $motivos += "a maior versao publica saiu '$achada', e nao '$maior'" }
+        Anotar-Caso $nome $motivos
+    }
+
+    # A mesma lista que o teste do cliente do app lê (`tests/atualizacao.rs`): a primeira página
+    # vem cheia e sem nada que sirva, e a versão está na segunda. O app e o script escolhem a mesma.
+    $emDuasPaginas = Get-Content -Raw (Join-Path $script:PastaDoDesktop 'crates\cliente\tests\casos\releases-em-duas-paginas.json')
+    $daLista = @($emDuasPaginas | ConvertFrom-Json | ForEach-Object { $_ })
+    $motivos = @()
+    if ($daLista.Count -le $paginacao.PorPagina) { $motivos += 'a lista de teste cabe numa pagina so' }
+    if (Get-MaiorVersaoPublica @($daLista | Select-Object -First $paginacao.PorPagina) $prefixo) { $motivos += 'a primeira pagina da lista de teste ja traz uma versao publica' }
+    Anotar-Caso 'releases: a lista de teste so tem versao publica depois da primeira pagina' $motivos
+    Esperar-Listagem 'releases: a versao que so aparece na segunda pagina e achada, a mesma que o app escolhe' (Listar-Releases $emDuasPaginas) $daLista.Count 2 '0.2.0'
+
+    # Cem releases de outro produto na frente: era o que a janela de uma página só deixava de fora.
+    $cemNaFrente = @(De-OutroProduto 100) + (Do-Desktop '0.3.0')
+    Esperar-Listagem 'releases: cem de outro produto na frente nao escondem o do desktop' (Listar-Releases (Em-Json $cemNaFrente)) 101 4 '0.3.0'
+    Esperar-Listagem 'releases: repositorio sem release nenhum' (Listar-Releases '[]') 0 1 ''
+    # Uma página cheia não diz que acabou: a seguinte é pedida, e vem vazia.
+    Esperar-Listagem 'releases: uma pagina cheia pede a seguinte' (Listar-Releases (Em-Json (@(De-OutroProduto ($paginacao.PorPagina - 1)) + (Do-Desktop '0.4.0')))) $paginacao.PorPagina 2 '0.4.0'
+
+    # No teto de páginas o script para: uma etapa do release não decide com a lista pela metade.
+    $semFim = Listar-Releases (Em-Json (De-OutroProduto ($paginacao.PorPagina * $paginacao.Teto)))
+    $motivos = @()
+    if ($semFim.Erro.IndexOf('a lista de releases nao acabou', [StringComparison]::Ordinal) -lt 0) { $motivos += "nao parou no teto: '$($semFim.Erro)'" }
+    if (($semFim.Paginas -join ' ') -cne ((Paginas-Pedidas $paginacao.Teto) -join ' ')) { $motivos += "foram $($semFim.Paginas.Count) pedidos, e nao $($paginacao.Teto), um por pagina" }
+    Anotar-Caso 'releases: lista que nao acaba para no teto de paginas' $motivos
 
     # --- A guarda dos roteiros que rodam dentro do Sandbox ---
     # Os roteiros de verdade são só lidos e analisados. O que roda aqui é a primeira instrução de
