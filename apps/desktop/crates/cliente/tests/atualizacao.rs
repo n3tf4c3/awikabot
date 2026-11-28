@@ -412,7 +412,19 @@ fn a_pasta_de_pacotes_so_e_esvaziada_por_quem_a_usa_sozinho() {
     // Só depois de todas fecharem o pacote vira resto.
     drop(segunda);
     drop(terceira);
-    let _quarta = ocupar_pasta_de_pacotes(&pacotes);
+    // A trava de quem fechou pode durar um instante a mais: se outro teste deste executável abre
+    // um processo bem nessa hora, o processo novo nasce com cópias dos arquivos abertos, e a trava
+    // só se solta quando ele troca de programa. Visto na CI do macOS. Enquanto isso, quem abre não
+    // apaga nada, que é o lado seguro; a espera curta deixa o instante passar.
+    let limite = Instant::now() + Duration::from_secs(5);
+    let _quarta = loop {
+        let uso = ocupar_pasta_de_pacotes(&pacotes);
+        if !pronto.exists() || Instant::now() >= limite {
+            break uso;
+        }
+        drop(uso);
+        std::thread::sleep(Duration::from_millis(20));
+    };
     assert!(!pronto.exists(), "sem ninguém usando, o pacote é resto e sai");
 }
 
