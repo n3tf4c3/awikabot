@@ -8,7 +8,8 @@
 # Cada chamada fica anotada em FALSO_REGISTRO.
 #
 # FALSO_FALHA escolhe um defeito por vez; FALSO_NO_AR faz o servidor parecer no ar; FALSO_PAUSA
-# segura o empacotamento até o arquivo indicado existir, para o teste de duas execuções juntas.
+# segura o empacotamento do backup, ou a extração da restauração, até o arquivo indicado existir,
+# para os testes de duas execuções juntas.
 set -eu
 
 dados=${FALSO_DADOS:?defina FALSO_DADOS}
@@ -111,8 +112,22 @@ case "$sub" in
     if [ "$sub" = run ] && [ "$entrada" = sh ]; then
       # run --entrypoint sh server -c <roteiro> [sh <argumentos...>]
       case "${2:-}" in
+        *flock*)
+          # A trava do volume, como o flock do contêiner: uma execução por vez, e ela se solta
+          # quando a entrada do contêiner se fecha, como quando o restaurar.sh termina ou morre.
+          anotar "run travar"
+          [ "$falha" != trava ] || exit 1
+          if mkdir "$dados/.trava-de-mentira" 2>/dev/null; then
+            echo travada
+            cat >/dev/null
+            rmdir "$dados/.trava-de-mentira"
+          else
+            echo ocupada
+          fi
+          ;;
         *'tar -C'*)
           anotar "run extrair"
+          esperar_a_liberacao
           # A leitura do arquivo falha no meio de um membro, depois de o banco já ter saído.
           if [ "$falha" = extracao-interrompida ]; then head -c 1300 | sh "$@"; else sh "$@"; fi
           ;;

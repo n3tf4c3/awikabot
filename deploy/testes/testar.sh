@@ -200,8 +200,8 @@ volume_nao_foi_aberto() {
 
 novo_destino_de_restauracao
 restaurar ''
-conferir "sem defeito: sai com 0, o volume recebe o banco, o bot e a conversa, e a pasta à parte não fica" \
-  "$(todas "$(se [ "$estado" -eq 0 ])" "$(se restaurado)" "$(se sem_pasta_a_parte)")"
+conferir "sem defeito: sai com 0, o volume recebe o banco, o bot e a conversa, e a pasta à parte e a trava não ficam" \
+  "$(todas "$(se [ "$estado" -eq 0 ])" "$(se restaurado)" "$(se sem_pasta_a_parte)" "$(se [ ! -e "$dados/.trava-de-mentira" ])")"
 conferir "sem defeito: extrai à parte, confere o banco, revoga os aparelhos e só então põe no lugar, e diz isso" \
   "$(todas "$(se na_ordem)" "$(se grep -q 'foram revogados' "$raiz/saida")")"
 
@@ -281,6 +281,72 @@ echo "banco que já estava lá" >"$dados/awikabot.db"
 restaurar ''
 conferir "volume com dados: recusa, não troca o banco, não extrai nem revoga nada" \
   "$(todas "$(se [ "$estado" -ne 0 ])" "$(se [ "$(cat "$dados/awikabot.db")" = "banco que já estava lá" ])" "$(se nao grep -q 'revogar-todos\|run extrair\|run tar' "$FALSO_REGISTRO")" "$(se sem_pasta_a_parte)")"
+
+novo_destino_de_restauracao
+restaurar trava
+conferir "a trava do volume não pode ser tomada: recusa sem conferir o volume, extrair nem pôr nada no lugar" \
+  "$(todas "$(se [ "$estado" -ne 0 ])" "$(se grep -qF 'não foi possível travar o volume' "$raiz/saida")" "$(se nao grep -q '^run conferir-volume$\|^run extrair$\|^run promover$' "$FALSO_REGISTRO")" "$(se vazio "$dados")")"
+
+echo "== restaurar.sh, duas execuções no mesmo volume"
+
+esperar_a_extracao() {
+  voltas=0
+  while ! grep -q '^run extrair$' "$FALSO_REGISTRO" && [ "$voltas" -lt 200 ]; do
+    sleep 0.1
+    voltas=$((voltas + 1))
+  done
+}
+
+# A primeira fica parada na extração, já com o volume conferido como livre, enquanto a segunda tenta
+# pôr outro backup no mesmo volume. Sem a trava, as duas passam pela conferência e cada item vai para
+# o lugar vindo de uma cópia. Depois a primeira é solta.
+novo_destino_de_restauracao
+libera="$raiz/libera-restauracao-$volume"
+(
+  estado=0
+  FALSO_PAUSA=$libera FALSO_FALHA='' sh "$scripts/restaurar.sh" "$tar_bom" </dev/null >"$raiz/saida-da-primeira" 2>&1 || estado=$?
+  echo "$estado" >"$raiz/estado-da-primeira"
+) &
+esperar_a_extracao
+estado_da_segunda=0
+FALSO_FALHA='' sh "$scripts/restaurar.sh" "$outro_tar" </dev/null >"$raiz/saida-da-segunda" 2>&1 || estado_da_segunda=$?
+: >"$libera"
+wait
+estado_da_primeira=$(cat "$raiz/estado-da-primeira")
+cat "$raiz/saida-da-primeira" "$raiz/saida-da-segunda" >"$raiz/saida"
+conferir "a segunda restauração no mesmo volume é recusada enquanto a primeira roda, sem extrair nem pôr nada no lugar" \
+  "$(todas "$(se [ "$estado_da_segunda" -ne 0 ])" "$(se grep -qF 'outra restauração está rodando neste volume' "$raiz/saida-da-segunda")" "$(se [ "$(grep -c '^run extrair$' "$FALSO_REGISTRO")" -eq 1 ])" "$(se [ "$(grep -c '^run promover$' "$FALSO_REGISTRO")" -eq 1 ])")"
+conferir "a primeira termina, tudo o que está no volume vem do backup dela, e a trava se solta" \
+  "$(todas "$(se [ "$estado_da_primeira" -eq 0 ])" "$(se restaurado)" "$(se [ "$(cat "$dados/trabalho/bot1/notas.txt")" = "arquivo do bot 1" ])" "$(se sem_pasta_a_parte)" "$(se [ ! -e "$dados/.trava-de-mentira" ])")"
+
+# Morta à força no meio, a restauração não roda o próprio encerramento; a trava se solta assim mesmo,
+# porque a entrada do contêiner que a segura se fecha com ela.
+novo_destino_de_restauracao
+libera="$raiz/libera-restauracao-$volume"
+FALSO_PAUSA=$libera FALSO_FALHA='' sh "$scripts/restaurar.sh" "$tar_bom" </dev/null >"$raiz/saida-da-morta" 2>&1 &
+morta=$!
+esperar_a_extracao
+kill -9 "$morta" 2>/dev/null || true
+wait "$morta" 2>/dev/null || true
+voltas=0
+while [ -e "$dados/.trava-de-mentira" ] && [ "$voltas" -lt 100 ]; do
+  sleep 0.1
+  voltas=$((voltas + 1))
+done
+trava_solta=$(se [ ! -e "$dados/.trava-de-mentira" ])
+# A extração da execução morta termina sozinha, na pasta à parte dela, que fica como sobra.
+: >"$libera"
+sobra_extraida() {
+  [ -n "$(ls "$dados"/.restaurando-*/trabalho/bot1/notas.txt 2>/dev/null)" ] && [ -n "$(ls "$dados"/.restaurando-*/claude/projects/p1/conversa.jsonl 2>/dev/null)" ]
+}
+voltas=0
+while ! sobra_extraida && [ "$voltas" -lt 100 ]; do
+  sleep 0.1
+  voltas=$((voltas + 1))
+done
+restaurar ''
+conferir "uma restauração morta à força solta a trava, e a seguinte passa no mesmo volume e avisa da sobra" \
+  "$(todas "$trava_solta" "$(se [ "$estado" -eq 0 ])" "$(se restaurado)" "$(se grep -qF 'sobra de uma restauração interrompida' "$raiz/saida")")"
 
 echo
 if [ "$falhas" -eq 0 ]; then
