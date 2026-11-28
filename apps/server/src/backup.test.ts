@@ -1,10 +1,11 @@
 import os from 'node:os';
 import path from 'node:path';
 import { copyFileSync, existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 import { afterAll, describe, expect, it } from 'vitest';
 import { normalizarCodigoPareamento } from '@awikabot/core';
 import { BackupRecusado, conferirBanco, fazerBackup } from './backup';
-import { abrirBanco, VERSAO_DO_ESQUEMA } from './banco';
+import { abrirBanco, EsquemaMaisNovo, VERSAO_DO_ESQUEMA } from './banco';
 import { criarBot, listarBots } from './bots';
 import { inserirMensagem, listarMensagens } from './conversa';
 import { autenticar, criarCodigo, listarDispositivos, parear, revogar, revogarTodos } from './dispositivos';
@@ -175,5 +176,48 @@ describe('backup do banco', () => {
     expect(() => conferirBanco(lixo)).toThrow();
     expect(() => conferirBanco(path.join(pasta, 'conferencia-copias', 'nao-existe.db'))).toThrow(BackupRecusado);
     expect(existsSync(path.join(pasta, 'conferencia-copias', 'nao-existe.db'))).toBe(false);
+  });
+
+  // Uma imagem antiga do servidor restaurando o backup de uma mais nova: as tabelas podem não ser as que ela conhece.
+  it('recusa o banco de um esquema mais novo que este servidor, sem gravar nada nele', () => {
+    const origem = bancoComDados('esquema-mais-novo');
+    const copia = path.join(pasta, 'esquema-mais-novo-copias', 'a.db');
+    fazerBackup(origem.banco, copia);
+    origem.banco.close();
+    const futuro = new DatabaseSync(copia);
+    futuro.exec(`PRAGMA user_version = ${VERSAO_DO_ESQUEMA + 1}`);
+    futuro.close();
+    const antes = readFileSync(copia);
+
+    expect(() => conferirBanco(copia)).toThrow(EsquemaMaisNovo);
+    expect(readFileSync(copia).equals(antes)).toBe(true);
+  });
+
+  // A conferência de integridade olha a estrutura do arquivo, não as chaves estrangeiras.
+  it('recusa o banco com uma mensagem ou um pedido de um bot que não existe, sem citar dado dele', () => {
+    const origem = bancoComDados('orfao');
+    const copia = path.join(pasta, 'orfao-copias', 'a.db');
+    fazerBackup(origem.banco, copia);
+    origem.banco.close();
+    const adulterado = new DatabaseSync(copia);
+    adulterado.exec('PRAGMA foreign_keys = OFF');
+    adulterado.prepare('DELETE FROM bots WHERE id = ?').run(origem.bot.id);
+    adulterado.close();
+
+    expect(() => conferirBanco(copia)).toThrow(BackupRecusado);
+    expect(() => conferirBanco(copia)).toThrow('O banco tem referências que não apontam para nada, em mensagens.');
+  });
+
+  it('o backup de um banco com referência quebrada não é gravado', () => {
+    const origem = bancoComDados('orfao-na-origem');
+    origem.banco.exec('PRAGMA foreign_keys = OFF');
+    origem.banco.prepare('DELETE FROM bots WHERE id = ?').run(origem.bot.id);
+    const destino = path.join(pasta, 'orfao-na-origem-copias', 'a.db');
+    try {
+      expect(() => fazerBackup(origem.banco, destino)).toThrow(BackupRecusado);
+      expect(readdirSync(path.dirname(destino))).toEqual([]);
+    } finally {
+      origem.banco.close();
+    }
   });
 });

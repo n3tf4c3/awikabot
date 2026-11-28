@@ -1,9 +1,10 @@
 import os from 'node:os';
 import path from 'node:path';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 import { afterAll, describe, expect, it } from 'vitest';
 import { GestorDeAprovacoes } from './aprovacoes';
-import { abrirBanco, emTransacao, VERSAO_DO_ESQUEMA } from './banco';
+import { abrirBanco, emTransacao, EsquemaMaisNovo, VERSAO_DO_ESQUEMA } from './banco';
 import { criarBot } from './bots';
 import { inserirMensagem } from './conversa';
 import { Barramento } from './eventos';
@@ -61,6 +62,43 @@ describe('aprovações resolvidas de uma página do histórico', () => {
         ['aprovacao0000001', 'aprovada', 'echo um'],
         ['aprovacao0000002', 'negada', 'echo dois'],
       ]);
+    } finally {
+      banco.close();
+    }
+  });
+});
+
+describe('banco de um esquema mais novo que o servidor', () => {
+  it('é recusado na abertura, sem diário, sem migração e sem gravar nada no arquivo', () => {
+    const arquivo = path.join(pasta, 'mais-novo.db');
+    // Um banco gravado por uma versão futura do servidor, em modo de diário comum: ligar o WAL
+    // mudaria o cabeçalho do arquivo.
+    const futuro = new DatabaseSync(arquivo);
+    futuro.exec(`CREATE TABLE coisa_do_futuro (id TEXT PRIMARY KEY) STRICT; PRAGMA user_version = ${VERSAO_DO_ESQUEMA + 1};`);
+    futuro.close();
+    const antes = readFileSync(arquivo);
+
+    expect(() => abrirBanco(arquivo)).toThrow(EsquemaMaisNovo);
+    expect(readFileSync(arquivo).equals(antes)).toBe(true);
+    expect(existsSync(`${arquivo}-wal`)).toBe(false);
+
+    // O arquivo continua fechado para quem vier depois: a recusa não deixou conexão aberta.
+    const depois = new DatabaseSync(arquivo);
+    try {
+      expect((depois.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(VERSAO_DO_ESQUEMA + 1);
+      expect((depois.prepare('PRAGMA journal_mode').get() as { journal_mode: string }).journal_mode).toBe('delete');
+    } finally {
+      depois.close();
+    }
+  });
+
+  it('o banco da versão atual e o de uma anterior abrem normalmente', () => {
+    const arquivo = path.join(pasta, 'versao-atual.db');
+    abrirBanco(arquivo, VERSAO_DO_ESQUEMA - 1).close();
+    abrirBanco(arquivo).close();
+    const banco = abrirBanco(arquivo);
+    try {
+      expect((banco.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(VERSAO_DO_ESQUEMA);
     } finally {
       banco.close();
     }

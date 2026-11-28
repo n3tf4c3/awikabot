@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { closeSync, constants, copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, openSync, readSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import type { Banco } from './banco';
+import { exigirEsquemaConhecido, type Banco } from './banco';
 
 export interface ResumoDoBanco {
   versaoDoEsquema: number;
@@ -46,7 +46,8 @@ const contar = (banco: Banco, sql: string): number => Number((banco.prepare(sql)
 /**
  * Abre um arquivo de banco só para leitura e o confere inteiro. Serve à cópia que o backup acabou
  * de fazer e ao banco que a restauração extraiu, antes de ele ir para o lugar do banco do servidor.
- * Não aplica migração nem grava nada no arquivo.
+ * Não aplica migração nem grava nada no arquivo. Recusa o esquema mais novo que este servidor
+ * (`EsquemaMaisNovo`) e a referência que não aponta para nada (`BackupRecusado`).
  */
 export function conferirBanco(arquivo: string): ResumoDoBanco {
   if (!existsSync(arquivo)) throw new BackupRecusado('O arquivo do banco não existe.');
@@ -56,6 +57,14 @@ export function conferirBanco(arquivo: string): ResumoDoBanco {
     const { integrity_check: integridade } = copia.prepare('PRAGMA integrity_check').get() as { integrity_check: string };
     if (integridade !== 'ok') throw new BackupRecusado('O banco não passou na conferência de integridade.');
     const { user_version: versaoDoEsquema } = copia.prepare('PRAGMA user_version').get() as { user_version: number };
+    // Um esquema mais novo que este servidor não é lido: as tabelas podem não ser mais as que ele conhece.
+    exigirEsquemaConhecido(versaoDoEsquema);
+    // A conferência de integridade olha a estrutura do arquivo, não as chaves estrangeiras: uma mensagem
+    // de um bot que não existe passaria por ela. A mensagem cita só o nome das tabelas, nunca um valor.
+    const quebradas = [...new Set((copia.prepare('PRAGMA foreign_key_check').all() as { table: string }[]).map((linha) => linha.table))];
+    if (quebradas.length > 0) {
+      throw new BackupRecusado(`O banco tem referências que não apontam para nada, em ${quebradas.sort().join(', ')}.`);
+    }
     return {
       versaoDoEsquema,
       bots: contar(copia, 'SELECT COUNT(*) AS total FROM bots'),

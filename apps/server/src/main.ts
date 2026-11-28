@@ -9,7 +9,7 @@ import { criarApp } from './app';
 import { expirarPendentesNaPartida, GestorDeAprovacoes } from './aprovacoes';
 import { AvisoPush } from './aviso';
 import { BackupRecusado, conferirBanco, fazerBackup } from './backup';
-import { abrirBanco, type Banco } from './banco';
+import { abrirBanco, EsquemaMaisNovo, type Banco } from './banco';
 import { marcarInterrompidas } from './conversa';
 import { criarCodigo, LimitadorDeTentativas, listarDispositivos, revogar, revogarTodos } from './dispositivos';
 import { ambienteDoMotor, EnvInvalida, lerEnv, lerEnvDoGancho, lerPastaDoBot, type Env } from './env';
@@ -243,8 +243,21 @@ function copiarBanco(banco: Banco, destino: string | undefined): void {
   }
 }
 
+function abrirBancoOuSair(env: Env): Banco {
+  try {
+    return abrirBanco(path.join(env.AWIKA_DADOS, 'awikabot.db'));
+  } catch (erro) {
+    if (erro instanceof EsquemaMaisNovo) {
+      // Um servidor mais antigo que o banco não sobe nem grava nele, nem para revogar aparelhos.
+      console.error(erro.message);
+      process.exit(1);
+    }
+    throw erro;
+  }
+}
+
 function administrar(env: Env, comando: string, argumento: string | undefined): void {
-  const banco = abrirBanco(path.join(env.AWIKA_DADOS, 'awikabot.db'));
+  const banco = abrirBancoOuSair(env);
 
   switch (comando) {
     case 'servir':
@@ -302,7 +315,8 @@ function conferirArquivoDoBanco(arquivo: string | undefined): void {
     console.log(`Banco íntegro: esquema ${resumo.versaoDoEsquema}, ${resumo.bots} bot(s), ${resumo.mensagens} mensagem(ns), ${resumo.aparelhosAtivos} aparelho(s) ativo(s)`);
   } catch (erro) {
     // A mensagem do SQLite não leva dado do banco.
-    console.error(erro instanceof BackupRecusado ? erro.message : `O arquivo não é um banco íntegro: ${erro instanceof Error ? erro.message : 'erro desconhecido'}`);
+    const conhecido = erro instanceof BackupRecusado || erro instanceof EsquemaMaisNovo;
+    console.error(conhecido ? erro.message : `O arquivo não é um banco íntegro: ${erro instanceof Error ? erro.message : 'erro desconhecido'}`);
     process.exitCode = 1;
   }
 }

@@ -79,13 +79,44 @@ const MIGRACOES: string[] = [
 /** A versão do esquema que este servidor grava: o `user_version` depois de todas as migrações. */
 export const VERSAO_DO_ESQUEMA = MIGRACOES.length;
 
+/**
+ * O banco foi gravado por uma versão mais nova do servidor, com migrações que esta não conhece.
+ * Ler ou gravar nele seria interpretar um esquema que este código nunca viu.
+ */
+export class EsquemaMaisNovo extends Error {
+  readonly versao: number;
+
+  constructor(versao: number) {
+    super(
+      `O banco é do esquema ${versao}, mais novo que o ${VERSAO_DO_ESQUEMA} que esta versão do servidor conhece: use a versão do servidor que o gravou, ou uma mais nova.`,
+    );
+    this.name = 'EsquemaMaisNovo';
+    this.versao = versao;
+  }
+}
+
+/** Recusa o esquema que este servidor não conhece. A abertura do banco e a conferência do backup passam por aqui. */
+export function exigirEsquemaConhecido(versao: number): void {
+  if (versao > VERSAO_DO_ESQUEMA) throw new EsquemaMaisNovo(versao);
+}
+
 /** `ate` aplica só as primeiras migrações: serve ao teste que abre um banco de uma versão anterior. */
 export function abrirBanco(arquivo: string, ate = MIGRACOES.length): Banco {
   if (arquivo !== ':memory:') mkdirSync(path.dirname(arquivo), { recursive: true });
   const banco = new DatabaseSync(arquivo);
-  banco.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
+  let versao: number;
+  try {
+    // A versão é lida antes de qualquer gravação: um banco de esquema mais novo sai daqui como
+    // chegou, sem diário, sem chave estrangeira ligada e sem migração.
+    banco.exec('PRAGMA busy_timeout = 5000;');
+    ({ user_version: versao } = banco.prepare('PRAGMA user_version').get() as { user_version: number });
+    exigirEsquemaConhecido(versao);
+  } catch (erro) {
+    banco.close();
+    throw erro;
+  }
+  banco.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
 
-  const { user_version: versao } = banco.prepare('PRAGMA user_version').get() as { user_version: number };
   for (let i = versao; i < ate; i += 1) {
     banco.exec('BEGIN');
     try {
