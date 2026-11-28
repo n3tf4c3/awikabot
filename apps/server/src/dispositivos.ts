@@ -106,10 +106,14 @@ export function esquecerEnderecoDeAviso(banco: Banco, id: string, endereco: stri
   banco.prepare('UPDATE dispositivos SET aviso_endereco = NULL WHERE id = ? AND aviso_endereco = ?').run(id, endereco);
 }
 
-/** Os endereços de aviso dos aparelhos que ainda valem. */
+/**
+ * Os endereços de aviso dos aparelhos que ainda valem, na ordem em que foram pareados. Dois
+ * pareamentos no mesmo milissegundo desempatam pela ordem de gravação (`rowid`), não pelo id, que
+ * é aleatório: um aparelho nunca é apagado, só revogado.
+ */
 export function enderecosDeAviso(banco: Banco): { dispositivoId: string; endereco: string }[] {
   const linhas = banco
-    .prepare('SELECT id, aviso_endereco FROM dispositivos WHERE revogado_em IS NULL AND aviso_endereco IS NOT NULL ORDER BY criado_em, id')
+    .prepare('SELECT id, aviso_endereco FROM dispositivos WHERE revogado_em IS NULL AND aviso_endereco IS NOT NULL ORDER BY criado_em, rowid')
     .all() as unknown as { id: string; aviso_endereco: string }[];
   return linhas.map((linha) => ({ dispositivoId: linha.id, endereco: linha.aviso_endereco }));
 }

@@ -11,9 +11,10 @@
 // uso da conta do motor e deixa um bot de teste no banco desse servidor.
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 
 const BASE_EXTERNA = process.env.AWIKA_VERIFICAR_BASE;
@@ -511,6 +512,34 @@ try {
         registrar('O1', 'o banco do backup é conferido antes de ir para o lugar',
           conferencia.status === 0 && /Banco íntegro/.test(conferencia.stdout) && conferenciaDoCortado.status === 1,
           `conferir-banco: saída ${conferencia.status}; com o arquivo cortado: saída ${conferenciaDoCortado.status}`);
+        // Dois bancos íntegros para o SQLite que o servidor não pode aceitar: o de um esquema mais novo
+        // que ele, que nem a revogação pode abrir, e o de mensagens cujo bot não existe mais.
+        const recusas = path.join(restaurada, 'recusas');
+        mkdirSync(recusas);
+        const maisNovo = path.join(recusas, 'awikabot.db');
+        const orfao = path.join(restaurada, 'orfao.db');
+        copyFileSync(bancoRestaurado, maisNovo);
+        copyFileSync(bancoRestaurado, orfao);
+        const futuro = new DatabaseSync(maisNovo);
+        const { user_version: esquemaAtual } = futuro.prepare('PRAGMA user_version').get();
+        futuro.exec(`PRAGMA user_version = ${esquemaAtual + 1}`);
+        futuro.close();
+        const adulterado = new DatabaseSync(orfao);
+        adulterado.exec('PRAGMA foreign_keys = OFF');
+        adulterado.prepare('DELETE FROM bots WHERE id = ?').run(botId);
+        adulterado.close();
+        const bytesDoMaisNovo = readFileSync(maisNovo);
+        const conferenciaDoMaisNovo = comandoDoServidor(['conferir-banco', maisNovo], ambienteRestaurado);
+        const revogacaoNoMaisNovo = comandoDoServidor(['revogar-todos'], { ...ambienteRestaurado, AWIKA_DADOS: recusas });
+        const maisNovoIntocado = readFileSync(maisNovo).equals(bytesDoMaisNovo) && !existsSync(`${maisNovo}-wal`);
+        const conferenciaDoOrfao = comandoDoServidor(['conferir-banco', orfao], ambienteRestaurado);
+        rmSync(recusas, { recursive: true });
+        rmSync(orfao);
+        registrar('O1', 'o banco de esquema mais novo e o de referência quebrada são recusados',
+          conferenciaDoMaisNovo.status === 1 && /esquema \d+, mais novo/.test(conferenciaDoMaisNovo.stderr)
+            && revogacaoNoMaisNovo.status === 1 && maisNovoIntocado
+            && conferenciaDoOrfao.status === 1 && /referências que não apontam para nada/.test(conferenciaDoOrfao.stderr),
+          `conferir-banco do esquema ${esquemaAtual + 1}: saída ${conferenciaDoMaisNovo.status}; revogar-todos nele: saída ${revogacaoNoMaisNovo.status}, arquivo intocado: ${maisNovoIntocado ? 'sim' : 'não'}; conferir-banco com mensagens sem bot: saída ${conferenciaDoOrfao.status}`);
         const revogacao = comandoDoServidor(['revogar-todos'], ambienteRestaurado);
         // O `restaurar.sh` leva só o `awikabot.db` para o lugar: a revogação tem de estar nele, não no diário.
         const diario = `${bancoRestaurado}-wal`;

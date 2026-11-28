@@ -11,6 +11,11 @@
 # vai para o lugar. Se a extração ou uma conferência falha, o volume fica como estava
 # e a restauração pode ser tentada de novo.
 #
+# Uma restauração por volume: da conferência de que o volume está livre até o fim da
+# troca para o lugar, esta execução segura uma trava do volume, e outra que chega no
+# meio é recusada sem tocar em nada. A trava se solta sozinha quando esta execução
+# termina, mesmo morta à força.
+#
 # Todo aparelho pareado no backup sai revogado: o arquivo não sabe quem foi revogado
 # depois da cópia. Cada aparelho pareia de novo, com o comando `parear`.
 #
@@ -26,8 +31,9 @@ aqui=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 # Outro arquivo de compose, ou um a mais, entra por COMPOSE_FILE, como no próprio Docker Compose.
 export COMPOSE_FILE="${COMPOSE_FILE:-$aqui/compose.yaml}"
 compose() { docker compose "$@"; }
-# Um contêiner novo do serviço, com o volume, sem subir o servidor.
-no_volume() { compose run --rm -T --no-deps "$@"; }
+# Um contêiner novo do serviço, com o volume, sem subir o servidor. Ele não herda a ponta da trava
+# (o descritor 8): só esta execução a segura.
+no_volume() { compose run --rm -T --no-deps "$@" 8>&-; }
 
 recusar() {
   echo "$1; nada foi restaurado" >&2
@@ -38,10 +44,16 @@ recusar() {
 area=".restaurando-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 area_no_volume=nao
 anotacoes=
-# Desfaz só o que esta execução criou: as anotações no host e a pasta à parte no volume.
+trava=
+# Desfaz só o que esta execução criou: a pasta à parte no volume, a trava e as anotações no host.
+# A pasta sai antes de a trava se soltar, para a execução seguinte não a ver como sobra.
 limpar() {
-  [ -z "$anotacoes" ] || rm -rf "$anotacoes"
   [ "$area_no_volume" = nao ] || no_volume --entrypoint rm server -rf "/data/$area" </dev/null >/dev/null 2>&1 || true
+  if [ -n "$trava" ]; then
+    exec 8>&-
+    wait "$trava" 2>/dev/null || true
+  fi
+  [ -z "$anotacoes" ] || rm -rf "$anotacoes"
 }
 trap limpar EXIT
 anotacoes=$(mktemp -d)
@@ -94,6 +106,32 @@ itens=$(awk -F/ '
   $1 == "codex" && $2 == "sessions" && NF > 3 && $NF != "" { print }
 ' "$lista" | sort -u)
 printf '%s\n' "$itens" | grep -qx 'awikabot.db' || { echo "o arquivo não tem o banco; não parece um backup do awikabot" >&2; exit 1; }
+
+# A trava do volume. Sem ela, duas restaurações passam juntas pela conferência de que o volume está
+# livre, e cada item vai para o lugar vindo de uma cópia diferente. Um contêiner segura o flock num
+# arquivo do volume enquanto a entrada dele estiver aberta. A entrada é um cano comum, que o Docker de
+# qualquer sistema lê até o fim (um FIFO dado direto ao docker.exe do Windows chega a ele já no fim);
+# quem escreve nele é um `cat` que só termina quando esta execução fecha o descritor 8. A trava é do
+# sistema: quando esta execução termina, mesmo morta à força, o `cat` sai, a entrada se fecha, o
+# contêiner sai e a trava se solta, sem nada para alguém apagar à mão. O health check da imagem também
+# roda nele, que vive a restauração inteira: com a pasta de dados no /tmp do próprio contêiner, a vigia
+# anota as falhas lá, e não no volume.
+# shellcheck disable=SC2016
+travar='exec 9>>/data/.restaurar.trava || exit 1
+flock -n 9 || { echo ocupada; exit 0; }
+echo travada
+exec cat >/dev/null'
+mkfifo "$anotacoes/trava-viva" "$anotacoes/trava-saida"
+cat "$anotacoes/trava-viva" | no_volume -e AWIKA_DADOS=/tmp --entrypoint sh server -c "$travar" >"$anotacoes/trava-saida" &
+trava=$!
+exec 8>"$anotacoes/trava-viva"
+situacao=
+read -r situacao <"$anotacoes/trava-saida" || true
+case "$situacao" in
+  travada) ;;
+  ocupada) recusar "outra restauração está rodando neste volume" ;;
+  *) recusar "não foi possível travar o volume para a restauração" ;;
+esac
 
 # shellcheck disable=SC2016
 livre='while IFS= read -r item; do [ ! -e "/data/$item" ] || exit 1; done
