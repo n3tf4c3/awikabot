@@ -20,7 +20,7 @@ import type { Sessao } from '../../mobile/src/lib/sessao';
 import { criarApp } from './app';
 import { GestorDeAprovacoes } from './aprovacoes';
 import { abrirBanco } from './banco';
-import { criarCodigo, LimitadorDeTentativas } from './dispositivos';
+import { criarCodigo, enderecosDeAviso, LimitadorDeTentativas } from './dispositivos';
 import { Barramento } from './eventos';
 import { criarAppDoGancho, Ganchos } from './gancho';
 import { criarMotorSimulado } from './motor-simulado';
@@ -193,6 +193,16 @@ describe('cliente do app contra o servidor', () => {
     const posicao = itens.findIndex((item) => ehAprovacao(item));
     expect(itens[posicao + 1]).toMatchObject({ id: resolvidas[0]!.mensagemId, texto: 'Comando permitido: echo oi' });
     expect(situacaoDoBot({ id: botId, turnoAtivo: false }, estado.aprovacoes)).toBeNull();
+  });
+
+  it('guarda e esquece o endereço de aviso push deste aparelho, e recusa um endereço fora do formato', async () => {
+    const endereco = 'ExponentPushToken[contratocontratocontrato]';
+    await api.registrarAviso({ endereco });
+    expect(enderecosDeAviso(banco).map((destino) => destino.endereco)).toEqual([endereco]);
+    await expect(api.registrarAviso({ endereco: 'https://outro.lugar/qualquer' })).rejects.toMatchObject({ codigo: 'dados_invalidos', status: 400 });
+    expect(enderecosDeAviso(banco).map((destino) => destino.endereco)).toEqual([endereco]);
+    await api.esquecerAviso();
+    expect(enderecosDeAviso(banco)).toEqual([]);
   });
 
   it('o pedido que já esperava aparece mesmo se a primeira busca dos pendentes falha, sem ninguém pedir de novo', async () => {

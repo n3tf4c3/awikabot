@@ -274,6 +274,8 @@ describe('autenticação', () => {
   it('exige token em todas as rotas de /v1, menos o pareamento', async () => {
     const rotas: [string, string][] = [
       ['DELETE', '/v1/dispositivo'],
+      ['PUT', '/v1/dispositivo/aviso'],
+      ['DELETE', '/v1/dispositivo/aviso'],
       ['GET', '/v1/aprovacoes'],
       ['POST', '/v1/aprovacoes/abcdefgh12345678'],
       ['GET', '/v1/catalogo'],

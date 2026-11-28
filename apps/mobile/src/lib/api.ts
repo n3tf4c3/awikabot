@@ -8,6 +8,7 @@ import {
   EsquemaRespostaPareamento,
   EsquemaRespostaTurno,
   type Aprovacao,
+  type AvisoDoDispositivo,
   type Bot,
   type BotEdicao,
   type BotEntrada,
@@ -73,6 +74,10 @@ export interface Api {
    * Recebe a credencial em vez de ler a sessão: serve também para um token que nem chegou a ser guardado.
    */
   revogarDispositivo(credencial: Credencial): Promise<void>;
+  /** Guarda no servidor o endereço de aviso push deste aparelho (`PUT /v1/dispositivo/aviso`). */
+  registrarAviso(aviso: AvisoDoDispositivo): Promise<void>;
+  /** Esquece no servidor o endereço de aviso push deste aparelho. */
+  esquecerAviso(): Promise<void>;
 }
 
 /** O que basta para falar com o servidor em nome de um aparelho. */
@@ -83,7 +88,7 @@ interface Esquema<T> {
 }
 
 interface Chamada {
-  metodo: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  metodo: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   url: string;
   token: string | null;
   corpo?: unknown;
@@ -225,6 +230,14 @@ export function criarApi(opcoes: OpcoesApi): Api {
     async decidirAprovacao(id, decisao) {
       const { status, texto } = await pedir('POST', `/v1/aprovacoes/${encodeURIComponent(id)}`, decisao);
       return ler(EsquemaAprovacao, status, texto);
+    },
+
+    async registrarAviso(aviso) {
+      exigirSucesso(await pedir('PUT', '/v1/dispositivo/aviso', aviso));
+    },
+
+    async esquecerAviso() {
+      exigirSucesso(await pedir('DELETE', '/v1/dispositivo/aviso'));
     },
 
     // Fora da regra da sessão: quem chama já vai esquecer esta credencial, com ou sem resposta.

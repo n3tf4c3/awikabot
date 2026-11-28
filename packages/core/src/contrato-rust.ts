@@ -34,6 +34,7 @@ const PEDIDOS: Record<string, ZodType> = {
   BotEdicao: core.EsquemaBotEdicao,
   PedidoTurno: core.EsquemaPedidoTurno,
   DecisaoAprovacao: core.EsquemaDecisaoAprovacao,
+  AvisoDoDispositivo: core.EsquemaAvisoDoDispositivo,
 };
 
 const emSnake = (nome: string): string => nome.replace(/[A-Z]/g, (letra) => `_${letra.toLowerCase()}`);

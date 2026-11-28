@@ -3,6 +3,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
+import { useAvisoPush } from '@/hooks/use-aviso-push';
 import { useSessao } from '@/hooks/use-sessao';
 import { ProvedorDados } from '@/provedores/dados';
 import { guardaSessao } from '@/servicos';
@@ -10,6 +11,7 @@ import { cores } from '@/tema';
 
 export default function LayoutRaiz() {
   const { fase, sessao } = useSessao();
+  useAvisoPush(sessao);
 
   useEffect(() => {
     void guardaSessao.carregar();

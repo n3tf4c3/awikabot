@@ -17,6 +17,7 @@ describe('lerEnv', () => {
       AWIKA_MOTORES_EM_PROVA: [],
       AWIKA_TURNOS_SIMULTANEOS: 4,
       AWIKA_GANCHO: 'opcao',
+      AWIKA_AVISO_PUSH: 'expo',
     });
   });
 
@@ -65,6 +66,20 @@ describe('lerEnv', () => {
       }
     }
   });
+
+  it.each([['expo'], ['desligado'], ['https://servico.teste/push'], ['http://127.0.0.1:9999/push'], ['http://localhost:9999/push']])(
+    'aceita o aviso push "%s"',
+    (valor) => {
+      expect(lerEnv({ AWIKA_AVISO_PUSH: valor }).AWIKA_AVISO_PUSH).toBe(valor);
+    },
+  );
+
+  it.each([['http://servico.teste/push'], ['ftp://servico.teste'], ['https://usuario:senha@servico.teste/push'], ['ligado'], ['']])(
+    'recusa o aviso push "%s"',
+    (valor) => {
+      expect(() => lerEnv({ AWIKA_AVISO_PUSH: valor })).toThrow(EnvInvalida);
+    },
+  );
 
   it('diz o nome da variável recusada sem repetir o valor', () => {
     try {

@@ -69,6 +69,11 @@ const MIGRACOES: string[] = [
   `
   CREATE INDEX aprovacoes_por_mensagem ON aprovacoes (mensagem_id);
   `,
+  // O endereço de aviso push de cada aparelho, que o serviço da Expo entrega ao app. Sem ele,
+  // o aparelho não recebe aviso com o app fechado.
+  `
+  ALTER TABLE dispositivos ADD COLUMN aviso_endereco TEXT;
+  `,
 ];
 
 /** A versão do esquema que este servidor grava: o `user_version` depois de todas as migrações. */
